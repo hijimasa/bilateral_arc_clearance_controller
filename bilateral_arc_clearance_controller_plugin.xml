@@ -1,0 +1,8 @@
+<library path="bilateral_arc_clearance_controller">
+  <class type="bac::BacController" base_class_type="nav2_core::Controller">
+    <description>
+      Arc-clearance avoidance controller: pure-pursuit intent from the plan,
+      shaped by the bac_core algorithm against lethal costmap cells.
+    </description>
+  </class>
+</library>
