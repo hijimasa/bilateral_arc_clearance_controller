@@ -130,6 +130,81 @@ testSweptCornerOnArc()
 }
 
 void
+testSweptFootprintProperty()
+{
+  // Property test against a brute-force ground truth (review re-finding):
+  // for random (v, w, point) over forward/backward x left/right turns, the
+  // reported blocking_s must (a) never miss a physical contact and (b) never
+  // exceed the true first-contact arc length by more than a tolerance.
+  // Ground truth: fine time-stepping of the exact rigid motion (rotation
+  // about the turn center) with rectangle containment.
+  bac::BacCore core;
+  const bac::Params params;
+  const float half = params.footprint.width / 2.0f;
+  unsigned int lcg = 12345u;
+  auto frand = [&](float lo, float hi) {
+    lcg = lcg * 1664525u + 1013904223u;
+    return lo + (hi - lo) * static_cast<float>((lcg >> 8) & 0xFFFF) / 65535.0f;
+  };
+
+  int checked = 0, missed = 0, over = 0;
+  for (int it = 0; it < 400; ++it)
+  {
+    float v = frand(-0.3f, 0.4f);
+    float w = frand(-1.0f, 1.0f);
+    if (std::fabs(v) < 0.05f || std::fabs(w) < 0.05f)
+    {
+      continue;
+    }
+    const bac::Point2D p(frand(-1.0f, 2.0f), frand(-1.5f, 1.5f));
+    if (p.x >= params.footprint.rear && p.x <= params.footprint.front && std::fabs(p.y) <= half)
+    {
+      continue;  // starts inside the body: the emergency layer's business
+    }
+
+    const float horizon = 2.0f;
+    const float s_win   = std::fabs(v) * horizon;
+    // ground truth via the rotation about the turn center
+    const float R = v / w;
+    float s_true  = std::numeric_limits<float>::max();
+    for (float t = 0.0f; t <= horizon; t += 0.002f)
+    {
+      const float rho = w * t;
+      const float ux = p.x, uy = p.y - R;
+      const float qx = ux * std::cos(rho) + uy * std::sin(rho);
+      const float qy = -ux * std::sin(rho) + uy * std::cos(rho) + R;
+      if (qx >= params.footprint.rear && qx <= params.footprint.front && std::fabs(qy) <= half)
+      {
+        s_true = std::fabs(v) * t;
+        break;
+      }
+    }
+
+    const bac::ArcEvaluation eval = core.evaluateArc({ p }, v, w, horizon);
+    ++checked;
+    if (s_true < s_win - 0.05f && eval.blocking_s > s_true + 0.03f)
+    {
+      ++missed;
+    }
+    if (eval.blocking_s < 1e6f && eval.blocking_s + 0.03f < s_true &&
+        s_true > eval.blocking_s + 0.05f && s_true < 1e6f)
+    {
+      // blocking earlier than truth is conservative; only flag if the truth
+      // says NO contact at all yet blocking fired well inside the window
+      ;
+    }
+    if (eval.blocking_s < s_win - 0.05f && s_true == std::numeric_limits<float>::max())
+    {
+      ++over;  // phantom contact where the body never touches the point
+    }
+  }
+  expect(checked > 200, "swept property test exercised enough samples");
+  expect(missed == 0, "no physical contact is missed by blocking_s (" +
+                          std::to_string(missed) + " missed)");
+  expect(over == 0, "no phantom contact is reported (" + std::to_string(over) + " phantom)");
+}
+
+void
 testFaceAwayRecovery()
 {
   // Standstill facing AWAY from the goal, open space ahead, a passable gap
@@ -174,6 +249,10 @@ testFaceAwayRecovery()
     th += current.w * 0.05f;
     x += current.v * std::cos(th) * 0.05f;
     y += current.v * std::sin(th) * 0.05f;
+    if (x > 5.0f)
+    {
+      break;  // reached the goal region: standing there is success, not a freeze
+    }
   }
   expect(x > 2.0f, "faces-away start turns around and passes the obstacles towards the goal");
   expect(stop_ticks < 200, "faces-away recovery keeps moving (no freeze)");
@@ -189,6 +268,7 @@ main()
   testEmergencyStop();
   testEmptyPathAndReset();
   testSweptCornerOnArc();
+  testSweptFootprintProperty();
   testFaceAwayRecovery();
 
   if (failures != 0)

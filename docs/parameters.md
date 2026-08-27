@@ -30,6 +30,8 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `limits.v_min` | -0.1 | 脱出用の最低後退速度 [m/s]。前方センサのみなら 0 を推奨 |
 | `limits.w_max` | 1.0 | 最大角速度絶対値 [rad/s] |
 | `limits.acc_v` | 0.8 | 並進 dynamic window の加速度 [m/s²] |
+| `limits.acc_w` | 2.5 | 実機の角加速度。出力 `w` を実測角速度から 1 制御周期で到達可能な範囲に制限し、クランプ後円弧の停止可能性を再検証(0 で無効) |
+| `control_period` | 0.05 | 角速度出力制限が仮定する制御周期 [s] |
 | `window_time` | 0.25 | 並進 dynamic window の時間幅 [s] |
 | `v_samples` | 5 | 並進速度サンプル数（停止・回頭行は別途追加） |
 | `w_samples` | 25 | `[-w_max, w_max]` の角速度サンプル数 |
@@ -39,8 +41,9 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `angvel_min` | 0.01 | これ未満の出力角速度を 0 に丸める [rad/s] |
 
 角速度候補は、狭所で必要な修正円弧を常に残すため現在角速度まわりの加速度窓ではなく全範囲を
-評価する。したがって BAC コア自体は角加速度を制限しない。下位の速度制御器で実機の角加速度・
-jerk 制限を必ず適用する。
+評価する（原 DWA からの意図的な逸脱）。出力段では `limits.acc_w` により実測角速度から到達可能な
+範囲へクランプし、クランプ後の円弧で停止可能性を再検証するため、指令軌道は常に力学的に到達可能で
+ある。jerk 制限が必要な場合は下位の速度制御器で追加する。
 
 ## 評価と重み
 
@@ -65,7 +68,7 @@ jerk 制限を必ず適用する。
 
 | パラメータ | 既定値 | 説明 |
 |---|---:|---|
-| `stop_decel` | 1.0 | 許容性判定に使う制動能力 [m/s²] |
+| `stop_decel` | 0.8 | 許容性判定に使う制動能力 [m/s²]。**実機の制動限界以下に設定必須** |
 | `brake_reaction_time` | 0.1 | 制動距離に含める反応遅れ [s] |
 | `margin_scale_floor` | 0.6 | 停止時の安全余裕スケール下限 |
 | `margin_scale_speed` | 0.3 | 安全余裕が 100% になる速度 [m/s] |
@@ -84,6 +87,10 @@ jerk 制限を必ず適用する。
 | `scan_topic` | nav2 | 空 | 生スキャン。空ならコストマップの lethal セルを使用 |
 | `scan_timeout` | 両方 | 0.5 | スキャン鮮度 [s]。nav2 は古いとコストマップへフォールバック |
 | `scan_downsample` | nav2 | 1 | LaserScan の角度方向間引き |
+| `scan_min_points` | 両方 | 10 (int) | 有効測定(有限ヒット+`+Inf` 無反射)がこれ未満のスキャンをセンサ異常として棄却 |
+| `scan_inf_is_valid` | 両方 | true | `+Inf`・range_max 超を「障害物なしの正常測定」として扱う(costmap の `inf_is_valid` 相当) |
+| `cmd_timeout` | filter | 0.5 | 上位指令の途絶判定 [s]。途絶時は出力ゼロ |
+| `odom_timeout` | filter | 0.5 | 速度フィードバックの途絶判定 [s]。途絶時は停止 |
 | `costmap_margin_compensation` | nav2 | 自動 | セル中心量子化の補償 [m] |
 | `sensor.x/y/yaw` | filter | 0 | LaserScan フレームの固定 2D 外部パラメータ |
 | `virtual_path_length` | filter | 3.0 | 入力 `cmd_vel` から作る仮想経路長 [m] |

@@ -90,7 +90,22 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   params.safety_margin.rear  = std::max(0.05f, params.safety_margin.rear - compensation);
   params.safety_margin.side  = std::max(0.05f, params.safety_margin.side - compensation);
 
-  scan_min_points_ = static_cast<int>(declare_float("scan_min_points", static_cast<float>(scan_min_points_)));
+  {
+    const std::string pname = name + ".scan_min_points";
+    if (!node->has_parameter(pname))
+    {
+      node->declare_parameter<std::int64_t>(pname, scan_min_points_);
+    }
+    scan_min_points_ = std::max(0, static_cast<int>(node->get_parameter(pname).as_int()));
+  }
+  {
+    const std::string pname = name + ".scan_inf_is_valid";
+    if (!node->has_parameter(pname))
+    {
+      node->declare_parameter<bool>(pname, scan_inf_is_valid_);
+    }
+    scan_inf_is_valid_ = node->get_parameter(pname).as_bool();
+  }
 
   // Reject configurations that cannot produce meaningful candidates - a
   // silent nonsense config is worse than a failed configure.
@@ -217,10 +232,23 @@ BacController::collectScanPoints()
   float max_range = core_.params().max_range;
   std::vector<Point2D> points;
   points.reserve(scan->ranges.size());
+  int valid_rays = 0;
   for (size_t i = 0; i < scan->ranges.size(); i += static_cast<size_t>(scan_downsample_))
   {
     float r = scan->ranges[i];
-    if (!std::isfinite(r) || r < scan->range_min || r > scan->range_max || r > max_range)
+    // A +Inf (or beyond-range_max) return is a VALID "no obstacle in this
+    // direction" measurement on many lidars (see the costmap ObstacleLayer's
+    // inf_is_valid); it contributes no point but counts towards scan
+    // validity. NaN and below-range_min returns are invalid.
+    const bool clear_ray =
+        scan_inf_is_valid_ && ((std::isinf(r) && r > 0.0f) ||
+                               (std::isfinite(r) && r > scan->range_max));
+    const bool hit_ray = std::isfinite(r) && r >= scan->range_min && r <= scan->range_max;
+    if (clear_ray || hit_ray)
+    {
+      ++valid_rays;
+    }
+    if (!hit_ray || r > max_range)
     {
       continue;
     }
@@ -228,10 +256,10 @@ BacController::collectScanPoints()
     points.emplace_back(static_cast<float>(sx + r * std::cos(angle)),
                         static_cast<float>(sy + r * std::sin(angle)));
   }
-  if (static_cast<int>(points.size()) < scan_min_points_)
+  if (valid_rays < scan_min_points_)
   {
-    // A scan that is fresh by timestamp but carries almost no valid returns
-    // (all NaN/Inf, sensor fault) must not be treated as a valid observation.
+    // Too few valid MEASUREMENTS (hits or explicit no-returns): a sensor
+    // fault, not an empty world - do not treat it as a valid observation.
     return std::nullopt;
   }
   return points;

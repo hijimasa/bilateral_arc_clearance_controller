@@ -59,6 +59,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.limits.v_min = declare_float("limits.v_min", params.limits.v_min);
   params.limits.w_max = declare_float("limits.w_max", params.limits.w_max);
   params.limits.acc_v = declare_float("limits.acc_v", params.limits.acc_v);
+  params.limits.acc_w = declare_float("limits.acc_w", params.limits.acc_w);
 
   params.weights.clearance  = declare_float("weights.clearance", params.weights.clearance);
   params.weights.path_dist  = declare_float("weights.path_dist", params.weights.path_dist);
@@ -84,6 +85,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.brake_reaction_time = declare_float("brake_reaction_time", params.brake_reaction_time);
   params.max_range           = declare_float("max_range", params.max_range);
   params.max_points          = declare_int("max_points", params.max_points);
+  params.control_period      = declare_float("control_period", params.control_period);
   params.velocity_min        = declare_float("velocity_min", params.velocity_min);
   params.angvel_min          = declare_float("angvel_min", params.angvel_min);
   params.creep_fraction        = declare_float("creep_fraction", params.creep_fraction);

@@ -1,0 +1,209 @@
+# bilateral_arc_clearance_controller リリース再レビュー指摘
+
+レビュー日: 2026-08-28  
+対象: `9798a63` (`Regenerated single-revision benchmarks, corrected claims, review response`)  
+対応資料: [release_review_response.md](release_review_response.md)
+
+## 結論
+
+plan の座標フレーム処理、入力 timeout、costmap mutex、実験群の分離、既存手法との位置づけは改善している。
+plain CMake Release build、core unit test、13 本の closed-loop scenario も再度成功し、正準評価の
+BAC 54/54、衝突 0、最小クリアランス 0.109 m は raw data と一致した。
+
+一方、主要な安全根拠である曲線上の矩形 swept footprint には未検出反例が残る。また、正常な
+`+Inf` LaserScan の扱い、自己位置誤差に対する主張、比較資料と raw data の整合性にも修正が必要である。
+現時点ではリリースを保留し、少なくとも Critical と High の安全関連項目を修正後に再確認することを
+推奨する。
+
+## Critical
+
+### 1. 曲線上の矩形 swept footprint はまだ厳密ではない
+
+[`evaluateArcWindows()`](../src/bac_core.cpp#L304) は、矩形角の最大旋回半径を使って旋回外側の
+body-hit 帯を拡張した。これは外側の半径包絡を改善するが、有限時間に矩形が掃く領域や最初の接触時刻を
+厳密には表現しない。
+
+現行実装に対する追加探索で、次の未検出を確認した。
+
+```text
+v = 0.20 m/s
+w = -0.50 rad/s
+turn radius = 0.40 m
+horizon = 2.0 s
+contact time = 0.85 s
+body-local contact point = (0.250, -0.465)
+obstacle point in initial robot frame = (0.201, -0.562)
+
+physical rectangle: contact
+evaluateArc(): blocking_s == FLT_MAX
+```
+
+障害点は初期車体の外にあり、0.85 s 後の矩形内に入るため、初期 emergency 判定では補えない。
+前後進・左右旋回・車体各部を標本化した探索でも同種の未検出が発生した。
+
+現在の unit test は[前進・左旋回・前外角の 1 ケース](../test/core_unit.cpp#L108)に限られ、そのケースを
+通すことは swept footprint 全体の正しさを保証しない。したがって、
+[release_review_response.md の「修正」「外側境界は厳密」](release_review_response.md#L18)は、現状では
+「部分修正」とする必要がある。
+
+推奨対応:
+
+1. rollout pose ごとに障害点を車体座標へ逆変換し、矩形包含を評価する、または有限旋回角を含む
+   矩形の厳密な swept volume を実装する。
+2. 前進・後退 × 左旋回・右旋回 × 前後左右角を網羅する property test を追加する。
+3. `blocking_s` が実際の最初の接触距離に対して非過大となることも確認する。
+4. 修正までは「最初の車体衝突点」および admissibility を近似判定と明記する。
+
+## High
+
+### 2. 正常な `+Inf` LaserScan を観測異常として扱う
+
+filter node と Nav2 plugin は非有限 range をすべて除外し、残った点数で scan の有効性を判断する。
+
+- filter node: [`bac_filter_node.cpp`](../src/bac_filter_node.cpp#L80)
+- Nav2 plugin: [`bac_controller.cpp`](../src/bac_controller.cpp#L219)
+
+障害物のない方向を `+Inf` で表す LaserScan は正常な観測になり得る。ベンチマークの ObstacleLayer も
+[`inf_is_valid: True`](../../../../nav2_benchmark/ws/src/bench_bringup/params/nav2_common.yaml#L59)としている。
+そのため、開空間や反射の少ない環境では次の挙動が起こり得る。
+
+- filter node: 有効点数不足として `STOP`
+- Nav2 plugin: 正常な raw scan を棄却し、costmap へフォールバック
+
+有効 hit 数だけでは「障害物がない正常scan」と「センサ故障」を区別できない。scan 配列、角度、時刻、
+NaN率、センサ固有の no-return 表現を分けて検証し、少なくとも `inf_is_valid` 相当の設定を追加する。
+all-`+Inf`、all-NaN、空配列、部分欠測の adapter test も必要である。
+
+### 3. 「座標系誤差の影響を受けない」という説明が広すぎる
+
+plan と pose のフレーム混在は解消された。しかし plan を TF で base frame へ変換した結果、global plan の
+位置は `map -> odom` の誤差を含み、経路横偏差、終端距離、経路方位の score はその影響を受ける。
+
+- [`README.md`](../README.md#L30)
+- [`method_comparison.md`](method_comparison.md#L128)
+- [`transformPlan()`](../src/bac_controller.cpp#L241)
+
+誤差から直接独立なのは、robot-frame の障害物幾何、emergency 判定、左右クリアランスである。経路追従項は
+依然として影響を受けるが、弱い横偏差重みと左右クリアランスにより、本評価の直線通路では性能劣化が
+観測されなかった、という範囲に限定するのが妥当である。
+
+推奨表現:
+
+> robot-frame の障害物幾何、緊急停止判定、左右クリアランスは地図-odom誤差に直接依存しない。
+> 経路追従項は影響を受けるが、本評価範囲では左右クリアランスの作用により挙動劣化が観測されなかった。
+
+### 4. 角速度到達性と rollout の不一致は未解決
+
+[release_review_response.md](release_review_response.md#L19)は「一部修正」としているが、角速度を
+`[-w_max, w_max]` 全域から選び、選択値へ即時到達する定曲率円弧を評価する点は変わっていない。
+実機の下位制御器が角加速度を制限すると、予測円弧と実軌道がずれ、衝突回避の可否にも影響する。
+
+全域サンプリングを候補探索上の設計判断として残す場合でも、admissibility 用 rollout には現在角速度と
+角加速度制限を反映する必要がある。「下位制御器で制限する」という説明だけでは、BAC が安全と判定した
+円弧を実機が辿る保証にならない。
+
+## Medium
+
+### 5. 比較資料と raw result に不一致がある
+
+全体集計の成功数と平均時間は再計算結果と一致するが、個別シナリオの説明には次の不一致がある。
+
+1. `corridor_locdrift_15x` の DWB は「0/3」ではなく、2/3 成功・1 衝突である。
+   - [raw result](../../../../nav2_benchmark/results/summary.csv#L74)
+   - [比較資料](method_comparison.md#L92)
+2. 0.25 m drift sweep の DWB は「0/2 衝突」ではなく、1 衝突・1 中断である。
+   - [raw result](../../../../nav2_benchmark/results_driftsweep/summary.csv#L16)
+3. RPP の 0.20 m は 1/2 失敗であり、「0.20 m から失敗」は再現ごとの差を残した表現にする必要がある。
+   - [raw result](../../../../nav2_benchmark/results_driftsweep/summary.csv#L30)
+4. padding 評価の説明は「0.15 m 自己位置ズレ」となっているが、使用した
+   `corridor_locdrift_15x` は 0.25 m drift である。
+   - [比較資料](method_comparison.md#L138)
+   - [world](../../../../nav2_benchmark/ws/src/bench_bringup/worlds/corridor_locdrift_15x.yaml#L1)
+
+表と本文を `summary.csv` から自動生成するか、公開前チェックで本文中の成功数・outcomeを照合することを
+推奨する。
+
+### 6. provenance は評価環境全体を固定できていない
+
+再集計した行数と組合せは次の通りで、欠落・重複はなかった。
+
+| 実験群 | episode | controller | scenario | run | 重複 |
+|---|---:|---:|---:|---:|---:|
+| `results/` | 216 | 4 | 18 | 3 | 0 |
+| `results_driftsweep/` | 32 | 4 | 4 | 2 | 0 |
+| `results_gap_sweep/` | 24 | 4 | 6 | 1 | 0 |
+
+一方、drift sweep と gap sweep の provenance は `bac_dirty: 3` である。
+
+- [drift sweep provenance](../../../../nav2_benchmark/results_driftsweep/provenance.json#L1)
+- [gap sweep provenance](../../../../nav2_benchmark/results_gap_sweep/provenance.json#L1)
+
+さらに `worlds_sha` は world/parameter YAML のみを対象とし、simulator、evaluator、launch、集計scriptの
+revisionを記録しない。`nav2_benchmark`自体も現在の親repositoryでは未追跡である。再現可能な
+「単一revision」とするには、次を固定する必要がある。
+
+- 評価harness全体のcommit SHAまたはarchive hash
+- container image digest
+- simulator、evaluator、launch、controller別parameterを含むtree hash
+- dirty時の差分、またはdirty状態での評価禁止
+- seed、並列実行条件、期待episode集合
+
+### 7. parameter reference が実装と同期していない
+
+実装の `stop_decel` 既定値は 0.8 m/s²だが、
+[`parameters.md`](parameters.md#L68)では1.0 m/s²のままである。また、今回追加された
+`scan_min_points`、`min_scan_points`、`cmd_timeout`、`odom_timeout`がROS adapter固有parameter表にない。
+
+パラメータ名、型、既定値、適用対象、異常値の扱いを実装から再照合する必要がある。点数parameterは
+floatとしてdeclareしてintへcastするのではなく、integer parameterとして宣言し、非負値を検証する方が
+設定誤りを発見しやすい。
+
+## 可読性・保守性
+
+`goal_dist`から`path_dist`への改名、SVGラベル、TF変換、mutex、parameter検証の追加は読みやすさを
+改善している。一方、[`BacCore::process()`](../src/bac_core.cpp#L445)は引き続き約630行で、候補生成、
+経路station、近接governor、衝突判定、score、状態遷移が密結合している。
+
+今回の矩形掃引反例も、形状判定が独立した契約として網羅テストされていないことに起因する。
+次リリースへ責務分割を延期する場合でも、少なくとも `SweptFootprintEvaluator` は先に独立させ、幾何の
+property testを追加することを推奨する。
+
+## 確認できた改善
+
+- global planをTFでbase frameへ変換し、frame ID欠落・TF失敗をcontroller error化した。
+- stale/loop planに対して最近傍点からlocal windowを切り出すようにした。
+- costmap走査中にmutexを取得した。
+- filter nodeへcommand/odom timeoutを追加した。
+- `stop_decel`の実装既定値を0.8 m/s²へ変更した。
+- Collision Monitorとの役割差と併用方針を追加した。
+- 正準評価、drift sweep、gap sweep、旧評価を別directoryへ分離した。
+- `path_dist`、`best_path_cost`など、現在の経路station方式に沿う命名へ更新した。
+- 正準評価のBAC 54/54、衝突0、0.10 m未満接近0、最小クリアランス0.109 mはraw dataと一致した。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| plain CMake Release build (`-Wall -Wextra -Wpedantic`) | 成功、警告なし |
+| `BacCoreUnit` | 成功 |
+| `BacScenarioHarness --strict`（13 closed-loop scenarios） | 成功 |
+| benchmark件数・重複検査 | 216 / 32 / 24、重複なし |
+| 正準BAC集計 | 54/54成功、衝突0、最小clearance 0.109 m |
+| 追加矩形掃引property探索 | 未検出反例あり |
+| ROS 2 Jazzy build | 既存の2026-08-27 build logでは成功。今回のホストにはROS環境がなく再実行なし |
+
+## リリース判定チェックリスト
+
+- [x] global planの座標フレーム混在を解消した
+- [x] 0.10〜0.25 m drift sweepを実施した
+- [x] 正準評価、drift sweep、gap sweepを分離した
+- [x] command/odom timeoutとcostmap mutexを追加した
+- [x] Collision Monitorとの位置づけを記載した
+- [ ] 曲線上の矩形swept footprintを前後進・左右旋回で正しく判定した
+- [ ] `+Inf`を含む正常scanとセンサ異常を区別した
+- [ ] 角加速度をadmissibility rolloutへ反映した
+- [ ] 自己位置誤差に対する主張を障害物幾何と経路項に分けて限定した
+- [ ] 比較資料の個別outcomeをraw dataと一致させた
+- [ ] 評価harness全体を追跡可能なrevisionとして固定した
+- [ ] ROS adapterのtimeout・scan異常・TF失敗testを追加した
+- [ ] parameter referenceを実装の既定値と同期した

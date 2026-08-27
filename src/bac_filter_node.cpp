@@ -51,7 +51,8 @@ public:
     scan_timeout_ = declareFloat("scan_timeout", 0.5f);
     cmd_timeout_  = declareFloat("cmd_timeout", 0.5f);
     odom_timeout_ = declareFloat("odom_timeout", 0.5f);
-    min_scan_points_ = static_cast<int>(declareFloat("min_scan_points", 10.0f));
+    scan_min_points_   = std::max<int64_t>(0, declare_parameter<int64_t>("scan_min_points", 10));
+    scan_inf_is_valid_ = declare_parameter<bool>("scan_inf_is_valid", true);
 
     cmd_pub_    = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_out", 10);
     status_pub_ = create_publisher<std_msgs::msg::Int8>("avoid_status", 10);
@@ -76,11 +77,23 @@ public:
           std::lock_guard<std::mutex> lock(mutex_);
           points_.clear();
           points_.reserve(msg->ranges.size());
+          valid_rays_ = 0;
           float cs = std::cos(sensor_yaw_), sn = std::sin(sensor_yaw_);
           for (size_t i = 0; i < msg->ranges.size(); i++)
           {
             float r = msg->ranges[i];
-            if (!std::isfinite(r) || r < msg->range_min || r > msg->range_max)
+            // +Inf / beyond-range_max = valid "no obstacle here" measurement
+            // (inf_is_valid); NaN and below-range_min = invalid.
+            const bool clear_ray =
+                scan_inf_is_valid_ && ((std::isinf(r) && r > 0.0f) ||
+                                       (std::isfinite(r) && r > msg->range_max));
+            const bool hit_ray =
+                std::isfinite(r) && r >= msg->range_min && r <= msg->range_max;
+            if (clear_ray || hit_ray)
+            {
+              ++valid_rays_;
+            }
+            if (!hit_ray)
             {
               continue;
             }
@@ -113,10 +126,11 @@ private:
       current    = current_;
       points     = points_;
       // A scan that is fresh by timestamp but carries almost no valid
-      // returns (all NaN/Inf) is not a valid observation either.
+      // measurements (hits or explicit no-returns) is a sensor fault, not
+      // an empty world.
       scan_fresh = last_scan_time_.nanoseconds() > 0 &&
                    (now() - last_scan_time_).seconds() < static_cast<double>(scan_timeout_) &&
-                   static_cast<int>(points_.size()) >= min_scan_points_;
+                   valid_rays_ >= scan_min_points_;
       cmd_fresh  = last_cmd_time_.nanoseconds() > 0 &&
                    (now() - last_cmd_time_).seconds() < static_cast<double>(cmd_timeout_);
       odom_fresh = last_odom_time_.nanoseconds() > 0 &&
@@ -200,7 +214,9 @@ private:
   float scan_timeout_ = 0.5f;
   float cmd_timeout_  = 0.5f;
   float odom_timeout_ = 0.5f;
-  int   min_scan_points_ = 10;
+  int   scan_min_points_ = 10;
+  bool  scan_inf_is_valid_ = true;
+  int   valid_rays_ = 0;
   rclcpp::Time last_cmd_time_{ 0, 0, RCL_ROS_TIME };
   rclcpp::Time last_odom_time_{ 0, 0, RCL_ROS_TIME };
   float base_v_max_ = 0.4f;

@@ -76,6 +76,7 @@ private:
   float                                                        scan_timeout_ = 0.5f;  // [s]
   int                                                          scan_downsample_ = 1;
   int                                                          scan_min_points_ = 10;
+  bool                                                         scan_inf_is_valid_ = true;
 
   BacCore core_;
 

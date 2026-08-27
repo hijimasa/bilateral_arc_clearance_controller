@@ -110,6 +110,12 @@ struct Limits
   float v_min = -0.1f;  // [m/s]
   float w_max = 1.0f;  // [rad/s]
   float acc_v = 0.8f;  // [m/s^2]
+  /// Angular acceleration the plant can actually deliver. Candidate w stays
+  /// uniformly sampled by design (corrective arcs must always be on the
+  /// table), but the OUTPUT is rate-limited to what is reachable from the
+  /// measured angular velocity within one control period, and the clamped
+  /// arc is re-checked for stopping admissibility. 0 disables.
+  float acc_w = 2.5f;  // [rad/s^2]
 };
 
 /// Scoring weights. Balance rationale (see the harness scenarios):
@@ -218,6 +224,9 @@ struct Params
   /// process() is linear in points x candidates; a dense sensor should be
   /// decimated upstream, this cap bounds the worst case.
   int max_points = 1000;
+
+  /// Control period assumed for the angular-rate output limit [s].
+  float control_period = 0.05f;
 
   float velocity_min = 0.005f;  // [m/s] outputs below are clamped to 0
   float angvel_min   = 0.01f;   // [rad/s] outputs below are clamped to 0
