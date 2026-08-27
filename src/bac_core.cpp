@@ -549,6 +549,18 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   const bool  station_degenerate = station_pts.size() < 2;
   const float station_total      = station_degenerate ? 0.0f : station_s.back();
 
+  // Candidate evaluation never looks meaningfully past the END of the path:
+  // the run stops at the goal, so clearance differences beyond it (the wall
+  // behind a docking point, the arena boundary) are irrelevant to the
+  // remaining task - left uncapped they dominate the score on approach and
+  // curl the robot away from the goal (the terminal whip). Safety is
+  // unaffected: the emergency layer and the governor act on raw points.
+  const float remaining_path =
+      (station_degenerate ? std::sqrt(path.back().x * path.back().x +
+                                      path.back().y * path.back().y)
+                          : station_total - station_s0) +
+      0.5f;
+
   // Diagnostics: the reported local goal is the path point one preview
   // length ahead of the robot's own projection (display only - scoring uses
   // the projection itself).
@@ -574,17 +586,19 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // Returns the goal COST (remaining station + weighted lateral offset; full
   // Euclidean distance once past the path end) and the reference bearing
   // (path tangent, or the direction to the final point at the terminal).
-  auto station_goal_cost = [&](float px, float py, float &bearing_out) {
+  auto station_goal_cost = [&](float px, float py, float &bearing_out, float &heading_scale) {
+    heading_scale = 1.0f;
     if (station_degenerate)
     {
       const float dx = path.back().x - px, dy = path.back().y - py;
       const float d  = std::sqrt(dx * dx + dy * dy);
       bearing_out    = (d > 1e-3f) ? std::atan2(dy, dx) : 0.0f;
+      heading_scale  = std::min(1.0f, d / 0.5f);
       return d;
     }
     float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
     float best_qx = 0.0f, best_qy = 0.0f;
-    bool  clamped = false, blocked = false;
+    bool  clamped = false, clamped_end = false, blocked = false;
     for (size_t i = station_i0; i + 1 < station_pts.size(); ++i)
     {
       const float ax = station_pts[i].x, ay = station_pts[i].y;
@@ -608,15 +622,26 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         // outside the path's longitudinal span (facing away at the path
         // start, or overshooting the end) can wander at only the weak
         // lateral cost.
-        clamped = ((i + 2 == station_pts.size()) && t >= 1.0f - 1e-4f) ||
-                  (i == station_i0 && t <= 1e-4f);
-        blocked = station_blocked[i];
+        clamped_end = (i + 2 == station_pts.size()) && t >= 1.0f - 1e-4f;
+        clamped     = clamped_end || (i == station_i0 && t <= 1e-4f);
+        blocked     = station_blocked[i];
       }
     }
     const float d = std::sqrt(best_d2);
     if (clamped && d > 1e-3f)
     {
       bearing_out = std::atan2(best_qy - py, best_qx - px);
+      if (clamped_end)
+      {
+        // Endpoint past the path END: the bearing to the goal point
+        // degenerates as the distance shrinks (it flips to "behind" for any
+        // overshoot), and a full-weight heading term then REWARDS arcs that
+        // curl in beside the goal - the terminal whip. Fade the heading
+        // authority out with the remaining distance; a far overshoot
+        // (recovery) keeps it. The distance cost alone already prefers the
+        // minimal-overshoot slow straight approach.
+        heading_scale = std::min(1.0f, d / 0.5f);
+      }
       return (station_total - s_best) + d;
     }
     bearing_out = tan_best;
@@ -663,6 +688,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   {
     float v_probe    = std::max(v_cap, 0.1f);
     float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
+    probe_dist       = std::min(probe_dist, remaining_path);
     for (float wp : { -0.4f, 0.0f, 0.4f })
     {
       float dist_clear = probe_dist;
@@ -806,8 +832,8 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         end_x_pre    = radius * std::sin(end_th_pre);
         end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
       }
-      float gd_pre, bearing_pre;
-      gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre);
+      float gd_pre, bearing_pre, heading_scale_pre;
+      gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre);
       float fixed_penalties = params_.weights.goal_dist * gd_pre +
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
@@ -842,6 +868,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         }
         float v_ref  = std::max(v_cap, 0.05f);
         float dist   = std::max(v_ref * params_.sim_time, params_.min_eval_distance);
+        dist         = std::min(dist, remaining_path);
         ArcEvaluation eval = evaluateArcWindows(rotated_points, v_ref, 0.0f, dist, dist);
         clearance        = std::min(eval.clearance_left, eval.clearance_right);
         lateral_fraction = eval.lateral_fraction;
@@ -865,7 +892,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
-        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre) + advance;
+        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre) + advance;
       }
       else
       {
@@ -874,6 +901,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           return;  // near-spin arc: degenerate clearance geometry
         }
         float dist_block = std::max(std::fabs(v) * params_.sim_time, params_.min_eval_distance);
+        dist_block       = std::min(dist_block, remaining_path);
         float dist_clear = dist_block;
         if (std::fabs(w) > 1e-4f)
         {
@@ -930,7 +958,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       float score = params_.weights.clearance * std::min(clearance, cap_eff) -
                     params_.weights.balance * tightness * balance -
                     params_.weights.goal_dist * goal_dist -
-                    params_.weights.heading * std::fabs(heading_err) -
+                    params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
                     params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
                     params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
 #ifdef BAC_DEBUG_CANDIDATES
