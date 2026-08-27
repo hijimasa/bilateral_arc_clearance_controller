@@ -74,6 +74,7 @@ private:
   rclcpp::Clock::SharedPtr                                     clock_;
   std::string                                                  scan_topic_;
   float                                                        scan_timeout_ = 0.5f;  // [s]
+  int                                                          scan_downsample_ = 1;
 
   BacCore core_;
 

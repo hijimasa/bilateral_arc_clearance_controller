@@ -62,6 +62,11 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   params.min_eval_distance   = declareF("min_eval_distance", params.min_eval_distance);
   params.turn_radius_min     = declareF("turn_radius_min", params.turn_radius_min);
   params.eval_angle_max      = declareF("eval_angle_max", params.eval_angle_max);
+  params.eval_lateral_max    = declareF("eval_lateral_max", params.eval_lateral_max);
+  params.goal_los_radius     = declareF("goal_los_radius", params.goal_los_radius);
+  params.los_onpath_radius   = declareF("los_onpath_radius", params.los_onpath_radius);
+  params.cap_adapt_rate      = declareF("cap_adapt_rate", params.cap_adapt_rate);
+  params.max_points          = static_cast<int>(declareF("max_points", static_cast<float>(params.max_points)));
   params.blocked_near        = declareF("blocked_near", params.blocked_near);
   params.blocked_far         = declareF("blocked_far", params.blocked_far);
   params.stop_decel          = declareF("stop_decel", params.stop_decel);
@@ -80,6 +85,7 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   node->declare_parameter<std::string>(name + ".scan_topic", "");
   scan_topic_   = node->get_parameter(name + ".scan_topic").as_string();
   scan_timeout_ = declareF("scan_timeout", scan_timeout_);
+  scan_downsample_ = std::max(1, static_cast<int>(declareF("scan_downsample", 1.0f)));
   clock_        = node->get_clock();
   if (!scan_topic_.empty())
   {
@@ -214,7 +220,7 @@ BacController::collectScanPoints()
   float max_range = core_.params().max_range;
   std::vector<Point2D> points;
   points.reserve(scan->ranges.size());
-  for (size_t i = 0; i < scan->ranges.size(); i++)
+  for (size_t i = 0; i < scan->ranges.size(); i += static_cast<size_t>(scan_downsample_))
   {
     float r = scan->ranges[i];
     if (!std::isfinite(r) || r < scan->range_min || r > scan->range_max || r > max_range)

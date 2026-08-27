@@ -152,6 +152,14 @@ struct Params
   /// attractor then sits at the corner instead of beyond it, so the robot
   /// stops hugging the inner wall. 0 disables.
   float goal_los_radius = 0.45f;  // [m]
+  /// Density adaptation: the tightness reference tracks an EMA (this rate
+  /// per tick) of the probed achievable clearance, clamped to
+  /// [body/2 + safety.side, the configured cap]. Where the configured avoid
+  /// margin is unattainable everywhere (dense clutter) the "tight" judgment
+  /// relaxes towards what the environment affords instead of treating the
+  /// whole field as a crisis. 0 disables (fixed reference).
+  float cap_adapt_rate = 0.05f;
+
   /// Obstacle points within this distance of the path are treated as
   /// on-path blockers (degraded plan - the swerve logic's business) and do
   /// not trim the line of sight. Smaller than half the body width so that
@@ -196,6 +204,10 @@ struct Params
   float stop_decel          = 1.0f;   // [m/s^2] braking capability
   float brake_reaction_time = 0.1f;   // [s] latency covered by braking distances
   float max_range           = 10.0f;  // [m] points beyond this are ignored
+  /// Defensive cap on the point count (uniform stride subsampling above it):
+  /// process() is linear in points x candidates; a dense sensor should be
+  /// decimated upstream, this cap bounds the worst case.
+  int max_points = 1000;
 
   float velocity_min = 0.005f;  // [m/s] outputs below are clamped to 0
   float angvel_min   = 0.01f;   // [rad/s] outputs below are clamped to 0
@@ -305,6 +317,7 @@ private:
   Status current_status_;
   int    avoiding_counter_;  // AVOIDING latch countdown
   float  prev_selected_w_;   // previously selected steering rate (hysteresis)
+  float  cap_ema_;           // density-adapted clearance reference (-1 = uninitialized)
 };
 
 }  // namespace bac

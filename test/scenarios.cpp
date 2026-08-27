@@ -512,6 +512,44 @@ scenarioBlockedPathObstacle(const std::string &csv_dir)
   return result;
 }
 
+// Dense clutter: five unknown boxes with ~2 m spacing - an environment where
+// the configured avoid margin (0.6 m from everything) is unattainable. The
+// density adaptation must keep this passable instead of treating the whole
+// field as a crisis.
+ScenarioResult
+scenarioClutterField(const std::string &csv_dir)
+{
+  ScenarioResult result{ "clutter_field", Tier::TARGET, {}, {} };
+
+  World world;
+  world.addBox(2.5f, 0.0f, 0.3f, 0.3f);
+  world.addBox(4.5f, 1.0f, 0.3f, 0.3f);
+  world.addBox(4.5f, -1.2f, 0.3f, 0.3f);
+  world.addBox(6.5f, 0.4f, 0.3f, 0.3f);
+  world.addBox(8.0f, -0.9f, 0.3f, 0.3f);
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 90.0f;
+
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(9.0f, 0.0f), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 9.0f;
+  options.goal_y         = 0.0f;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "reaches goal", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" : "not reached" });
+  result.checks.push_back({ "keeps clearance", m.min_clearance > 0.1f,
+                            "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "no full stop", m.stop_ticks < 40, std::to_string(m.stop_ticks) + " stop ticks" });
+  return result;
+}
+
 }  // namespace
 
 int
@@ -565,7 +603,7 @@ main(int argc, char *argv[])
     scenarioOpenPassthrough, scenarioSafetyStop,           scenarioAvoidSingleObstacle,
     scenarioCorridorWide,    scenarioCorridorNarrowAligned, scenarioCorridorNarrowOffset,
     scenarioCorridorNarrowWalled, scenarioCorridorExtreme, scenarioCorridorLshape,
-    scenarioPathOffsetNarrow, scenarioBlockedPathObstacle,
+    scenarioPathOffsetNarrow, scenarioBlockedPathObstacle, scenarioClutterField,
   };
 
   std::vector<ScenarioResult> results;

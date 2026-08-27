@@ -52,6 +52,7 @@ BacCore::BacCore(const Params &params)
   , current_status_(Status::CLEAR)
   , avoiding_counter_(0)
   , prev_selected_w_(0.0f)
+  , cap_ema_(-1.0f)
 {
 }
 
@@ -85,6 +86,7 @@ BacCore::reset()
   current_status_   = Status::CLEAR;
   avoiding_counter_ = 0;
   prev_selected_w_  = 0.0f;
+  cap_ema_          = -1.0f;
 }
 
 ArcEvaluation
@@ -232,6 +234,18 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       continue;  // ignore area
     }
     filtered_points.push_back(point);
+  }
+  if (params_.max_points > 0 && static_cast<int>(filtered_points.size()) > params_.max_points)
+  {
+    // Uniform stride subsampling keeps the angular coverage of a scan
+    std::vector<Point2D> reduced;
+    reduced.reserve(params_.max_points);
+    float stride = static_cast<float>(filtered_points.size()) / params_.max_points;
+    for (int i = 0; i < params_.max_points; i++)
+    {
+      reduced.push_back(filtered_points[static_cast<size_t>(i * stride)]);
+    }
+    filtered_points.swap(reduced);
   }
 
   // Immediate-stop check: emergency zone = body rectangle (extended in the
@@ -523,7 +537,21 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       ArcEvaluation eval = evaluateArcWindows(filtered_points, v_probe, wp, dist_clear, probe_dist);
       probe_best = std::max(probe_best, std::min(eval.clearance_left, eval.clearance_right));
     }
-    float reference = clearance_cap + params_.safety_margin.side;
+    float cap_floor_probe = params_.footprint.width / 2.0f + params_.safety_margin.side;
+    float probe_clamped   = std::max(cap_floor_probe, std::min(probe_best, clearance_cap));
+    if (params_.cap_adapt_rate > 1e-6f)
+    {
+      if (cap_ema_ < 0.0f)
+      {
+        cap_ema_ = clearance_cap;
+      }
+      cap_ema_ += params_.cap_adapt_rate * (probe_clamped - cap_ema_);
+    }
+    else
+    {
+      cap_ema_ = clearance_cap;
+    }
+    float reference = cap_ema_ + params_.safety_margin.side;
     tightness = 1.0f - std::max(0.0f, std::min(1.0f, probe_best / std::max(reference, 1e-3f)));
   }
 
@@ -552,6 +580,35 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       if (v < -1e-3f && forward_admissible > 0)
       {
         continue;  // reverse is an escape move: only when forward is hopeless
+      }
+
+      // Endpoint pose and the point-free score parts first: they give an
+      // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
+      // skip the expensive arc evaluation for candidates that cannot win.
+      float end_th_pre = w * params_.sim_time;
+      float end_x_pre, end_y_pre;
+      if (std::fabs(w) < 1e-4f)
+      {
+        end_x_pre = v * params_.sim_time;
+        end_y_pre = 0.0f;
+      }
+      else
+      {
+        float radius = v / w;
+        end_x_pre    = radius * std::sin(end_th_pre);
+        end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
+      }
+      float gdx_pre = goal_x - end_x_pre, gdy_pre = goal_y - end_y_pre;
+      float gd_pre  = std::sqrt(gdx_pre * gdx_pre + gdy_pre * gdy_pre);
+      float fixed_penalties = params_.weights.goal_dist * gd_pre +
+                              params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
+      // (Pruning waits until one admissible forward candidate is on record:
+      // the escape-reverse gate depends on that count, and admissibility is
+      // only known after evaluation.)
+      if (forward_admissible > 0 &&
+          params_.weights.clearance * cap_eff - fixed_penalties <= best_score)
+      {
+        continue;
       }
 
       float clearance, lateral_fraction, clear_left, clear_right;
@@ -636,24 +693,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                           ? std::fabs(clear_left - clear_right)
                           : 0.0f;
 
-      // Rollout endpoint after sim_time
-      float end_x, end_y, end_th = w * params_.sim_time;
-      if (std::fabs(w) < 1e-4f)
-      {
-        end_x = v * params_.sim_time;
-        end_y = 0.0f;
-      }
-      else
-      {
-        float radius = v / w;
-        end_x        = radius * std::sin(end_th);
-        end_y        = radius * (1.0f - std::cos(end_th));
-      }
-
-      float goal_dx    = goal_x - end_x;
-      float goal_dy    = goal_y - end_y;
-      float goal_dist  = std::sqrt(goal_dx * goal_dx + goal_dy * goal_dy);
-      float bearing    = std::atan2(goal_dy, goal_dx);
+      // Rollout endpoint after sim_time (precomputed above)
+      float end_th     = end_th_pre;
+      float goal_dist  = gd_pre;
+      float bearing    = std::atan2(gdy_pre, gdx_pre);
       float heading_err = wrapAngle(bearing - end_th);
 
       float score = params_.weights.clearance * std::min(clearance, cap_eff) -
