@@ -132,6 +132,22 @@ testSweptCornerOnArc()
 }
 
 void
+testReverseRightTurnCounterexample()
+{
+  // Fixed counterexample from the re-re-review: reverse + right turn, the
+  // point contacts the body at t ~ 0.48 s (body-origin travel ~ 0.19 m) but
+  // the un-normalized advance angle rejected it as a next-revolution
+  // crossing.
+  bac::BacCore core;
+  const bac::ArcEvaluation eval =
+      core.evaluateArc({ { -0.55f, 0.60f } }, -0.40f, -0.50f, 2.0f);
+  expect(eval.blocking_s < 1e6f, "reverse/right-turn contact is detected");
+  expect(eval.blocking_s < 0.25f,
+         "reverse/right-turn contact distance is not overestimated (" +
+             std::to_string(eval.blocking_s) + ")");
+}
+
+void
 testSweptFootprintProperty()
 {
   // Property test against a brute-force ground truth (review re-finding):
@@ -207,6 +223,59 @@ testSweptFootprintProperty()
   expect(missed == 0, "no physical contact is missed by blocking_s (" +
                           std::to_string(missed) + " missed)");
   expect(over == 0, "no phantom contact is reported (" + std::to_string(over) + " phantom)");
+
+  // Deterministic coverage: EVERY forward/backward x left/right-turn
+  // quadrant with a body-surrounding point grid (the random pass alone can
+  // skip a quadrant; re-re-review Critical 1 recommendation).
+  int g_checked = 0, g_missed = 0, g_over = 0;
+  for (float v : { -0.4f, -0.15f, 0.15f, 0.4f })
+  {
+    for (float w : { -1.0f, -0.4f, 0.4f, 1.0f })
+    {
+      for (float px = -1.0f; px <= 2.0f; px += 0.15f)
+      {
+        for (float py = -1.5f; py <= 1.5f; py += 0.15f)
+        {
+          if (px >= params.footprint.rear - 0.02f && px <= params.footprint.front + 0.02f &&
+              std::fabs(py) <= half + 0.02f)
+          {
+            continue;  // starting on/inside the body boundary
+          }
+          const float horizon = 2.0f;
+          const float t_cap   = std::min(horizon, params.eval_angle_max / std::fabs(w));
+          const float s_wing  = std::fabs(v) * t_cap;
+          const float R = v / w;
+          float s_true  = std::numeric_limits<float>::max();
+          for (float t = 0.0f; t <= t_cap; t += 0.002f)
+          {
+            const float rho = w * t;
+            const float ux = px, uy = py - R;
+            const float qx = ux * std::cos(rho) + uy * std::sin(rho);
+            const float qy = -ux * std::sin(rho) + uy * std::cos(rho) + R;
+            if (qx >= params.footprint.rear && qx <= params.footprint.front &&
+                std::fabs(qy) <= half)
+            {
+              s_true = std::fabs(v) * t;
+              break;
+            }
+          }
+          const bac::ArcEvaluation ev = core.evaluateArc({ { px, py } }, v, w, horizon);
+          ++g_checked;
+          if (s_true < s_wing - 0.05f && ev.blocking_s > s_true + 0.03f)
+          {
+            ++g_missed;
+          }
+          if (ev.blocking_s < s_wing - 0.05f && s_true == std::numeric_limits<float>::max())
+          {
+            ++g_over;
+          }
+        }
+      }
+    }
+  }
+  expect(g_checked > 5000, "quadrant grid exercised enough samples");
+  expect(g_missed == 0, "quadrant grid: no missed contact (" + std::to_string(g_missed) + ")");
+  expect(g_over == 0, "quadrant grid: no phantom contact (" + std::to_string(g_over) + ")");
 }
 
 void
@@ -273,6 +342,7 @@ main()
   testEmergencyStop();
   testEmptyPathAndReset();
   testSweptCornerOnArc();
+  testReverseRightTurnCounterexample();
   testSweptFootprintProperty();
   testFaceAwayRecovery();
 

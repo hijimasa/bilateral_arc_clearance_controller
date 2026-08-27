@@ -116,8 +116,16 @@ firstContactArcLength(const Point2D &point, float v, float w, const Footprint &b
   // that actually lie on the rectangle.
   float best_rho = FLT_MAX;
   auto consider = [&](float theta) {
-    float rho = sigma * (psi0 - theta);
-    while (rho < 0.0f) rho += 2.0f * kPi;
+    // Normalize the advance angle into [0, 2*pi): theta candidates from
+    // asin/acos can put sigma * (psi0 - theta) anywhere in (-2.5*pi, 2.5*pi),
+    // and a positive value above 2*pi is the SAME crossing one revolution
+    // early - leaving it unnormalized rejected near contacts on
+    // reverse/right-turn arcs (re-re-review Critical 1).
+    float rho = std::fmod(sigma * (psi0 - theta), 2.0f * kPi);
+    if (rho < 0.0f)
+    {
+      rho += 2.0f * kPi;
+    }
     if (rho > rho_max + 1e-6f)
     {
       return;
@@ -1179,8 +1187,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     if (std::fabs(clamped - out_w) > 1e-4f)
     {
       out_w = clamped;
-      if (std::fabs(out_v) > 1e-3f &&
-          !(std::fabs(out_w) > 1e-4f && std::fabs(out_v) / std::fabs(out_w) < params_.turn_radius_min))
+      // The exact contact test is valid for ANY radius, so the clamped arc
+      // is re-verified even below turn_radius_min (that guard exists for
+      // the clearance scoring degeneracy, not for contact).
+      if (std::fabs(out_v) > 1e-3f)
       {
         float dist_block = std::max(std::fabs(out_v) * params_.sim_time, params_.min_eval_distance);
         dist_block       = std::min(dist_block, remaining_path);

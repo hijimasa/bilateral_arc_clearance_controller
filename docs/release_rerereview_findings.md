@@ -1,0 +1,194 @@
+# bilateral_arc_clearance_controller リリース再々レビュー指摘
+
+レビュー日: 2026-08-28  
+対象: `c745293` (`Final re-review numbers from the third-generation regeneration`)  
+対応資料: [release_rereview_response.md](release_rereview_response.md)
+
+## 結論
+
+`+Inf` LaserScan の扱い、parameter reference、座標系誤差に関する説明、benchmark harness の
+追跡可能性、raw result からの集計は改善している。plain CMake Release build、core unit test、
+13 本の closed-loop scenario も成功し、正準評価の BAC 54/54、衝突 0、最小クリアランス 0.154 m は
+raw data と一致した。
+
+一方、主要な安全根拠である閉形式の矩形接触判定に角度周期の不具合があり、物理的な接触を
+`blocking_s == FLT_MAX` とする反例が残る。角速度対応も出力値を制限する改善に留まり、加速中の軌道を
+admissibility へ反映していない。現時点ではリリースを保留し、Critical の修正後に benchmark を
+再生成することを推奨する。
+
+## Critical
+
+### 1. 閉形式の矩形接触判定に角度周期の不具合がある
+
+[`firstContactArcLength()`](../src/bac_core.cpp#L95) は、矩形辺との交点角から進行角 `rho` を
+次のように計算する。
+
+```cpp
+float rho = sigma * (psi0 - theta);
+while (rho < 0.0f) rho += 2.0f * kPi;
+```
+
+負値は `2π` を加えて正規化するが、`rho > 2π` の場合に `2π` を引かない。右旋回側では、
+`theta` が `π` を超す表現で生成された交点が、実際には近い接触であるにもかかわらず一周後の接触として
+扱われ、`rho_max` により棄却される場合がある。
+
+確認した反例:
+
+```text
+v = -0.40 m/s
+w = -0.50 rad/s
+turn radius = 0.80 m
+point in initial robot frame = (-0.55, +0.60)
+horizon = 2.0 s
+
+physical first contact:
+  t ≈ 0.48 s
+  body-origin travel ≈ 0.192 m
+
+evaluateArc():
+  blocking_s = FLT_MAX
+```
+
+障害点は初期車体の外にあり、`eval_angle_max` より十分手前で後退旋回中の矩形へ接触するため、
+initial emergency 判定や角度capでは補えない。前後進・左右旋回を明示した独立の高密度grid照合でも、
+後退・右旋回を中心に複数の未検出を確認した。
+
+推奨対応:
+
+1. 各候補交点の `rho` を `std::fmod()` で `[0, 2π)` に正規化する。
+2. 上記反例を固定unit testとして追加する。
+3. 前進・後退 × 左・右旋回を個別loopで必ず通すproperty testへ変更する。
+4. 車体4辺、各角付近、`eval_angle_max`直前・直後、初期車体境界を決定論的gridで確認する。
+5. 修正後に正準216 episode、drift sweep、gap sweepを再生成する。
+
+正規化の概形:
+
+```cpp
+rho = std::fmod(rho, 2.0f * kPi);
+if (rho < 0.0f)
+{
+  rho += 2.0f * kPi;
+}
+```
+
+現在の[property test](../test/core_unit.cpp#L135)は乱数400反復であり、`v`または`w`が小さいsampleや
+初期車体内の点をskipする。そのため「前後進 × 左右旋回 × 全象限の400ケースを総当たり」という
+[responseの説明](release_rereview_response.md#L9)とは一致せず、今回の反例も検出できていない。
+
+以上から、responseの「修正（厳密化）」「見逃し0」は現時点では成立しない。
+
+## High
+
+### 2. 角速度の到達可能値は制限されたが、加速中の軌道は未評価
+
+[`BacCore::process()`の出力段](../src/bac_core.cpp#L1170)は、出力角速度を
+`current.w ± limits.acc_w * control_period`へクランプし、クランプ後の定曲率円弧を再検証する。
+これは1周期後に到達可能な角速度値へ指令を制限する改善である。
+
+しかし実機は現在角速度からクランプ後角速度まで有限角加速度で遷移するため、その区間の軌道は
+定曲率円弧ではない。現行処理には次の残差がある。
+
+- 候補`w`が到達可能範囲内なら、加速過程を含む再検証を行わない。
+- candidate scoreはクランプ前の定曲率円弧に基づく。
+- クランプ後の旋回半径が`turn_radius_min`未満の場合、停止可能性再検証をskipする。
+- clamp後の円弧は「clamp後角速度へ即時到達」と仮定し、1周期内の過渡軌道を扱わない。
+- filter nodeは`CLEAR`時に[上位commandをそのまま透過](../src/bac_filter_node.cpp#L193)するため、
+  coreが計算した角速度制限を出力へ適用しない。
+
+したがって「出力角速度の目標値は1周期後に到達可能」とは言えるが、
+[`parameters.md`](parameters.md#L43)および[response](release_rereview_response.md#L17)の
+「指令軌道は常に力学的に到達可能」という説明は過大である。
+
+推奨対応:
+
+1. 少なくとも最初の`control_period`を角加速度付きで積分し、その後を定曲率としてcontact checkする。
+2. または候補生成・採点自体を角速度dynamic window内に限定する。
+3. `turn_radius_min`未満になったclamp後円弧も停止可能性検証から除外しない。
+4. filter nodeで角速度制限を安全契約に含めるなら、`CLEAR`透過にもrate limiterを適用する。
+5. full angular rolloutを次cycleへ送る場合は本項を「部分修正」とし、軌道到達性の保証を外す。
+
+## Medium
+
+### 3. padding評価の自己位置ズレ量がまだ訂正されていない
+
+[`method_comparison.md`](method_comparison.md#L140)には現在も次の記述がある。
+
+```text
+corridor_locdrift_15x (1.5 m 通路 + 0.15 m 自己位置ズレ)
+```
+
+実際の[`corridor_locdrift_15x.yaml`](../../../../nav2_benchmark/ws/src/bench_bringup/worlds/corridor_locdrift_15x.yaml#L1)は
+0.25 m driftである。[response](release_rereview_response.md#L23)の「対象は0.25 mと訂正」は
+まだ本文へ反映されていない。
+
+### 4. benchmark環境に関する古い説明が残る
+
+`nav2_benchmark`は親repositoryへ追加され、bench tree hashとcontainer image digestも保存されるように
+なった。一方、[`method_comparison.md`](method_comparison.md#L117)には「本リポジトリ外の評価環境」と
+残っている。
+
+また[`nav2_benchmark/README.md`](../../../../nav2_benchmark/README.md)は6scenario時代の説明で、
+現在の18scenario正準評価、drift/gap sweep、provenance、`summarize.py`の利用方法を説明していない。
+
+### 5. 角加速度に関するREADMEの制約説明が実装と同期していない
+
+[`README.md`](../README.md#L193)は、角加速度を下位速度制御器だけで制限する説明のままである。
+現在はcoreも出力角速度をrate limitするため、次を分けて記載する必要がある。
+
+- coreが保証するもの: 1周期後に到達可能な角速度目標値
+- coreがまだ保証しないもの: 角加速度過渡中のswept trajectory、jerk
+- 下位制御器へ要求するもの: 実機上の角加速度・jerk制限の実行
+
+### 6. 実行時間の測定根拠が成果物に残っていない
+
+[response](release_rereview_response.md#L42)は`~450 µs/tick @1000〜4000点`としているが、
+測定program、CPU、compiler、candidate数、point数別raw値、反復数、分位点が保存されていない。
+
+1000点・4000点についてwarm-up後のp50/p95/maxを出すmicrobenchmarkを追加し、実行条件とraw CSVを
+provenance付きで保存することを推奨する。20 Hz予算との比較には平均値ではなくworst-case寄りの値を使う。
+
+## 確認できた改善
+
+- `+Inf`および`range_max`超を正常な無反射測定として扱う実装になった。
+- `scan_min_points`をinteger parameterとして宣言した。
+- 地図-odom誤差の説明を、障害物幾何と経路追従項に分けて限定した。
+- `stop_decel`、`limits.acc_w`、`control_period`、scan/timeout parameterをreferenceへ反映した。
+- benchmark harnessを親repositoryで追跡可能にした。
+- provenanceへbench tree hash、bench commit、container image digestを追加した。
+- 記録されたbench tree hashは現在の追跡内容と一致した。
+- `summarize.py`の出力は正準・drift・gapの主要表と一致した。
+- 正準評価は216行、4 controller × 18 scenario × 3 runで、重複はなかった。
+- BAC 54/54、衝突0、0.15 m未満接近0、最小clearance 0.154 mはraw dataと一致した。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| plain CMake Release build (`-Wall -Wextra -Wpedantic`) | 成功、警告なし |
+| `BacCoreUnit`（既存property test含む） | 成功 |
+| `BacScenarioHarness --strict`（13 closed-loop scenarios） | 成功 |
+| 既存ROS 2 Jazzy build log | plugin build成功を確認 |
+| 正準benchmark構成 | 216 episode、欠落・重複なし |
+| 正準BAC集計 | 54/54成功、衝突0、最小clearance 0.154 m |
+| provenance tree hash | 現在のbenchmark treeと一致 |
+| 独立した高密度swept-footprint照合 | 未検出反例あり |
+| package worktree | clean |
+
+## リリース判定チェックリスト
+
+- [x] 正常なall-`+Inf` scanを有効観測として扱う
+- [x] scan点数parameterをinteger化する
+- [x] 座標系誤差に関する説明を障害物幾何と経路項に分ける
+- [x] benchmark harnessを追跡可能化する
+- [x] benchmark tree hashとcontainer image digestを記録する
+- [x] raw summaryから主要比較表を生成する
+- [ ] `firstContactArcLength()`の進行角を`[0, 2π)`へ正規化する
+- [ ] 後退・右旋回の固定反例testを追加する
+- [ ] 前後進 × 左右旋回を決定論的に網羅するproperty testへ変更する
+- [ ] 角加速度過渡をadmissibilityへ反映する、または保証範囲を限定する
+- [ ] clamp後に`turn_radius_min`未満となる円弧も再検証する
+- [ ] filter nodeの`CLEAR`透過と角速度制限の契約を整理する
+- [ ] padding評価の0.15/0.25 m表記を訂正する
+- [ ] benchmark READMEと評価環境の説明を現在の構成へ更新する
+- [ ] 実行時間microbenchmarkとraw結果を保存する
+- [ ] Critical修正後に正準216 episode、drift sweep、gap sweepを再生成する

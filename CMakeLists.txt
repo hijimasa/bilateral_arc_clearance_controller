@@ -79,6 +79,10 @@ if(BUILD_TESTING)
   target_compile_options(bac_core_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacCoreUnit COMMAND bac_core_unit)
 
+  add_executable(bac_perf_benchmark test/perf_benchmark.cpp)
+  target_link_libraries(bac_perf_benchmark bac_core)
+  target_compile_options(bac_perf_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+
   add_executable(bac_scenario_harness test/scenarios.cpp)
   target_include_directories(bac_scenario_harness PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
   target_link_libraries(bac_scenario_harness bac_core)
