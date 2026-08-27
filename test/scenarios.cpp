@@ -167,10 +167,13 @@ scenarioSafetyStop(const std::string &csv_dir)
   result.metrics = computeMetrics(sim, options);
   const Metrics &m = result.metrics;
 
+  // With the escape-reverse row, a wall dead ahead makes the robot back off
+  // to a safe distance and hold (instead of freezing in place). The safety
+  // contract is: never advance towards the obstacle, never collide, settle.
   result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
-  result.checks.push_back({ "always STOP status", m.status_stop == m.total_ticks,
-                            "STOP " + std::to_string(m.status_stop) + "/" + std::to_string(m.total_ticks) });
-  result.checks.push_back({ "robot does not move", std::fabs(m.final_x) < 0.01f, "final x " + fmt(m.final_x) });
+  result.checks.push_back({ "never advances", m.final_x < 0.01f, "final x " + fmt(m.final_x) });
+  result.checks.push_back({ "retreats no further than needed", m.final_x > -0.6f,
+                            "final x " + fmt(m.final_x) });
   return result;
 }
 
@@ -434,6 +437,81 @@ scenarioCorridorLshape(const std::string &csv_dir)
   return result;
 }
 
+// REGRESSION guard for the localization-robustness selling point: the
+// waypoint path rides 0.15 m off the true corridor center (as after
+// localization drift with a correct map). Geometric centering must ignore
+// the path's lateral error and ride the TRUE center.
+ScenarioResult
+scenarioPathOffsetNarrow(const std::string &csv_dir)
+{
+  ScenarioResult result{ "path_offset_narrow", Tier::REGRESSION, {}, {} };
+
+  World world;
+  world.addCorridorX(3.0f, 9.0f, 0.0f, 1.7f);
+  world.addWall(3.0f, 0.85f, 3.0f, 6.0f);
+  world.addWall(3.0f, -0.85f, 3.0f, -6.0f);
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 120.0f;
+
+  std::vector<Point2D> waypoints{ { 0.0f, 0.15f }, { 10.0f, 0.15f } };
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, waypointsPath(waypoints), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 10.0f;
+  options.goal_y         = 0.15f;
+  options.goal_tolerance = 0.5f;
+  options.eval_lateral   = true;
+  options.center_y       = 0.0f;
+  options.x_from         = 4.0f;
+  options.x_to           = 8.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "traverses corridor", m.final_x > 9.0f, "final x " + fmt(m.final_x) });
+  result.checks.push_back({ "rides the TRUE center, not the offset path",
+                            m.lateral_samples > 0 && m.mean_abs_lateral < 0.08f,
+                            "mean |y| " + fmt(m.mean_abs_lateral) + ", max " + fmt(m.max_abs_lateral) });
+  result.checks.push_back({ "keeps clearance", m.min_clearance > 0.2f,
+                            "min clearance " + fmt(m.min_clearance) });
+  return result;
+}
+
+// REGRESSION guard for the degraded-plan selling point: an obstacle sits ON
+// the path (the planner does not know about it) and the robot must swerve
+// around it while the path keeps pointing through it.
+ScenarioResult
+scenarioBlockedPathObstacle(const std::string &csv_dir)
+{
+  ScenarioResult result{ "blocked_path_obstacle", Tier::REGRESSION, {}, {} };
+
+  World world;
+  world.addBox(4.5f, 0.0f, 0.4f, 0.4f);
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 90.0f;
+
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(9.0f, 0.0f), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 9.0f;
+  options.goal_y         = 0.0f;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "reaches goal", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" : "not reached" });
+  result.checks.push_back({ "keeps clearance", m.min_clearance > 0.15f,
+                            "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "no full stop", m.stop_ticks < 40, std::to_string(m.stop_ticks) + " stop ticks" });
+  return result;
+}
+
 }  // namespace
 
 int
@@ -487,6 +565,7 @@ main(int argc, char *argv[])
     scenarioOpenPassthrough, scenarioSafetyStop,           scenarioAvoidSingleObstacle,
     scenarioCorridorWide,    scenarioCorridorNarrowAligned, scenarioCorridorNarrowOffset,
     scenarioCorridorNarrowWalled, scenarioCorridorExtreme, scenarioCorridorLshape,
+    scenarioPathOffsetNarrow, scenarioBlockedPathObstacle,
   };
 
   std::vector<ScenarioResult> results;

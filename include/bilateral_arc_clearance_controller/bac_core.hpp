@@ -97,7 +97,10 @@ struct IgnoreBox
 struct Limits
 {
   float v_max = 0.4f;  // [m/s]
-  float v_min = 0.0f;  // [m/s] (0 = no reverse; reverse via upstream recoveries)
+  /// Reverse speed floor. Small reverse candidates are offered only when the
+  /// robot is near standstill (escape from a wedge without an external
+  /// recovery). Requires rear sensor coverage - set 0 for front-only sensors.
+  float v_min = -0.1f;  // [m/s]
   float w_max = 1.0f;  // [rad/s]
   float acc_v = 0.8f;  // [m/s^2]
   float acc_w = 2.5f;  // [rad/s^2]
@@ -143,6 +146,17 @@ struct Params
   /// LOCAL GOAL instead of the nearest path segment keeps the robot from
   /// being pulled into an obstacle that sits on the path itself.
   float score_lookahead = 2.5f;  // [m]
+  /// Line-of-sight goal: while the straight segment from the robot to the
+  /// local goal passes within this radius of an obstacle point, the goal is
+  /// pulled back to the farthest VISIBLE path point. Around a corner the
+  /// attractor then sits at the corner instead of beyond it, so the robot
+  /// stops hugging the inner wall. 0 disables.
+  float goal_los_radius = 0.45f;  // [m]
+  /// Obstacle points within this distance of the path are treated as
+  /// on-path blockers (degraded plan - the swerve logic's business) and do
+  /// not trim the line of sight. Smaller than half the body width so that
+  /// walls a real planner path legitimately skirts still count as walls.
+  float los_onpath_radius = 0.5f;  // [m]
   /// Clearance/admissibility evaluation reaches at least this far along the
   /// arc regardless of the candidate speed (a purely time-based horizon turns
   /// myopic at low speed: obstacles drop out of range as the robot slows, and

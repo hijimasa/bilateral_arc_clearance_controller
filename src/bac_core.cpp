@@ -374,6 +374,58 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     }
     goal_index = i;  // all blocked to the end: use the last examined
   }
+  // Line-of-sight trim: pull the goal back to the farthest path point whose
+  // straight segment from the robot stays goal_los_radius away from every
+  // obstacle point (see Params::goal_los_radius).
+  if (params_.goal_los_radius > 1e-3f)
+  {
+    // Obstacle points sitting ON the path (degraded plan) are the swerve
+    // logic's business and must not block the line of sight - otherwise the
+    // goal collapses to the obstacle's face and propulsion dies. Only
+    // off-path blockers (walls, corners) trim the goal.
+    std::vector<bool> on_path(filtered_points.size(), false);
+    float near2 = params_.los_onpath_radius * params_.los_onpath_radius;
+    for (size_t pi = 0; pi < filtered_points.size(); pi++)
+    {
+      const Point2D &p = filtered_points[pi];
+      for (const Point2D &q : local_path)
+      {
+        float dx = p.x - q.x, dy = p.y - q.y;
+        if (dx * dx + dy * dy < near2)
+        {
+          on_path[pi] = true;
+          break;
+        }
+      }
+    }
+    auto los_clear = [&](const Point2D &g) {
+      float len2 = g.x * g.x + g.y * g.y;
+      for (size_t pi = 0; pi < filtered_points.size(); pi++)
+      {
+        if (on_path[pi])
+        {
+          continue;
+        }
+        const Point2D &p = filtered_points[pi];
+        float t = 0.0f;
+        if (len2 > 1e-9f)
+        {
+          t = std::max(0.0f, std::min(1.0f, (p.x * g.x + p.y * g.y) / len2));
+        }
+        float dx = p.x - t * g.x, dy = p.y - t * g.y;
+        if (dx * dx + dy * dy < params_.goal_los_radius * params_.goal_los_radius)
+        {
+          return false;
+        }
+      }
+      return true;
+    };
+    while (goal_index > 0 && !los_clear(local_path[goal_index]))
+    {
+      goal_index--;
+    }
+  }
+
   float goal_x = local_path[goal_index].x;
   float goal_y = local_path[goal_index].y;
   result.goal_x = goal_x;
@@ -410,6 +462,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     {
       v_values.push_back(v);
     }
+  }
+  // Escape reverse: offered only when reverse is accel-reachable (near
+  // standstill), so it never competes with normal forward driving.
+  float v_rev = std::max(params_.limits.v_min, current.v - window_dv);
+  if (v_rev < -1e-3f)
+  {
+    v_values.push_back(v_rev);
+    v_values.push_back(v_rev / 2.0f);
   }
 
   std::vector<float> w_values;
@@ -482,15 +542,20 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   Twist2D best_cmd(0.0f, 0.0f);
   float best_clearance = 0.0f, best_goal_dist = 0.0f;
   int   admissible_count = 0, candidate_count = 0;
+  int   forward_admissible = 0;  // gates the escape-reverse row
 
   for (float v : v_values)
   {
     for (float w : w_values)
     {
       candidate_count++;
+      if (v < -1e-3f && forward_admissible > 0)
+      {
+        continue;  // reverse is an escape move: only when forward is hopeless
+      }
 
       float clearance, lateral_fraction, clear_left, clear_right;
-      if (v <= 1e-3f)
+      if (std::fabs(v) <= 1e-3f)
       {
         if (std::fabs(w) > 1e-3f && !rotation_admissible)
         {
@@ -518,15 +583,15 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       else
       {
-        if (std::fabs(w) > 1e-4f && v / std::fabs(w) < params_.turn_radius_min)
+        if (std::fabs(w) > 1e-4f && std::fabs(v) / std::fabs(w) < params_.turn_radius_min)
         {
           continue;  // near-spin arc: degenerate clearance geometry
         }
-        float dist_block = std::max(v * params_.sim_time, params_.min_eval_distance);
+        float dist_block = std::max(std::fabs(v) * params_.sim_time, params_.min_eval_distance);
         float dist_clear = dist_block;
         if (std::fabs(w) > 1e-4f)
         {
-          float radius = v / std::fabs(w);
+          float radius = std::fabs(v) / std::fabs(w);
           dist_clear   = std::min(dist_clear, radius * params_.eval_angle_max);
           if (params_.eval_lateral_max < radius)
           {
@@ -537,9 +602,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         ArcEvaluation eval = evaluateArcWindows(filtered_points, v, w, dist_clear, dist_block);
         if (eval.blocking_s < FLT_MAX)
         {
-          // DWA admissibility: able to stop (plus front margin) before the hit
-          float free_run = eval.blocking_s - lead_length - lead_margin;
-          float needed   = v * v / (2.0f * stop_decel) + v * params_.brake_reaction_time;
+          // DWA admissibility: able to stop (plus the leading margin in the
+          // direction of travel) before the hit
+          float lead     = (v >= 0.0f) ? lead_length : -params_.footprint.rear;
+          float margin   = (v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
+          float free_run = eval.blocking_s - lead - margin;
+          float needed   = v * v / (2.0f * stop_decel) + std::fabs(v) * params_.brake_reaction_time;
           if (free_run <= needed)
           {
             continue;
@@ -551,6 +619,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         clear_right      = eval.far_right;
       }
       admissible_count++;
+      if (v > 1e-3f)
+      {
+        forward_admissible++;
+      }
 
       // Bilateral balance over the FORWARD part of the arc (capped so wide
       // spaces zero out): first-order centering gradient towards equal
@@ -589,7 +661,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                     params_.weights.goal_dist * goal_dist -
                     params_.weights.heading * std::fabs(heading_err) -
                     params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
-                    params_.weights.squeeze * v * (1.0f - lateral_fraction);
+                    params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
 #ifdef BAC_DEBUG_CANDIDATES
       std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
                   std::min(clearance, clearance_cap), goal_dist, heading_err, lateral_fraction, score);
