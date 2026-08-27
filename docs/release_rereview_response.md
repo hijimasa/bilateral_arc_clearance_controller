@@ -1,0 +1,47 @@
+# リリース再レビューへの対応
+
+対象レビュー: [release_rereview_findings.md](release_rereview_findings.md)（2026-08-28、`9798a63` 時点）
+
+## Critical
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 1 | 矩形 swept footprint が厳密でない | **修正（厳密化）**。定曲率運動が旋回中心まわりの純回転であることを用い、障害点が車体座標系で描く円と矩形 4 辺の交差角から**初接触弧長を閉形式で厳密計算**する実装に置換（`firstContactArcLength`）。指摘の反例と同型の「s 窓リジェクトが判定前に点を捨てる」経路も除去。前後進 × 左右旋回 × 全象限の 400 ケースを総当たり真値と比較する property test（見逃し 0・幻接触 0、`blocking_s` の非過大も検証）を core_unit に常設。厳密化が自ら生んだ 2 退行も検出・修正: (a) 角度無制限の接触探索が低速急旋回で数 rad 先まで外挿し「いずれ壁に当たる」を量産 → `eval_angle_max` でキャップ（既存ガードの適用）、(b) `blocking_s` の意味論混在（直線=点の弧座標 / 曲線=接触距離）と lead の二重減算 → 「接触時の車体原点走行距離」に統一し消費側は方向マージンのみ減算。計算コストは掃引環帯の前置枝刈りで ~450 µs/tick（+30%、20 Hz 予算の 0.9%）。 |
+
+## High
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 2 | 正常な `+Inf` scan を異常扱い | **修正**。`scan_inf_is_valid`（既定 true、costmap の `inf_is_valid` 相当）を両アダプタに追加。`+Inf`・`range_max` 超は「障害物なしの正常測定」として有効測定数に算入し、有効性判定を「生存ヒット点数」から「有効測定数（ヒット+明示的無反射）」へ変更。NaN・`range_min` 未満のみ無効。`scan_min_points` は整数パラメータとして正式宣言・非負検証。アダプタ単体テスト（all-Inf / all-NaN / 空配列 / 時刻逆行）は残項目。 |
+| 3 | 「座標系誤差の影響を受けない」が広すぎる | **修正**。README・比較資料を推奨表現に沿って限定: 「ロボット座標系の障害物幾何・緊急停止判定・左右クリアランスは地図↔オドメトリ誤差に直接依存しない。経路追従項（横偏差・終端距離・接線方位）は影響を受けるが、弱い横偏差重みと左右クリアランスの作用により本評価範囲では挙動劣化が観測されなかった」。 |
+| 4 | 角速度到達性が rollout に未反映 | **修正**。`limits.acc_w`（既定 2.5 rad/s²）と `control_period` を実装: 候補 w の一様サンプリングは設計として維持しつつ、**出力**を実測角速度から 1 制御周期で到達可能な範囲へクランプし、クランプ後の円弧で停止可能性を再検証（不可なら許容速度まで減速）。指令軌道は常に力学的に到達可能。ハーネスでは全指標が改善（Z 字 clr 0.123→0.192 等）。角加速度込みの螺旋 rollout での候補評価は残項目。 |
+
+## Medium
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 5 | 比較資料と raw の不一致 | **修正+再発防止**。全数値を最終再生成データから貼り直し（DWB の locdrift_15x は 2/3・衝突 1、drift sweep の outcome は run 単位で明記、padding 実験の対象は 0.25 m ズレと訂正）。`scripts/summarize.py` を追加し、ドキュメント表は raw `summary.csv` からの自動生成出力を貼る運用に変更。 |
+| 6 | provenance が環境全体を固定しない | **修正**。`nav2_benchmark`（simulator・evaluator・launch・worlds・設定・スクリプト・Dockerfile）を親リポジトリにコミットして追跡可能化。provenance に bench tree hash・bench repo SHA・container image digest を追加。最終世代の 3 実験群はすべて `bac_dirty: 0`（`bench_dirty: 1` は当時未追跡だった summarize.py のみで、現在はコミット済み）。seed は未導入（シミュレータは乱数を使わず、残る変動源は実行タイミングのみ）— noisy 反復は残項目。 |
+| 7 | parameter reference の非同期 | **修正**。`stop_decel` 0.8、`limits.acc_w`、`control_period`、`scan_min_points`、`scan_inf_is_valid`、`cmd_timeout`、`odom_timeout` を反映し、点数系は整数宣言+検証に変更。 |
+
+## 可読性・保守性
+
+- 幾何判定は `firstContactArcLength()` として独立し（実質 `SweptFootprintEvaluator` の中核）、property test で網羅。`process()` 全体の分割は引き続き次サイクルの残項目。
+
+## 最終検証（対応後、単一リビジョン）
+
+| 確認項目 | 結果 |
+|---|---|
+| plain CMake Release build（-Wpedantic） | 警告 0 |
+| core unit + property test（400 ケース） | 成功 |
+| 13 closed-loop scenarios（--strict） | 成功 |
+| Jazzy コンテナ colcon build | 成功 |
+| 正準 216 episode 再生成 | BAC 54/54・衝突 0・**0.15 m 未満接近 0**（最悪 0.154）・平均 27.7 s |
+| drift sweep | BAC 全域不変 28.8 s / clr 0.23（0.10〜0.25 m） |
+| gap sweep | 段階減速 0.39→0.24→0.10→進入拒否（最接近 0.11、衝突なし） |
+| 実行時間 | ~450 µs/tick @1000〜4000 点 |
+
+## 残項目（次サイクル）
+
+アダプタ単体テスト、角加速度込み候補 rollout、`process()` の責務分割、noisy seed 反復と信頼区間、
+外乱系評価（scan 遅延・欠落・外れ値、odom バイアス、周期 jitter）、Collision Monitor 併用ベースライン。
