@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief Closed-loop simulation runner for the BAC scenario harness
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Replicates the integration loop the core is designed for: a local path in
  * the robot frame (recomputed every tick, like a 1 Hz-replanned nav2 plan

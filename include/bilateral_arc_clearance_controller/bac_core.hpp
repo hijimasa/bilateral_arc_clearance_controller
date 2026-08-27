@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief Framework-free core of the arc-clearance local planner (DWA-based)
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Self-contained C++17 library: no ROS, no shm, no project-specific headers.
  * Inputs are obstacle points and a LOCAL PATH, both in the robot frame, plus
@@ -11,10 +11,11 @@
  *
  * The method is a Dynamic Window Approach whose traversability evaluation is
  * replaced by the bilateral arc clearance measure: candidate velocities are
- * sampled inside the accel-limited window, rolled out as constant-curvature
+ * sampled from an acceleration-limited translational window and the configured
+ * angular range, rolled out as constant-curvature
  * arcs, and scored by
- *   saturated bilateral clearance + path following (distance / progress /
- *   heading) - hysteresis - lateral squeeze,
+ *   saturated bilateral clearance + local-goal following (distance / heading)
+ *   - hysteresis - lateral squeeze,
  * with DWA admissibility (can the robot stop before the first body hit on the
  * arc) and an emergency-stop layer in front of everything.
  *
@@ -85,6 +86,12 @@ struct Margins
   float side  = 0.2f;
 };
 
+/// Lateral clearance at which the arc-clearance reward saturates.
+struct AvoidMargin
+{
+  float side = 0.6f;
+};
+
 /// Axis-aligned box of points to ignore (sensor returns from the robot itself)
 struct IgnoreBox
 {
@@ -93,7 +100,7 @@ struct IgnoreBox
   float width = 0.0f;  // ... and |y| < width/2
 };
 
-/// Velocity and acceleration limits defining the dynamic window.
+/// Velocity and acceleration limits used for candidate generation.
 struct Limits
 {
   float v_max = 0.4f;  // [m/s]
@@ -103,7 +110,6 @@ struct Limits
   float v_min = -0.1f;  // [m/s]
   float w_max = 1.0f;  // [rad/s]
   float acc_v = 0.8f;  // [m/s^2]
-  float acc_w = 2.5f;  // [rad/s^2]
 };
 
 /// Scoring weights. Balance rationale (see the harness scenarios):
@@ -111,9 +117,8 @@ struct Limits
 ///    avoid_margin.side): in the open many candidates saturate and the path
 ///    terms decide; in tight spaces its max-min structure funnels through the
 ///    middle of the opening.
-///  - path_dist supplies the restoring force towards the path centerline that
-///    v1's command-fidelity could not provide inside corridors.
-///  - progress prefers faster, path-advancing candidates (speed selection).
+///  - goal_dist supplies the restoring force towards the lookahead point and
+///    rewards path-advancing candidates (speed selection).
 ///  - hysteresis damps tick-to-tick steering chatter; keep it well below the
 ///    path terms or the previous choice can pin the robot off-path.
 struct Weights
@@ -135,7 +140,7 @@ struct Params
 {
   Footprint footprint{};
   Margins   safety_margin{};                   // emergency stop margins
-  Margins   avoid_margin{ 0.6f, 0.6f, 0.6f };  // clearance saturation cap
+  AvoidMargin avoid_margin{};  // clearance saturation cap
   IgnoreBox ignore_box{};
   Limits    limits{};
   Weights   weights{};

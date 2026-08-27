@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief Trajectory quality metrics for the BAC scenario harness
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  */
 
 #pragma once

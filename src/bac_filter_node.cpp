@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief ROS 2 evaluation node for bac_core: cmd_vel filter driven by a laser scan
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Topics:
  *   in:  cmd_vel_in  (geometry_msgs/Twist)  upper-level velocity command
@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "bac_ros_parameters.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -37,37 +38,17 @@ public:
   BacFilterNode()
     : rclcpp::Node("bac_filter")
   {
-    bac::Params params;
-    params.footprint.front     = declareF("footprint.front", params.footprint.front);
-    params.footprint.rear      = declareF("footprint.rear", params.footprint.rear);
-    params.footprint.width     = declareF("footprint.width", params.footprint.width);
-    params.safety_margin.front = declareF("safety_margin.front", params.safety_margin.front);
-    params.safety_margin.rear  = declareF("safety_margin.rear", params.safety_margin.rear);
-    params.safety_margin.side  = declareF("safety_margin.side", params.safety_margin.side);
-    params.avoid_margin.front  = declareF("avoid_margin.front", params.avoid_margin.front);
-    params.avoid_margin.rear   = declareF("avoid_margin.rear", params.avoid_margin.rear);
-    params.avoid_margin.side   = declareF("avoid_margin.side", params.avoid_margin.side);
-    params.stop_decel          = declareF("stop_decel", params.stop_decel);
-    params.max_range           = declareF("max_range", params.max_range);
-    params.limits.v_max        = declareF("limits.v_max", params.limits.v_max);
-    params.limits.w_max        = declareF("limits.w_max", params.limits.w_max);
-    params.limits.acc_v        = declareF("limits.acc_v", params.limits.acc_v);
-    params.limits.acc_w        = declareF("limits.acc_w", params.limits.acc_w);
-    params.weights.clearance   = declareF("weights.clearance", params.weights.clearance);
-    params.weights.goal_dist   = declareF("weights.goal_dist", params.weights.goal_dist);
-    params.weights.heading     = declareF("weights.heading", params.weights.heading);
-    params.weights.hysteresis  = declareF("weights.hysteresis", params.weights.hysteresis);
-    params.weights.squeeze     = declareF("weights.squeeze", params.weights.squeeze);
+    bac::Params params = bac::ros_parameters::declareCoreParameters(*this);
     core_.setParams(params);
-    base_v_max_ = params.limits.v_max;
-    virtual_path_length_ = declareF("virtual_path_length", 3.0f);
+    base_v_max_          = params.limits.v_max;
+    virtual_path_length_ = declareFloat("virtual_path_length", 3.0f);
 
     // 2D pose of the laser in the robot frame
-    sensor_x_   = declareF("sensor.x", 0.0f);
-    sensor_y_   = declareF("sensor.y", 0.0f);
-    sensor_yaw_ = declareF("sensor.yaw", 0.0f);
+    sensor_x_   = declareFloat("sensor.x", 0.0f);
+    sensor_y_   = declareFloat("sensor.y", 0.0f);
+    sensor_yaw_ = declareFloat("sensor.yaw", 0.0f);
 
-    scan_timeout_ = declareF("scan_timeout", 0.5f);
+    scan_timeout_ = declareFloat("scan_timeout", 0.5f);
 
     cmd_pub_    = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_out", 10);
     status_pub_ = create_publisher<std_msgs::msg::Int8>("avoid_status", 10);
@@ -111,14 +92,14 @@ public:
   }
 
 private:
-  float declareF(const std::string &name, float default_value)
+  float declareFloat(const std::string &name, float default_value)
   {
     return static_cast<float>(declare_parameter<double>(name, static_cast<double>(default_value)));
   }
 
   void tick()
   {
-    bac::Twist2D           command, current;
+    bac::Twist2D command, current;
     std::vector<bac::Point2D> points;
     bool scan_fresh;
     {
@@ -189,7 +170,7 @@ private:
 
   bac::BacCore core_;
 
-  std::mutex                   mutex_;
+  std::mutex             mutex_;
   bac::Twist2D           command_;
   bac::Twist2D           current_;
   std::vector<bac::Point2D> points_;

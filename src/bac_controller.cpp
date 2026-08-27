@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief nav2 controller plugin wrapping bac_core (DWA-based local planner)
  * @date 2026-08-27
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  */
 
 #include "bilateral_arc_clearance_controller/bac_controller.hpp"
@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "bac_ros_parameters.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "tf2/utils.h"
@@ -30,62 +31,32 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
 
   auto node = parent.lock();
 
-  Params params;
-  auto declareF = [&](const std::string &param_name, float default_value) {
-    node->declare_parameter<double>(name + "." + param_name, static_cast<double>(default_value));
-    return static_cast<float>(node->get_parameter(name + "." + param_name).as_double());
+  auto declare_float = [&](const std::string &param_name, float default_value) {
+    const std::string full_name = name + "." + param_name;
+    if (!node->has_parameter(full_name))
+    {
+      node->declare_parameter<double>(full_name, static_cast<double>(default_value));
+    }
+    return static_cast<float>(node->get_parameter(full_name).as_double());
   };
-  params.footprint.front     = declareF("footprint.front", params.footprint.front);
-  params.footprint.rear      = declareF("footprint.rear", params.footprint.rear);
-  params.footprint.width     = declareF("footprint.width", params.footprint.width);
-  params.safety_margin.front = declareF("safety_margin.front", params.safety_margin.front);
-  params.safety_margin.rear  = declareF("safety_margin.rear", params.safety_margin.rear);
-  params.safety_margin.side  = declareF("safety_margin.side", params.safety_margin.side);
-  params.avoid_margin.front  = declareF("avoid_margin.front", params.avoid_margin.front);
-  params.avoid_margin.rear   = declareF("avoid_margin.rear", params.avoid_margin.rear);
-  params.avoid_margin.side   = declareF("avoid_margin.side", params.avoid_margin.side);
-  params.limits.v_max        = declareF("limits.v_max", params.limits.v_max);
-  params.limits.v_min        = declareF("limits.v_min", params.limits.v_min);
-  params.limits.w_max        = declareF("limits.w_max", params.limits.w_max);
-  params.limits.acc_v        = declareF("limits.acc_v", params.limits.acc_v);
-  params.limits.acc_w        = declareF("limits.acc_w", params.limits.acc_w);
-  params.weights.clearance   = declareF("weights.clearance", params.weights.clearance);
-  params.weights.goal_dist   = declareF("weights.goal_dist", params.weights.goal_dist);
-  params.weights.heading     = declareF("weights.heading", params.weights.heading);
-  params.weights.hysteresis  = declareF("weights.hysteresis", params.weights.hysteresis);
-  params.weights.squeeze     = declareF("weights.squeeze", params.weights.squeeze);
-  params.sim_time            = declareF("sim_time", params.sim_time);
-  params.score_lookahead     = declareF("score_lookahead", params.score_lookahead);
-  params.window_time         = declareF("window_time", params.window_time);
-  params.v_samples           = static_cast<int>(declareF("v_samples", static_cast<float>(params.v_samples)));
-  params.w_samples           = static_cast<int>(declareF("w_samples", static_cast<float>(params.w_samples)));
-  params.min_eval_distance   = declareF("min_eval_distance", params.min_eval_distance);
-  params.turn_radius_min     = declareF("turn_radius_min", params.turn_radius_min);
-  params.eval_angle_max      = declareF("eval_angle_max", params.eval_angle_max);
-  params.eval_lateral_max    = declareF("eval_lateral_max", params.eval_lateral_max);
-  params.goal_los_radius     = declareF("goal_los_radius", params.goal_los_radius);
-  params.los_onpath_radius   = declareF("los_onpath_radius", params.los_onpath_radius);
-  params.cap_adapt_rate      = declareF("cap_adapt_rate", params.cap_adapt_rate);
-  params.max_points          = static_cast<int>(declareF("max_points", static_cast<float>(params.max_points)));
-  params.blocked_near        = declareF("blocked_near", params.blocked_near);
-  params.blocked_far         = declareF("blocked_far", params.blocked_far);
-  params.stop_decel          = declareF("stop_decel", params.stop_decel);
-  params.brake_reaction_time = declareF("brake_reaction_time", params.brake_reaction_time);
-  params.max_range           = declareF("max_range", params.max_range);
-  params.creep_fraction      = declareF("creep_fraction", params.creep_fraction);
-  params.proximity_governor_range = declareF("proximity_governor_range", params.proximity_governor_range);
-  params.influence_range     = declareF("influence_range", params.influence_range);
-  params.margin_scale_floor  = declareF("margin_scale_floor", params.margin_scale_floor);
-  params.margin_scale_speed  = declareF("margin_scale_speed", params.margin_scale_speed);
-  base_v_max_                = params.limits.v_max;
+  Params params = ros_parameters::declareCoreParameters(*node, name + ".");
+  base_v_max_   = params.limits.v_max;
 
   // Direct laser input: the core is designed for raw scan points. When
   // scan_topic is set, fresh scans feed it and the costmap is only a fallback
   // (stale scan / no scan yet).
-  node->declare_parameter<std::string>(name + ".scan_topic", "");
+  if (!node->has_parameter(name + ".scan_topic"))
+  {
+    node->declare_parameter<std::string>(name + ".scan_topic", "");
+  }
   scan_topic_   = node->get_parameter(name + ".scan_topic").as_string();
-  scan_timeout_ = declareF("scan_timeout", scan_timeout_);
-  scan_downsample_ = std::max(1, static_cast<int>(declareF("scan_downsample", 1.0f)));
+  scan_timeout_ = declare_float("scan_timeout", scan_timeout_);
+  const std::string downsample_name = name + ".scan_downsample";
+  if (!node->has_parameter(downsample_name))
+  {
+    node->declare_parameter<std::int64_t>(downsample_name, scan_downsample_);
+  }
+  scan_downsample_ = std::max(1, static_cast<int>(node->get_parameter(downsample_name).as_int()));
   clock_        = node->get_clock();
   if (!scan_topic_.empty())
   {
@@ -112,7 +83,7 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
       default_compensation = static_cast<float>(costmap->getResolution()) / 2.0f;
     }
   }
-  float compensation         = declareF("costmap_margin_compensation", default_compensation);
+  float compensation         = declare_float("costmap_margin_compensation", default_compensation);
   params.safety_margin.front = std::max(0.05f, params.safety_margin.front - compensation);
   params.safety_margin.rear  = std::max(0.05f, params.safety_margin.rear - compensation);
   params.safety_margin.side  = std::max(0.05f, params.safety_margin.side - compensation);

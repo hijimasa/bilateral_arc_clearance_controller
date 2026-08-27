@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief nav2 controller plugin wrapping bac_core (DWA-based local planner)
  * @date 2026-08-27
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Thin adapter: transforms the nav2 plan into the robot frame, feeds the core
  * obstacle points (raw laser scan when scan_topic is set; lethal costmap cells

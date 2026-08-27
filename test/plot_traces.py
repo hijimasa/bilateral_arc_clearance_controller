@@ -24,8 +24,8 @@ ROBOT_FRONT = 0.5
 ROBOT_REAR = -0.5
 ROBOT_WIDTH = 0.95
 
-STATUS_COLORS = {0: "#2a9d2a", 1: "#e69500", 2: "#d62728"}  # OFF / AVOIDING / STOP
-STATUS_NAMES = {0: "OFF", 1: "AVOIDING", 2: "STOP"}
+STATUS_COLORS = {0: "#2a9d2a", 1: "#e69500", 2: "#d62728"}  # CLEAR / AVOIDING / STOP
+STATUS_NAMES = {0: "CLEAR", 1: "AVOIDING", 2: "STOP"}
 
 
 def read_csv(path):

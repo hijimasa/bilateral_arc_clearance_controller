@@ -50,5 +50,7 @@ qtcreator-*
 # Catkin custom files
 CATKIN_IGNORE
 build_host/
+build_*/
 install/
 log/
+traces/

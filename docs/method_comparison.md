@@ -1,0 +1,105 @@
+# 既存手法との比較と BAC の位置づけ
+
+調査・ベンチマーク確認日: 2026-08-27
+
+## 比較範囲
+
+BAC は、矩形の差動二輪ロボットがローカル経路を追従しつつ、2D LiDAR またはコストマップ点群に
+反応する問題を対象とする。ここでは、同じ問題に使われる速度空間サンプリング、軌道最適化、
+厳密経路追従、および狭所向け反応型ナビゲーションと比較する。
+
+以下は設計上の比較であり、各原論文の異なるデータセットから性能値を横並びにしたものではない。
+
+## 手法系譜
+
+### Dynamic Window Approach (DWA) / DWB
+
+Fox, Burgard, Thrun の DWA は、ロボットの運動学・動力学から到達可能速度を絞り、速度空間で
+並進・角速度を探索する反応型衝突回避である。BAC はこの候補生成と「衝突前に停止可能」という
+admissibility を継承する。Nav2 の DWB は DWA を軌道生成器と critic のプラグイン構成へ拡張し、
+障害物、経路距離、ゴール距離、振動などの critic の和で候補を選ぶ。
+
+BAC の差は、障害物コストを単一の最小距離や costmap 値だけで評価せず、候補円弧の左右それぞれの
+自由幅を保持する点にある。狭所では `min(left, right)` と左右差が幾何学的な中心方向を作り、
+広所では飽和して経路項へ主導権を戻す。一方、DWB の critic 構成ほど拡張可能ではなく、全方向の
+移動を扱う標準の holonomic trajectory generator も持たない。
+
+### Model Predictive Path Integral (MPPI)
+
+Nav2 MPPI は、時系列の制御ノイズから多数の軌道をロールアウトし、motion model と複数 critic で
+制御列を更新するモデル予測制御器である。差動二輪、全方向、Ackermann のモデルを選べ、長い制御列と
+豊富な critic により滑らかな回避を表現できる。
+
+BAC は各 tick で定曲率円弧を選ぶため、計算とチューニング対象が小さく、左右クリアランスの意味を
+ログから追いやすい。その代わり、S 字の制御列、動的障害物の将来予測、非差動二輪モデルは表現しない。
+
+### Regulated Pure Pursuit (RPP)
+
+RPP は pure pursuit に曲率・障害物近接・衝突までの時間による速度調整を加えた厳密経路追従器である。
+経路が正しく空いている場面では高速で簡潔だが、基本目的は経路そのものを追うことであり、経路上に
+未知障害物が残ったときの横方向の局所迂回を主目的にはしていない。
+
+BAC はローカルゴールへの距離を保ちながら、左右クリアランスが必要なら経路から外れる。したがって
+再プラン待ちを減らせる一方、開空間でも RPP より候補評価コストが高く、追従時間も長くなりやすい。
+
+### VFH / Nearness Diagram (ND)
+
+VFH は局所占有情報を極座標ヒストグラムに圧縮し、目標方向と障害物の谷から操舵方向を選ぶ高速な
+反応型手法である。ND は高密度・複雑環境を状況分類して処理し、High Safety Narrow Region などの
+狭所を明示的に扱う。
+
+これらと BAC は、障害物の左右構造や開口を直接使う点が近い。BAC は極座標方向ではなく実行可能な
+定曲率円弧上で車体幅・制動距離を評価し、nav2 のローカル経路を連続的な意図として残す点が異なる。
+ND のような離散的状況分類や VFH のヒストグラム記憶は持たない。
+
+## 要約
+
+| 手法 | 探索単位 | 障害物表現 | 狭所の中心化 | 主な強み | 主な制約 |
+|---|---|---|---|---|---|
+| DWB | 到達可能な局所軌道 | costmap + critic | critic 設計に依存 | Nav2 標準、拡張可能、holonomic 対応 | critic 間の重み調整が大きい |
+| MPPI | 時系列制御列 | costmap + critic | 軌道コストに依存 | 多様な運動モデル、滑らかな多段軌道 | 計算量と設定項目が多い |
+| RPP | 経路上の追跡曲率 | 衝突時間・近接速度制御 | 経路に依存 | 高速で厳密な経路追従 | 局所的に経路を外れる回避が主目的ではない |
+| VFH / ND | 操舵方向・状況別戦略 | 極座標ヒストグラム・近接図 | 開口／狭所を明示 | 反応性、複雑・狭所への設計知見 | 経路・車体動力学との統合は方式ごとに必要 |
+| BAC | 定曲率円弧 `(v,w)` | 左右円弧クリアランス | 左右差を直接最小化 | 狭路の幾何中心、説明可能な小規模コア | 差動二輪・静的点群前提、角加速度は下位制御器任せ |
+
+BAC は DWA/DWB の一般的な置き換えというより、狭い開口、経路の横ずれ、経路上の未反映障害物を
+重視した特化型 controller である。既存研究に対する性能優位や学術的新規性を、この実装だけから
+主張するものではない。
+
+## 同一条件 nav2 ベンチマーク
+
+ワークスペースの `nav2_benchmark` で、ROS 2 Jazzy、同一の矩形車体、速度・加速度上限、NavFn、
+1 Hz 再計画、2D LiDAR シミュレータを使い controller のみを交換した。2026-08-27 の
+`results/summary.csv` は 16 シナリオ、各 1〜5 run、各 controller 合計 40 episode を含む。
+
+| controller | 成功 episode | 成功時平均到達時間 | 観察された傾向 |
+|---|---:|---:|---|
+| BAC | 40/40 (100%) | 41.9 s | 全条件で完走するが保守的で遅い |
+| DWB | 34/40 (85%) | 25.3 s | 通常条件は高速。強い経路横ずれと出現障害物で失敗 |
+| MPPI | 36/40 (90%) | 28.6 s | 通常条件と動的横断に強い。出現障害物と強い横ずれの一部で失敗 |
+| RPP | 34/40 (85%) | 24.7 s | 最速。経路上の出現障害物と強い横ずれで失敗 |
+
+平均到達時間は成功 episode のみの算術平均で、失敗を罰する総合スコアではない。controller ごとに
+成功したシナリオ集合も異なるため、到達時間の横比較も参考値である。シミュレータは決定論的で
+run 間の独立性も限定的なため、上の比率を一般的な成功確率とは解釈しない。
+
+差が最も明確だった条件は次の通り。
+
+- `appearing_obstacle`: BAC 3/3、DWB/MPPI/RPP は各 0/3。経路上へ後から現れた障害物を BAC が
+  局所的に迂回した。
+- `corridor_locdrift_15x`: BAC 3/3、DWB 0/3、MPPI 2/3、RPP 0/3。1.5 m 通路で経路を横へ
+  ずらした条件では、BAC の左右バランス項が実際の通路中心へ戻した。
+- 通常の開空間・広路・狭路では全 controller が成功し、BAC は概ね 1.1〜2 倍遅かった。
+
+このベンチマークは本リポジトリ外の評価環境に依存する。リリース成果の再現には、評価環境、設定、
+raw episode を固定した別リポジトリまたはアーカイブを同時公開する必要がある。実機ではセンサ遅延、
+滑り、点群外れ値、動的物体、制御周期超過を追加評価する。
+
+## 参考文献・一次資料
+
+1. D. Fox, W. Burgard, S. Thrun, “The Dynamic Window Approach to Collision Avoidance,” *IEEE Robotics & Automation Magazine*, 4(1), 1997. [CMU publication page](https://publications.ri.cmu.edu/the-dynamic-window-approach-to-collision-avoidance)
+2. Navigation2, “DWB Controller.” [official documentation](https://docs.nav2.org/configuration/packages/configuring-dwb-controller.html)
+3. Navigation2, “Model Predictive Path Integral Controller.” [official source documentation](https://github.com/ros-navigation/navigation2/blob/main/nav2_mppi_controller/README.md)
+4. S. Macenski et al., “Regulated Pure Pursuit for Robot Path Tracking,” *Autonomous Robots*, 2023. [arXiv](https://arxiv.org/abs/2305.20026)
+5. J. Borenstein, Y. Koren, “The Vector Field Histogram—Fast Obstacle Avoidance for Mobile Robots,” *IEEE Transactions on Robotics and Automation*, 7(3), 1991. [author-hosted PDF](https://public.websites.umich.edu/~ykoren/uploads/The_Vector_Field_HistogramuFast_Obstacle_Avoidance.pdf)
+6. J. Minguez, L. Montano, “Nearness Diagram (ND) Navigation: Collision Avoidance in Troublesome Scenarios,” *IEEE Transactions on Robotics and Automation*, 20(1), 2004. [author-hosted PDF](https://webdiis.unizar.es/~jminguez/TRAND.pdf)

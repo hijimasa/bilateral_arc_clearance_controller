@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief Scenario-based verification harness for the Bilateral Arc Clearance (BAC) algorithm
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Runs bac::BacCore in closed loop against synthetic worlds and
  * evaluates trajectory quality. Two tiers:
@@ -139,9 +139,10 @@ scenarioOpenPassthrough(const std::string &csv_dir)
   result.metrics = computeMetrics(sim, options);
   const Metrics &m = result.metrics;
 
-  int off_ticks = m.total_ticks - m.status_stop - m.status_avoid;
-  result.checks.push_back({ "status always OFF", off_ticks == m.total_ticks,
-                            "OFF " + std::to_string(off_ticks) + "/" + std::to_string(m.total_ticks) });
+  int clear_ticks = m.total_ticks - m.status_stop - m.status_avoid;
+  result.checks.push_back({ "status always CLEAR", clear_ticks == m.total_ticks,
+                            "CLEAR " + std::to_string(clear_ticks) + "/" +
+                                std::to_string(m.total_ticks) });
   result.checks.push_back({ "no stop ticks", m.stop_ticks == 0, std::to_string(m.stop_ticks) + " stop ticks" });
   result.checks.push_back({ "travelled straight", m.final_x > 2.7f && std::fabs(m.final_y) < 0.01f,
                             "final (" + fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });

@@ -3,7 +3,7 @@
  * @author Masaaki Hijikata (hijikata@react-robot.com)
  * @brief 2D world model and LiDAR simulator for the BAC scenario harness
  * @date 2026-08-26
- * @copyright Copyright (c) 2026 REACT Co., Ltd.
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
  */
 
 #pragma once
@@ -17,6 +17,8 @@
 
 namespace bac_sim
 {
+
+constexpr float kPi = 3.14159265358979323846f;
 
 struct Pose
 {
@@ -89,7 +91,7 @@ simulateLidar(const World &world, const Pose &pose, int num_beams = 720, float m
   points.reserve(num_beams);
   for (int i = 0; i < num_beams; i++)
   {
-    float a_local  = -static_cast<float>(M_PI) + 2.0f * static_cast<float>(M_PI) * i / num_beams;
+    float a_local  = -kPi + 2.0f * kPi * i / num_beams;
     float a_global = pose.th + a_local;
     float dx = std::cos(a_global);
     float dy = std::sin(a_global);
