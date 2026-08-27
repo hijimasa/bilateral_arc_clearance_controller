@@ -164,7 +164,43 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
     {
       // Dead-ahead collision course: linear speed ramp over the governor
       // look-ahead (full cruise at lookahead, creep floor at the zone edge).
-      result.governor = std::min(result.governor, ahead / lookahead);
+      float hazard = ahead / lookahead;
+      // Arc refinement, RELEASE-ONLY: while the robot is turning, the
+      // straight-line prediction keeps reading the outer wall of the corner
+      // as a frontal threat for the whole turn (the nose points at it until
+      // the heading has swung), pinning the corner speed at creep. If the
+      // CURRENT (v, w) arc carries the point past the body, it is no
+      // hazard. Straight driving (small w) keeps the straight slab exactly,
+      // so corridors are untouched, and a transient centering correction
+      // cannot create a new hazard either - braking requires BOTH
+      // predictions to hit. Admissibility and the emergency layer are
+      // unaffected.
+      if (params.governor_arc_prediction && current.v > 0.05f &&
+          std::fabs(current.w) > 1e-2f)
+      {
+        const float turn_radius = current.v / current.w;
+        const float radial      = std::sqrt(point.x * point.x +
+                                            (point.y - turn_radius) * (point.y - turn_radius));
+        const float arc_offset  = std::fabs(turn_radius) - radial;  // |.| < half = arc hits
+        if (std::fabs(arc_offset) >= body_y_half)
+        {
+          hazard = 1.0f;  // the current turn carries the point past the body
+        }
+        else
+        {
+          float alpha  = std::atan2(point.y - turn_radius, point.x);
+          float alpha0 = (turn_radius >= 0.0f) ? -kPi / 2.0f : kPi / 2.0f;
+          float delta  = alpha - alpha0;
+          while (delta > kPi) delta -= 2.0f * kPi;
+          while (delta <= -kPi) delta += 2.0f * kPi;
+          const float s_arc = current.v * (delta / current.w) - zone_x_max;
+          if (s_arc > 0.0f)
+          {
+            hazard = std::min(hazard, s_arc / lookahead);
+          }
+        }
+      }
+      result.governor = std::min(result.governor, hazard);
     }
     else if (side_gap >= 0.0f)
     {
@@ -176,8 +212,30 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
       const float behind = forward ? zone_x_min - point.x : point.x - zone_x_max;
       if (behind < 0.0f && ahead < lookahead)
       {
-        result.side_ratio = std::min(
-            result.side_ratio, side_gap / std::max(params.safety_margin.side, 1e-3f));
+        // Arc refinement, RELEASE-ONLY: mid-turn, the straight prediction
+        // reads the wall the nose sweeps across as a grazing pass and pins
+        // the corner speed at creep. When the CURRENT (v, w) arc carries the
+        // point clear by at least 1.5x the side margin, it is no close pass
+        // (1.5: swept over 1.1-2.5 - smaller re-tightens corners, larger
+        // trades Z-corner clearance for nothing). A genuine close pass being
+        // carved right now stays capped: at the moment of closest approach
+        // the arc offset IS the (sub-band) pass gap, so the release
+        // threshold is never met there.
+        bool released = false;
+        if (params.governor_arc_prediction && current.v > 0.05f &&
+            std::fabs(current.w) > 1e-2f)
+        {
+          const float turn_radius = current.v / current.w;
+          const float radial      = std::sqrt(point.x * point.x +
+                                              (point.y - turn_radius) * (point.y - turn_radius));
+          const float arc_gap = std::fabs(std::fabs(turn_radius) - radial) - body_y_half;
+          released = arc_gap >= params.safety_margin.side * 1.5f;
+        }
+        if (!released)
+        {
+          result.side_ratio = std::min(
+              result.side_ratio, side_gap / std::max(params.safety_margin.side, 1e-3f));
+        }
       }
     }
 
@@ -632,11 +690,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       const float d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
       if (d2 < best_d2)
       {
-        best_d2  = d2;
-        s_best   = station_s[i] + t * std::sqrt(len2);
-        tan_best = std::atan2(vy, vx);
-        best_qx  = qx;
-        best_qy  = qy;
+        best_d2    = d2;
+        s_best     = station_s[i] + t * std::sqrt(len2);
+        tan_best   = std::atan2(vy, vx);
+        best_qx    = qx;
+        best_qy    = qy;
         // Clamped past either END of the projected span: beyond the last
         // vertex, or before the first considered segment. In the clamp
         // region the progress term has no gradient, so the full Euclidean

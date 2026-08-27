@@ -101,6 +101,14 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.velocity_min        = declare_float("velocity_min", params.velocity_min);
   params.angvel_min          = declare_float("angvel_min", params.angvel_min);
   params.creep_fraction        = declare_float("creep_fraction", params.creep_fraction);
+  {
+    const std::string name = prefix + "governor_arc_prediction";
+    if (!node.has_parameter(name))
+    {
+      node.template declare_parameter<bool>(name, params.governor_arc_prediction);
+    }
+    params.governor_arc_prediction = node.get_parameter(name).as_bool();
+  }
   params.tight_cruise_fraction = declare_float("tight_cruise_fraction", params.tight_cruise_fraction);
   params.side_envelope_headroom =
       declare_float("side_envelope_headroom", params.side_envelope_headroom);

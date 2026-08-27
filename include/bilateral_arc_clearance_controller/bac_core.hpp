@@ -245,6 +245,14 @@ struct Params
   /// creep floor keeps an escape possible right at the boundary instead of
   /// freezing.
   float creep_fraction = 0.3f;
+  /// Arc refinement of the governor, RELEASE-ONLY: a point the straight
+  /// prediction calls a collision course is released when the CURRENT (v, w)
+  /// arc carries it past the body (mid-turn, the nose points at the corner's
+  /// outer wall until the heading has swung, which would otherwise pin the
+  /// corner speed at creep). Braking is never ADDED by the arc, so straight
+  /// narrow-corridor behavior is untouched. false restores the pure straight
+  /// slab.
+  bool governor_arc_prediction = true;
   /// Cruise moderation in bilateral tightness: the sampled speed is scaled by
   /// (1 - (1 - tight_cruise_fraction) * tightness), i.e. this fraction of
   /// v_max remains available in a fully tight passage. Steering authority

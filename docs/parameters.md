@@ -77,6 +77,7 @@ jerk 制限を必ず適用する。
 | `margin_scale_floor` | 0.5 | 停止時の安全余裕スケール下限 |
 | `margin_scale_speed` | 0.3 | 安全余裕が 100% になる速度 [m/s] |
 | `creep_fraction` | 0.3 | 近接ガバナの最低速度割合 |
+| `governor_arc_prediction` | true | 旋回中、現在の (v,w) 円弧が余裕を持って外す点をガバナ対象から解除（解除専用。直進時は直線判定と同一で、狭通路の挙動は不変） |
 | `side_envelope_lookahead` | 1.0 | ガバナの前方判定距離 [m]。衝突コース上の点への線形減速と、狭接近すれ違い予定点の速度包絡に共通 |
 | `side_envelope_headroom` | 0.1 | 側方包絡の余裕（側方余裕比）。予測すれ違い隙間が「余裕×(1+この値)」以上なら減速しない |
 | `tight_cruise_fraction` | 0.5 | 両側拘束の狭所で許容する巡航速度割合（tightness に線形）。1.0 で無効 |
