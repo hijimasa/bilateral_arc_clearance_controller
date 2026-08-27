@@ -61,7 +61,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.limits.acc_v = declare_float("limits.acc_v", params.limits.acc_v);
 
   params.weights.clearance  = declare_float("weights.clearance", params.weights.clearance);
-  params.weights.goal_dist  = declare_float("weights.goal_dist", params.weights.goal_dist);
+  params.weights.path_dist  = declare_float("weights.path_dist", params.weights.path_dist);
   params.weights.balance    = declare_float("weights.balance", params.weights.balance);
   params.weights.heading    = declare_float("weights.heading", params.weights.heading);
   params.weights.hysteresis = declare_float("weights.hysteresis", params.weights.hysteresis);

@@ -49,6 +49,9 @@ public:
     sensor_yaw_ = declareFloat("sensor.yaw", 0.0f);
 
     scan_timeout_ = declareFloat("scan_timeout", 0.5f);
+    cmd_timeout_  = declareFloat("cmd_timeout", 0.5f);
+    odom_timeout_ = declareFloat("odom_timeout", 0.5f);
+    min_scan_points_ = static_cast<int>(declareFloat("min_scan_points", 10.0f));
 
     cmd_pub_    = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_out", 10);
     status_pub_ = create_publisher<std_msgs::msg::Int8>("avoid_status", 10);
@@ -57,6 +60,7 @@ public:
         "cmd_vel_in", 10, [this](geometry_msgs::msg::Twist::SharedPtr msg) {
           std::lock_guard<std::mutex> lock(mutex_);
           command_ = bac::Twist2D(static_cast<float>(msg->linear.x), static_cast<float>(msg->angular.z));
+          last_cmd_time_ = now();
         });
 
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -64,6 +68,7 @@ public:
           std::lock_guard<std::mutex> lock(mutex_);
           current_ = bac::Twist2D(static_cast<float>(msg->twist.twist.linear.x),
                                         static_cast<float>(msg->twist.twist.angular.z));
+          last_odom_time_ = now();
         });
 
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
@@ -101,23 +106,38 @@ private:
   {
     bac::Twist2D command, current;
     std::vector<bac::Point2D> points;
-    bool scan_fresh;
+    bool scan_fresh, cmd_fresh, odom_fresh;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       command    = command_;
       current    = current_;
       points     = points_;
+      // A scan that is fresh by timestamp but carries almost no valid
+      // returns (all NaN/Inf) is not a valid observation either.
       scan_fresh = last_scan_time_.nanoseconds() > 0 &&
-                   (now() - last_scan_time_).seconds() < static_cast<double>(scan_timeout_);
+                   (now() - last_scan_time_).seconds() < static_cast<double>(scan_timeout_) &&
+                   static_cast<int>(points_.size()) >= min_scan_points_;
+      cmd_fresh  = last_cmd_time_.nanoseconds() > 0 &&
+                   (now() - last_cmd_time_).seconds() < static_cast<double>(cmd_timeout_);
+      odom_fresh = last_odom_time_.nanoseconds() > 0 &&
+                   (now() - last_odom_time_).seconds() < static_cast<double>(odom_timeout_);
     }
 
     geometry_msgs::msg::Twist out;
     std_msgs::msg::Int8       status;
 
-    if (!scan_fresh)
+    if (!scan_fresh || !odom_fresh)
     {
+      // No valid observation, or no velocity feedback to compute braking
+      // distances from: stop rather than act on stale state.
       core_.forceStop();
       status.data = static_cast<int8_t>(bac::Status::STOP);
+      // out stays zero
+    }
+    else if (!cmd_fresh)
+    {
+      // Upstream went silent: do not keep executing its last command.
+      status.data = static_cast<int8_t>(core_.status());
       // out stays zero
     }
     else
@@ -178,6 +198,11 @@ private:
 
   float sensor_x_ = 0.0f, sensor_y_ = 0.0f, sensor_yaw_ = 0.0f;
   float scan_timeout_ = 0.5f;
+  float cmd_timeout_  = 0.5f;
+  float odom_timeout_ = 0.5f;
+  int   min_scan_points_ = 10;
+  rclcpp::Time last_cmd_time_{ 0, 0, RCL_ROS_TIME };
+  rclcpp::Time last_odom_time_{ 0, 0, RCL_ROS_TIME };
   float base_v_max_ = 0.4f;
   float virtual_path_length_ = 3.0f;
 

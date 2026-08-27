@@ -117,14 +117,15 @@ struct Limits
 ///    avoid_margin.side): in the open many candidates saturate and the path
 ///    terms decide; in tight spaces its max-min structure funnels through the
 ///    middle of the opening.
-///  - goal_dist supplies the restoring force towards the lookahead point and
-///    rewards path-advancing candidates (speed selection).
+///  - path_dist weighs the path-following cost (remaining projection
+///    arc-length plus the weak lateral offset): it rewards progress along
+///    the path and supplies the speed selection.
 ///  - hysteresis damps tick-to-tick steering chatter; keep it well below the
 ///    path terms or the previous choice can pin the robot off-path.
 struct Weights
 {
   float clearance  = 2.0f;  // [score per m] saturated bilateral clearance
-  float goal_dist  = 1.0f;  // [score per m] endpoint distance to the local goal
+  float path_dist  = 1.0f;  // [score per m] path cost: remaining station + weighted lateral offset
   /// Bilateral balance: penalty on |left - right| clearance (both capped),
   /// active only in tight spaces (scaled by the probed tightness). Provides a
   /// FIRST-ORDER centering gradient from the geometry itself - the local-goal
@@ -150,7 +151,7 @@ struct Params
   /// path (projection station) and heading vs the path TANGENT at the
   /// projection - both first-order immune to a laterally drifted path. The
   /// lateral offset to the path enters with this (deliberately weak) weight,
-  /// as a fraction of weights.goal_dist per meter, so that clearance/balance
+  /// as a fraction of weights.path_dist per meter, so that clearance/balance
   /// keep the lateral authority; it exerts NO pull on path segments blocked
   /// by an obstacle, and the full Euclidean distance takes over outside the
   /// path's longitudinal span.
@@ -207,7 +208,10 @@ struct Params
   /// 0 disables.
   int w_refine_steps = 3;
 
-  float stop_decel          = 1.0f;   // [m/s^2] braking capability
+  /// Braking capability assumed by the admissibility test. MUST be set at or
+  /// below the real plant's braking limit (assuming a stronger brake than the
+  /// robot has voids the stop-before-hit guarantee).
+  float stop_decel          = 0.8f;   // [m/s^2]
   float brake_reaction_time = 0.1f;   // [s] latency covered by braking distances
   float max_range           = 10.0f;  // [m] points beyond this are ignored
   /// Defensive cap on the point count (uniform stride subsampling above it):
@@ -267,8 +271,8 @@ struct Result
 
   // Evaluation / debug extras (for the selected candidate)
   float best_clearance     = 0.0f;  // bilateral clearance of the chosen arc [m]
-  float best_goal_dist     = 0.0f;  // endpoint distance to the local goal [m]
-  float goal_x             = 0.0f;  // local goal used for scoring (robot frame)
+  float best_path_cost     = 0.0f;  // path cost of the chosen candidate [m]
+  float goal_x             = 0.0f;  // preview point on the path (diagnostics only)
   float goal_y             = 0.0f;
   float min_proximity_norm = 0.0f;  // nearest point, margin-normalized (1.0 = at boundary)
   float nearest_distance   = 0.0f;  // nearest point to the footprint rectangle [m]

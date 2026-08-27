@@ -1,0 +1,258 @@
+# bilateral_arc_clearance_controller リリース前レビュー指摘
+
+レビュー日: 2026-08-28  
+対象: `4effb2b` (`Document the execution-layer robustness contract`)
+
+## 結論
+
+コアのクリーンビルド、unit test、13本のclosed-loop scenarioはすべて成功している。一方で、
+リリース時の主要な訴求である「自己位置ずれ耐性」の評価に座標フレーム処理の影響があり、
+安全契約にも理論上未評価の領域がある。現時点ではリリースを保留し、少なくともCritical項目を
+修正してベンチマークを再生成することを推奨する。
+
+## Critical
+
+### 1. Nav2 planと現在poseの座標フレームが混在する
+
+`BacController::transformPlan()` はplan点と現在poseを数値上そのまま減算しており、
+`plan_.header.frame_id`、`pose.header.frame_id`、TFを参照していない。
+
+- 該当箇所: [`src/bac_controller.cpp`](../src/bac_controller.cpp#L208)
+- READMEの前提記述: [`README.md`](../README.md#L155)
+- ベンチマークのlocal costmap frame: [`nav2_common.yaml`](../../../../nav2_benchmark/ws/src/bench_bringup/params/nav2_common.yaml#L30)
+
+ベンチマークではNavFn planが`map`、local costmapとcontrollerへ渡されるposeが`odom`である。
+通常のNav2 controllerはglobal planをrobot/base frameへTF変換する。BACはこれを行わないため、
+`map -> odom`へ自己位置誤差を注入したシナリオで異なる座標系を混ぜている。
+
+シミュレータの`odom`は真値なので、この混在は注入した誤差を打ち消し、BACだけが実際の通路中心に
+近いplanを受け取る方向へ働く。したがって、現在の自己位置ずれ結果をBAC固有の頑健性の根拠には
+使用できない。
+
+推奨対応:
+
+1. planをTFでbase frameへ変換する。
+2. TF失敗、frame ID欠落、古いtransformは明示的なcontroller errorとして扱う。
+3. `map != odom`、平行移動、回転誤差を含むintegration testを追加する。
+4. 修正後に全controllerの自己位置ずれ評価を再実行する。
+
+参考: [Nav2 Jazzy RPP実装](https://github.com/ros-navigation/navigation2/blob/jazzy/nav2_regulated_pure_pursuit_controller/src/regulated_pure_pursuit_controller.cpp)
+
+### 2. 自己位置ずれの説明値とシナリオ設定が一致しない
+
+READMEは「0.15 mずれた1.5 m通路でBACだけ完走」と説明している。しかし、差が出ている
+`corridor_locdrift_15x` の現在の設定は0.25 mである。
+
+- 0.25 m設定: [`corridor_locdrift_15x.yaml`](../../../../nav2_benchmark/ws/src/bench_bringup/worlds/corridor_locdrift_15x.yaml#L9)
+- READMEの0.15 m表記: [`README.md`](../README.md#L26)
+- 比較資料の0.15 m表記: [`method_comparison.md`](method_comparison.md#L116)
+
+現在の`corridor_locdrift_15`（0.15 m）では、集計上DWB、MPPI、RPPも全run成功している。
+フレーム処理を修正したうえで、誤差量ごとのsweepとして再評価し、主張する限界値を決める必要がある。
+
+### 3. ベンチマーク集計に異なる実験世代が混在する
+
+現在の`results/summary.csv`からgap sweepを除く18シナリオを再集計すると次のようになる。
+
+| controller | 成功episode | 衝突 | 成功時平均到達時間 |
+|---|---:|---:|---:|
+| BAC | 90/90 | 0 | 28.90 s |
+| DWB | 40/46 | 0 | 24.65 s |
+| MPPI | 40/46 | 0 | 27.25 s |
+| RPP | 40/46 | 0 | 24.11 s |
+
+これは比較資料のMPPI `42/46`、DWB衝突2件などと一致しない。比較資料の安全統計は、
+`results_pre_speedwork`にある旧40 episodeの標準controller集計と一致しており、現行BAC結果と
+旧baselineが混在している可能性がある。
+
+さらに現在の`summary.csv`はgap sweepを含む24シナリオ・252行であり、資料中の
+「18シナリオの`summary.csv`」とも一致しない。
+
+- 現在の集計: [`results/summary.csv`](../../../../nav2_benchmark/results/summary.csv)
+- 旧集計: [`results_pre_speedwork/summary.csv`](../../../../nav2_benchmark/results_pre_speedwork/summary.csv)
+- 比較資料: [`method_comparison.md`](method_comparison.md#L69)
+
+推奨対応:
+
+1. `main`、`gap_sweep`、`padding_ablation`などの実験群を別ディレクトリへ分離する。
+2. 全controllerを同じコード・設定・run数で再実行する。
+3. episodeごとにBAC commit SHA、Nav2 version/image digest、world/config hash、seedを記録する。
+4. 集計スクリプトへ期待シナリオ数、run数、重複・欠落の検査を追加する。
+5. リリース時に評価環境とraw episodeを追跡可能なリポジトリまたはアーカイブとして固定する。
+
+## High
+
+### 4. 曲線上の矩形車体swept footprintが過小評価される
+
+`evaluateArcWindows()` は、障害物点の円弧中心線からの距離が`footprint.width / 2`未満かで
+body hitを判定する。
+
+- 該当箇所: [`src/bac_core.cpp`](../src/bac_core.cpp#L303)
+
+これは中心線を一定幅で膨張したtubeであり、旋回時に矩形の前後角が描く外側掃引を含まない。
+診断では`v=0.4 m/s`、`w=1.0 rad/s`の円弧上で0.5秒後の前外側角に障害点を置くと、物理的には
+角が接触する一方、`blocking_s`は未検出となった。
+
+推奨対応:
+
+- 各rollout poseで矩形footprintとの点包含を評価する、または矩形の厳密な円弧swept volumeを使う。
+- 旋回内側・外側の4角、前後進、左右旋回をproperty/unit testへ追加する。
+- 修正までは「最初の車体衝突点」「DWA admissibilityによる安全保証」を近似判定と明記する。
+
+### 5. 角速度の到達可能性と制動モデルがrolloutに反映されない
+
+BACは並進速度のみ加速度windowで制限し、角速度は毎tick `[-w_max, w_max]`全域から選ぶ。
+
+- 全角速度範囲の生成: [`src/bac_core.cpp`](../src/bac_core.cpp#L738)
+- 下位制御器へ角加速度制限を委ねる説明: [`docs/parameters.md`](parameters.md#L41)
+
+候補rolloutは選択した`w`へ即時到達する定曲率円弧を仮定するため、実際の下位制御器が角加速度を
+制限すると予測軌道と実軌道がずれる。これはjerkや乗り心地だけでなく、障害物を回避できるかという
+admissibilityにも影響する。
+
+また、ベンチマークプラントの並進制動限界は0.8 m/s²だが、BACの`stop_decel`既定値は
+1.0 m/s²であり、停止可能性判定がプラントより強いブレーキを仮定している。
+BAC用YAMLの`limits.acc_w`はコアで宣言・使用されておらず、設定しても効果がない。
+
+推奨対応:
+
+- `w`も到達可能windowに制限するか、角加速度を含むrolloutへ変更する。
+- 並進・角加速度、制動能力をシミュレータとコアで共通設定にする。
+- DWAを名乗る場合は、原DWAから継承する部分と異なる部分を明示する。
+
+### 6. ROS adapterのfail-safe条件が不足する
+
+`bac_filter_node`はscan timeoutのみ監視し、入力commandとodomのtimeoutを持たない。
+
+- 該当箇所: [`src/bac_filter_node.cpp`](../src/bac_filter_node.cpp#L100)
+
+そのため次の状態が起こり得る。
+
+- 上位commandが途絶えても最後の指令を継続する。
+- odomが途絶えると古い速度で制動距離を計算する。
+- 有効点がゼロのscanでも受信時刻だけで「新鮮」と判断する。
+
+Nav2 pluginもscan未受信・stale・TF失敗時にはfail-stopせずcostmapへフォールバックするため、
+「上流状態に依らず成立する契約」ではなく「有効な観測・速度入力と設定済みの下位制御を前提とする
+controller特性」と範囲を限定する必要がある。
+
+推奨対応:
+
+- command timeout、odom timeout、最小有効scan点数を追加する。
+- raw scan必須モードでは、scan異常時にcostmap fallbackかfail-stopかを選択可能にする。
+- timeout、空scan、NaN/Infのみのscan、TF失敗、時刻逆行のadapter testを追加する。
+
+## Method comparisonの不足
+
+### Nav2 Collision Monitorとの比較を追加する
+
+実行層の安全性を主要な位置づけにする場合、controllerだけでなくNav2 Collision Monitorとの比較が
+必要である。Collision Monitorはraw sensorをcostmap/plannerから独立して読み、stop、slowdown、
+limit、速度依存approach、source timeoutを提供する。
+
+BACの差分は、緊急停止層そのものではなく、左右クリアランスを用いた経路からの局所逸脱と
+狭所中心化まで一つのcontrollerで扱う点として整理するのが適切である。
+
+参考: [Nav2 Collision Monitor公式資料](https://docs.nav2.org/rolling/configuration_and_development/configuration_guide/core_servers/collision_monitor/configuring_collision_monitor_node/)
+
+### 「プランナでは原理的に代替できない」を限定する
+
+決定論的なglobal pathだけでは、未観測障害物への制御周期応答や真の相対障害物幾何を直接保証できない、
+という説明は妥当である。一方、「controllerにのみ実装可能」「座標系誤差に免疫」は過大である。
+Collision Monitorなどの独立安全層、局所costmap、belief-space/uncertainty-aware planningも存在する。
+
+推奨表現:
+
+> 本評価条件のように、単一pose推定に基づくglobal pathを有限周期で更新する構成では、global planner
+> 単独で短周期の相対障害物応答を代替できない。BACはrobot-frame観測をcontroller周期で利用し、
+> この構成上の弱点を局所的に補う。
+
+### gap sweepの記述を修正する
+
+現在のraw traceではMPPIもgap幅の縮小に伴って緩やかに減速しているため、「BACのみ速度が近接度の
+関数になる」は成立しない。BACの特徴は、応答の有無ではなく、より強い減速と狭すぎる開口での
+非完走／停止として表現する。
+
+また`gap_115`のBACはcollisionなしでtimeoutするが、最小クリアランスは約0.07 mであり、
+「0.10 m以内へ非侵入」という90 episodeの統計をgap sweepまで一般化しない。
+
+参考: [Nav2 RPP公式資料](https://docs.nav2.org/rolling/configuration_and_development/configuration_guide/controller_plugins/configuring_regulated_pp/)
+
+## コード可読性・保守性
+
+### `BacCore::process()`を責務ごとに分割する
+
+`BacCore::process()`は約630行あり、次の処理を一つの関数で扱っている。
+
+- path station modelの構築
+- proximity/emergency/governor
+- tightness推定
+- candidate生成と枝刈り
+- swept geometryとadmissibility
+- path projectionとscore
+- status latch
+
+推奨する分割単位:
+
+- `PathStationModel`
+- `ProximityGovernor`
+- `CandidateSampler`
+- `SweptFootprintEvaluator`
+- `CandidateScorer`
+
+### 旧local-goal用の命名とコメントを更新する
+
+`goal_dist`、`best_goal_dist`、`local-goal following`は、現在の
+`remaining station + weighted lateral offset`という意味と一致しない。
+
+- 該当箇所: [`include/bilateral_arc_clearance_controller/bac_core.hpp`](../include/bilateral_arc_clearance_controller/bac_core.hpp#L115)
+- SVGの`local goal`: [`docs/images/bac_geometry.svg`](images/bac_geometry.svg#L30)
+
+`path_cost`、`best_path_cost`、`path station / tangent following`など、現在のアルゴリズムに対応する名称へ
+変更する。
+
+### その他
+
+- costmap走査中は`Costmap2D`のmutexを取得する。
+- parameter rangeをconfigure時に検証する。
+- `transformPlan()`の「最初の遠距離点でbreak」は、古いplanやloop pathで空pathになり得るため、
+  最近傍点でpruneしてからlocal範囲を切り出す。
+- README内の「16シナリオ」と「18シナリオ」を統一する。
+- `limits.acc_w`のような未使用parameterを設定例へ置かない。
+
+## 評価で追加すべき条件
+
+- scan delay、drop、空scan、外れ値、角度方向の欠測
+- odom delay、速度bias、滑り、制御周期jitter
+- sensor extrinsic誤差とscan timestamp時点のTF
+- 並進・角加速度および制動能力のmodel mismatch
+- 前後進時の後方視野不足
+- 矩形4角の曲線swept collision
+- 同じ条件・同じrun数によるcontroller比較
+- noisy seedを変えた反復と信頼区間
+- ROS adapterを含むworst-case実行時間
+- Collision Monitor併用baseline
+- 各score項とgovernorのablation
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| plain CMake Release build | 成功 |
+| core unit test | 成功 |
+| 13 closed-loop scenarios | 成功 |
+| `git diff --check` | 問題なし |
+| ROS/Nav2実ビルド | ホストにROS環境がないため未実施 |
+
+## リリース判定チェックリスト
+
+- [ ] global planを正しいTFでbase frameへ変換した
+- [ ] 0.15 m / 0.25 m自己位置ずれを分離して全controllerを再評価した
+- [ ] ベンチマーク結果を単一revision・単一設定から再生成した
+- [ ] episodeにコード・設定・worldのprovenanceを保存した
+- [ ] 曲線上の矩形swept footprintを正しく判定した
+- [ ] 角加速度と実制動能力をadmissibilityへ反映した
+- [ ] command/odom/scan異常時のfail-safeを追加した
+- [ ] Collision Monitorを比較対象へ追加した
+- [ ] READMEとmethod comparisonの数値・適用範囲を更新した
+- [ ] ROS 2 Jazzy環境でbuild、test、Nav2 benchmarkを再実行した

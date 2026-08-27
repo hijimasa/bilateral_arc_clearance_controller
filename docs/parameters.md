@@ -47,13 +47,13 @@ jerk 制限を必ず適用する。
 | パラメータ | 既定値 | 説明 |
 |---|---:|---|
 | `sim_time` | 2.5 | 候補円弧のロールアウト時間 [s] |
-| `station_lateral_weight` | 0.3 | 経路横偏差の重み（`weights.goal_dist` 比）。障害物で塞がれた経路区間では 0、経路縦断範囲外（クランプ時）は全重みユークリッド距離 |
+| `station_lateral_weight` | 0.3 | 経路横偏差の重み（`weights.path_dist` 比）。障害物で塞がれた経路区間では 0、経路縦断範囲外（クランプ時）は全重みユークリッド距離 |
 | `min_eval_distance` | 1.6 | 低速でも確保する最小評価距離 [m] |
 | `eval_lateral_max` | 0.5 | 曲線候補の最大横変位 [m] |
 | `cap_adapt_rate` | 0.05 | 密度適応クリアランス上限の EMA 更新率。0 で固定 |
 | `weights.clearance` | 2.0 | 左右の小さい方のクリアランス報酬 |
 | `weights.balance` | 4.0 | 狭所での左右差ペナルティ |
-| `weights.goal_dist` | 1.0 | 経路追従コスト（残り射影弧長＋横偏差）の重み |
+| `weights.path_dist` | 1.0 | 経路追従コスト（残り射影弧長＋横偏差）の重み |
 | `weights.heading` | 0.15 | 終端方位誤差 |
 | `weights.hysteresis` | 0.6 | 前回選択角速度との差 |
 | `weights.squeeze` | 0.5 | 側方余裕が小さいときの速度ペナルティ |

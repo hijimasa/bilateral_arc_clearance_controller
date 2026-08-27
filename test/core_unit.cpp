@@ -105,6 +105,31 @@ testEmptyPathAndReset()
 }
 
 void
+testSweptCornerOnArc()
+{
+  // Review finding: on a curved arc the rectangle's outer front corner
+  // sweeps wider than the width/2 tube. Place a point just inside the
+  // corner's swept position at t = 0.5 s on the (v = 0.4, w = 1.0) arc:
+  // the body physically clips it, so blocking_s must be finite.
+  bac::BacCore core;
+  const float v = 0.4f, w = 1.0f, t = 0.5f;
+  const float R = v / w, th = w * t;
+  const float ox = R * std::sin(th), oy = R * (1.0f - std::cos(th));
+  const float c = std::cos(th), s2 = std::sin(th);
+  // outer front corner (right side on a left turn), pulled 2 cm inward
+  const float lx = 0.5f - 0.02f, ly = -(0.475f - 0.02f);
+  const bac::Point2D corner(ox + c * lx - s2 * ly, oy + s2 * lx + c * ly);
+
+  const bac::ArcEvaluation eval = core.evaluateArc({ corner }, v, w, 2.0f);
+  expect(eval.blocking_s < 1e6f, "outer corner sweep on an arc is detected as a body hit");
+
+  // The same lateral band on a STRAIGHT run must not over-trigger: a point
+  // at |y| = 0.55 beside a straight path is clearance, not a hit.
+  const bac::ArcEvaluation straight = core.evaluateArc({ { 1.0f, 0.55f } }, v, 0.0f, 2.0f);
+  expect(straight.blocking_s >= 1e6f, "straight motion keeps the exact half-width band");
+}
+
+void
 testFaceAwayRecovery()
 {
   // Standstill facing AWAY from the goal, open space ahead, a passable gap
@@ -163,6 +188,7 @@ main()
   testBlockingDistance();
   testEmergencyStop();
   testEmptyPathAndReset();
+  testSweptCornerOnArc();
   testFaceAwayRecovery();
 
   if (failures != 0)

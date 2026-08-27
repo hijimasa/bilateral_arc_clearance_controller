@@ -69,7 +69,7 @@ struct ScenarioResult
 struct WeightOverrides
 {
   float clearance  = -1.0f;
-  float goal_dist  = -1.0f;
+  float path_dist  = -1.0f;
   float balance    = -1.0f;
   float hysteresis = -1.0f;
 };
@@ -82,7 +82,7 @@ makeCore(float v_max = 0.4f)
   bac::Params params;
   params.limits.v_max = v_max;
   if (g_weight_overrides.clearance >= 0.0f) params.weights.clearance = g_weight_overrides.clearance;
-  if (g_weight_overrides.goal_dist >= 0.0f) params.weights.goal_dist = g_weight_overrides.goal_dist;
+  if (g_weight_overrides.path_dist >= 0.0f) params.weights.path_dist = g_weight_overrides.path_dist;
   if (g_weight_overrides.balance >= 0.0f) params.weights.balance = g_weight_overrides.balance;
   if (g_weight_overrides.hysteresis >= 0.0f) params.weights.hysteresis = g_weight_overrides.hysteresis;
   return bac::BacCore(params);
@@ -621,9 +621,9 @@ main(int argc, char *argv[])
     {
       g_weight_overrides.clearance = std::atof(argv[++i]);
     }
-    else if (std::strcmp(argv[i], "--w-goal-dist") == 0 && i + 1 < argc)
+    else if (std::strcmp(argv[i], "--w-path-dist") == 0 && i + 1 < argc)
     {
-      g_weight_overrides.goal_dist = std::atof(argv[++i]);
+      g_weight_overrides.path_dist = std::atof(argv[++i]);
     }
     else if (std::strcmp(argv[i], "--w-balance") == 0 && i + 1 < argc)
     {
@@ -637,7 +637,7 @@ main(int argc, char *argv[])
     {
       std::cerr << "Usage: " << argv[0]
                 << " [--strict] [--csv-dir DIR] [--filter SUBSTRING]"
-                << " [--w-clearance X] [--w-goal-dist X] [--w-hysteresis X]" << std::endl;
+                << " [--w-clearance X] [--w-path-dist X] [--w-hysteresis X]" << std::endl;
       return 2;
     }
   }

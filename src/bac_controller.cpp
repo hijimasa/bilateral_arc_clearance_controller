@@ -10,8 +10,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "bac_ros_parameters.hpp"
+#include "nav2_core/controller_exceptions.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "tf2/utils.h"
@@ -88,6 +90,29 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   params.safety_margin.rear  = std::max(0.05f, params.safety_margin.rear - compensation);
   params.safety_margin.side  = std::max(0.05f, params.safety_margin.side - compensation);
 
+  scan_min_points_ = static_cast<int>(declare_float("scan_min_points", static_cast<float>(scan_min_points_)));
+
+  // Reject configurations that cannot produce meaningful candidates - a
+  // silent nonsense config is worse than a failed configure.
+  if (!(params.footprint.width > 0.0f) || !(params.footprint.front > params.footprint.rear))
+  {
+    throw std::invalid_argument("bac: footprint must have width > 0 and front > rear");
+  }
+  if (!(params.limits.v_max > 0.0f) || !(params.limits.w_max > 0.0f) ||
+      !(params.limits.acc_v > 0.0f))
+  {
+    throw std::invalid_argument("bac: limits.v_max / w_max / acc_v must be positive");
+  }
+  if (params.safety_margin.front < 0.0f || params.safety_margin.rear < 0.0f ||
+      params.safety_margin.side < 0.0f || params.avoid_margin.side < 0.0f)
+  {
+    throw std::invalid_argument("bac: margins must be non-negative");
+  }
+  if (!(params.sim_time > 0.0f) || !(params.stop_decel > 0.0f))
+  {
+    throw std::invalid_argument("bac: sim_time and stop_decel must be positive");
+  }
+
   core_.setParams(params);
 }
 
@@ -125,6 +150,7 @@ BacController::collectObstaclePoints(const geometry_msgs::msg::PoseStamped &pose
   std::vector<Point2D> points;
 
   nav2_costmap_2d::Costmap2D *costmap = costmap_ros_->getCostmap();
+  std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> lock(*costmap->getMutex());
   double rx = pose.pose.position.x;
   double ry = pose.pose.position.y;
   double yaw = tf2::getYaw(pose.pose.orientation);
@@ -202,28 +228,80 @@ BacController::collectScanPoints()
     points.emplace_back(static_cast<float>(sx + r * std::cos(angle)),
                         static_cast<float>(sy + r * std::sin(angle)));
   }
+  if (static_cast<int>(points.size()) < scan_min_points_)
+  {
+    // A scan that is fresh by timestamp but carries almost no valid returns
+    // (all NaN/Inf, sensor fault) must not be treated as a valid observation.
+    return std::nullopt;
+  }
   return points;
 }
 
 std::vector<Point2D>
-BacController::transformPlan(const geometry_msgs::msg::PoseStamped &pose) const
+BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/) const
 {
+  // The plan lives in its own frame (typically map) while the controller runs
+  // in the costmap/base frames - subtracting coordinates across frames would
+  // silently cancel exactly the localization error this controller is
+  // supposed to tolerate. Transform the plan into the BASE frame through TF
+  // and treat any frame problem as a hard controller error.
   std::vector<Point2D> path;
-  path.reserve(plan_.poses.size());
-  double rx  = pose.pose.position.x;
-  double ry  = pose.pose.position.y;
-  double yaw = tf2::getYaw(pose.pose.orientation);
-  double cs = std::cos(-yaw), sn = std::sin(-yaw);
-  double max_range = core_.params().max_range;
+  if (plan_.poses.empty())
+  {
+    return path;
+  }
+  const std::string base_frame = costmap_ros_->getBaseFrameID();
+  const std::string plan_frame = plan_.header.frame_id;
+  if (plan_frame.empty())
+  {
+    throw nav2_core::ControllerTFError("plan has no frame_id");
+  }
+  geometry_msgs::msg::TransformStamped tf_msg;
+  try
+  {
+    tf_msg = tf_->lookupTransform(base_frame, plan_frame, tf2::TimePointZero);
+  }
+  catch (const tf2::TransformException &ex)
+  {
+    throw nav2_core::ControllerTFError(std::string("cannot transform plan: ") + ex.what());
+  }
+  const double tx  = tf_msg.transform.translation.x;
+  const double ty  = tf_msg.transform.translation.y;
+  const double yaw = tf2::getYaw(tf_msg.transform.rotation);
+  const double cs = std::cos(yaw), sn = std::sin(yaw);
+
+  std::vector<Point2D> base_pts;
+  base_pts.reserve(plan_.poses.size());
   for (const auto &p : plan_.poses)
   {
-    double dx = p.pose.position.x - rx;
-    double dy = p.pose.position.y - ry;
-    if (dx * dx + dy * dy > max_range * max_range)
+    const double px = p.pose.position.x, py = p.pose.position.y;
+    base_pts.emplace_back(static_cast<float>(tx + cs * px - sn * py),
+                          static_cast<float>(ty + sn * px + cs * py));
+  }
+
+  // Prune from the pose NEAREST the robot (a stale or looping plan may start
+  // far away - breaking on the first far point there would return an empty
+  // path), then keep the local window up to the sensing range.
+  size_t nearest = 0;
+  float  best_d2 = std::numeric_limits<float>::max();
+  for (size_t i = 0; i < base_pts.size(); ++i)
+  {
+    const float d2 = base_pts[i].x * base_pts[i].x + base_pts[i].y * base_pts[i].y;
+    if (d2 < best_d2)
     {
-      break;  // beyond the sensing range: irrelevant for local planning
+      best_d2 = d2;
+      nearest = i;
     }
-    path.emplace_back(static_cast<float>(cs * dx - sn * dy), static_cast<float>(sn * dx + cs * dy));
+  }
+  const float max_range = core_.params().max_range;
+  for (size_t i = nearest; i < base_pts.size(); ++i)
+  {
+    const float d2 = base_pts[i].x * base_pts[i].x + base_pts[i].y * base_pts[i].y;
+    if (d2 > max_range * max_range)
+    {
+      break;
+    }
+    path.push_back(base_pts[i]);
   }
   return path;
 }

@@ -315,6 +315,21 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w
   float s_max_clear  = dist_clear + lead_length;
   float s_max        = std::max(dist_block, dist_clear) + lead_length;
 
+  // On an arc the rectangle's leading corners sweep OUTSIDE the constant
+  // half-width tube: the outer swept boundary is the corner radius
+  // sqrt((R + w/2)^2 + L^2), not R + w/2. Widen the body-hit band on the
+  // radially outer side by that excess (the inner boundary stays R - w/2:
+  // the side edge itself is the closest sweep). Straight motion has no
+  // excess, so corridor cruising is untouched.
+  float outer_excess = 0.0f;
+  if (std::fabs(w) > 1e-4f && std::fabs(v) > 1e-3f)
+  {
+    const float turn_r   = std::fabs(v / w);
+    const float corner_l = std::max(body.front, -body.rear);
+    const float outer_r  = turn_r + half_width;
+    outer_excess = std::sqrt(outer_r * outer_r + corner_l * corner_l) - outer_r;
+  }
+
   for (const Point2D &point : points)
   {
     float s;            // longitudinal distance along the path, in travel direction
@@ -349,7 +364,17 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w
     }
 
     float abs_offset = std::fabs(left_offset);
-    if (abs_offset < half_width)
+    bool  body_hit;
+    if (std::fabs(w) < 1e-4f)
+    {
+      body_hit = abs_offset < half_width;
+    }
+    else
+    {
+      const float inward = left_offset * ((w > 0.0f) ? 1.0f : -1.0f);  // + = towards turn center
+      body_hit = (inward < half_width) && (inward > -(half_width + outer_excess));
+    }
+    if (body_hit)
     {
       // The body would hit this point: longitudinal distance to the first hit
       // (searched over the full blocking window)
@@ -363,7 +388,7 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w
     {
       // Beyond the clearance window: a body-hit point still poisons the
       // clearance when it is euclidean-near (see Params::blocked_near/far).
-      if (abs_offset < half_width)
+      if (body_hit)
       {
         float d_e  = std::sqrt(point.x * point.x + point.y * point.y);
         float fade = (d_e - params_.blocked_near) /
@@ -801,7 +826,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
   float best_score = -FLT_MAX;
   Twist2D best_cmd(0.0f, 0.0f);
-  float best_clearance = 0.0f, best_goal_dist = 0.0f;
+  float best_clearance = 0.0f, best_path_cost = 0.0f;
   int   admissible_count = 0, candidate_count = 0;
   int   forward_admissible = 0;  // gates the escape-reverse row
 
@@ -834,7 +859,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       float gd_pre, bearing_pre, heading_scale_pre;
       gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre);
-      float fixed_penalties = params_.weights.goal_dist * gd_pre +
+      float fixed_penalties = params_.weights.path_dist * gd_pre +
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
       // the escape-reverse gate depends on that count, and admissibility is
@@ -952,25 +977,25 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
       // Rollout endpoint after sim_time (precomputed above)
       float end_th      = end_th_pre;
-      float goal_dist   = gd_pre;
+      float path_cost   = gd_pre;
       float heading_err = wrapAngle(bearing_pre - end_th);
 
       float score = params_.weights.clearance * std::min(clearance, cap_eff) -
                     params_.weights.balance * tightness * balance -
-                    params_.weights.goal_dist * goal_dist -
+                    params_.weights.path_dist * path_cost -
                     params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
                     params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
                     params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
 #ifdef BAC_DEBUG_CANDIDATES
       std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
-                  std::min(clearance, clearance_cap), goal_dist, heading_err, lateral_fraction, score);
+                  std::min(clearance, clearance_cap), path_cost, heading_err, lateral_fraction, score);
 #endif
       if (score > best_score)
       {
         best_score     = score;
         best_cmd       = Twist2D(v, w);
         best_clearance = std::min(clearance, cap_eff);
-        best_goal_dist = goal_dist;
+        best_path_cost = path_cost;
       }
   };
 
@@ -1019,7 +1044,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   prev_selected_w_      = out_w;
   result.output         = Twist2D(out_v, out_w);
   result.best_clearance = best_clearance;
-  result.best_goal_dist = best_goal_dist;
+  result.best_path_cost = best_path_cost;
   result.admissible_count = admissible_count;
   result.candidate_count  = candidate_count;
 
