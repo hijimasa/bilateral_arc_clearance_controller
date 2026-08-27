@@ -81,6 +81,20 @@ filterObstaclePoints(const std::vector<Point2D> &points, const Params &params)
 struct ProximityResult
 {
   float normalized = FLT_MAX;  // 1.0 = emergency margin boundary
+  /// Speed fraction demanded by points on a COLLISION course (straight-line
+  /// miss distance overlaps the body): longitudinal gap over the governor
+  /// look-ahead, so 0 at the zone edge and 1 at the look-ahead. Points that
+  /// would pass beside the body do not enter this ramp - a corridor wall
+  /// parallel to the travel direction leaves the cruise speed alone. Used by
+  /// the speed governor only; the emergency stop stays isotropic.
+  float governor   = FLT_MAX;
+  /// Tightest predicted side gap (points ahead on a GRAZING course, or
+  /// already beside the body), as a ratio of the UNSCALED side margin. The
+  /// governor keeps the sampled speed below the speed whose own scaled margin
+  /// would swallow that gap - otherwise passing close to an obstacle
+  /// Zeno-chatters: accelerate -> margin grows over the point -> emergency
+  /// stop -> repeat.
+  float side_ratio = FLT_MAX;
   float distance   = FLT_MAX;  // Euclidean distance to physical footprint
   bool  emergency  = false;
 };
@@ -136,6 +150,36 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
         std::sqrt(dx_normalized * dx_normalized + dy_normalized * dy_normalized);
     result.normalized      = std::min(result.normalized, normalized);
     result.emergency       = result.emergency || normalized < 1.0f;
+
+    // Governor hazard (straight-line slab test in the current direction of
+    // travel, with UNSCALED margins so the cap does not feed back on itself):
+    // a point either hits the body head-on (|y| inside the body: brake on the
+    // longitudinal ramp), grazes the side margin band (predictive side
+    // envelope), or misses entirely (a corridor wall: no cap at all).
+    const bool  forward   = current.v >= 0.0f;
+    const float ahead     = forward ? point.x - zone_x_max : zone_x_min - point.x;
+    const float lookahead = std::max(params.side_envelope_lookahead, 1e-3f);
+    const float side_gap  = std::fabs(point.y) - body_y_half;
+    if (side_gap < 0.0f && ahead > 0.0f)
+    {
+      // Dead-ahead collision course: linear speed ramp over the governor
+      // look-ahead (full cruise at lookahead, creep floor at the zone edge).
+      result.governor = std::min(result.governor, ahead / lookahead);
+    }
+    else if (side_gap >= 0.0f)
+    {
+      // Predicted close pass: between the trailing zone edge and the
+      // look-ahead the pass gap feeds the side envelope. The look-ahead must
+      // cover the swerve-carving phase - releasing the cap the moment the
+      // predicted miss turns positive would let the robot accelerate
+      // mid-carve and flatten its own berth.
+      const float behind = forward ? zone_x_min - point.x : point.x - zone_x_max;
+      if (behind < 0.0f && ahead < lookahead)
+      {
+        result.side_ratio = std::min(
+            result.side_ratio, side_gap / std::max(params.safety_margin.side, 1e-3f));
+      }
+    }
 
     const float dx = std::max(std::max(point.x - body_x_max, body_x_min - point.x), 0.0f);
     const float dy = std::max(std::fabs(point.y) - body_y_half, 0.0f);
@@ -453,12 +497,23 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.min_proximity_norm       = proximity.normalized;
   result.nearest_distance         = proximity.distance;
 
+  bool escape_only = false;
   if (proximity.emergency)
   {
-    current_status_ = Status::STOP;
-    result.output   = Twist2D(0.0f, 0.0f);
-    result.status   = Status::STOP;
-    return result;
+    if (std::fabs(current.v) > 0.05f || std::fabs(current.w) > 0.1f)
+    {
+      // Braking has priority while moving.
+      current_status_ = Status::STOP;
+      result.output   = Twist2D(0.0f, 0.0f);
+      result.status   = Status::STOP;
+      return result;
+    }
+    // Standstill with a point still inside the floor-scaled margins: a plain
+    // latch would freeze forever. Per the safety contract (backing away and
+    // waiting beats freezing), let the ESCAPE candidates run - forward and
+    // rotation stay forbidden, and if the rear is blocked too the stop
+    // candidate wins and this remains a stop.
+    escape_only = true;
   }
 
   // No intent: hold still. Influence-based status so the filter node's
@@ -478,16 +533,81 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.goal_x            = goal_x;
   result.goal_y            = goal_y;
 
-  // Proximity speed governor: cap the sampled speed near obstacles (with a
-  // creep floor so an escape stays possible right at the boundary).
-  float v_cap = params_.limits.v_max;
-  if (proximity.normalized < params_.proximity_governor_range &&
-      params_.proximity_governor_range > 1.0f)
+  // Proximity speed governor: cap the sampled speed in front of points the
+  // current motion would actually run into (slab test in evaluateProximity -
+  // a wall parallel to the travel direction misses the body and leaves the
+  // cruise speed alone), with a creep floor so an escape stays possible right
+  // at the boundary.
+  float v_cap    = params_.limits.v_max;
+  float fraction = std::min(1.0f, proximity.governor);
+  // Side envelope: while a point sits beside the body (or is about to be
+  // passed) inside the unscaled side margin plus cushion, never sample a
+  // speed whose own speed-scaled margin would reach within cushion of that
+  // point - the emergency boundary must stay ahead of the sampled window,
+  // not inside it.
+  if (proximity.side_ratio < 1.0f + params_.side_envelope_headroom)
   {
-    float fraction =
-        (proximity.normalized - 1.0f) / (params_.proximity_governor_range - 1.0f);
-    fraction       = std::max(params_.creep_fraction, std::min(1.0f, fraction));
+    // Highest margin scale whose side margin still clears the gap, minus the
+    // headroom cushion; inverted through the speed scaling. A gap the FULL
+    // margin already clears (ratio >= 1 + headroom) never caps the speed.
+    float scale_allowed = proximity.side_ratio - params_.side_envelope_headroom;
+    float v_side = params_.margin_scale_speed * (scale_allowed - params_.margin_scale_floor) /
+                   std::max(1.0f - params_.margin_scale_floor, 1e-3f);
+    fraction = std::min(fraction, v_side / std::max(params_.limits.v_max, 1e-3f));
+  }
+  if (fraction < 1.0f)
+  {
+    fraction = std::max(params_.creep_fraction, std::min(1.0f, fraction));
     v_cap *= fraction;
+  }
+
+  float clearance_cap = params_.footprint.width / 2.0f + params_.avoid_margin.side;
+
+  // Tightness probe: best RAW bilateral clearance over three probe arcs.
+  // Near 0 in the open (balance term off, pure path following); towards 1 in
+  // passages tighter than cap + safety side margin (geometry takes over the
+  // lateral authority).
+  float tightness  = 0.0f;
+  float probe_best = 0.0f;
+  {
+    float v_probe    = std::max(v_cap, 0.1f);
+    float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
+    for (float wp : { -0.4f, 0.0f, 0.4f })
+    {
+      float dist_clear = probe_dist;
+      if (std::fabs(wp) > 1e-4f)
+      {
+        dist_clear = std::min(dist_clear, (v_probe / std::fabs(wp)) * params_.eval_angle_max);
+      }
+      ArcEvaluation eval = evaluateArcWindows(filtered_points, v_probe, wp, dist_clear, probe_dist);
+      probe_best = std::max(probe_best, std::min(eval.clearance_left, eval.clearance_right));
+    }
+    float cap_floor_probe = params_.footprint.width / 2.0f + params_.safety_margin.side;
+    float probe_clamped   = std::max(cap_floor_probe, std::min(probe_best, clearance_cap));
+    if (params_.cap_adapt_rate > 1e-6f)
+    {
+      if (cap_ema_ < 0.0f)
+      {
+        cap_ema_ = clearance_cap;
+      }
+      cap_ema_ += params_.cap_adapt_rate * (probe_clamped - cap_ema_);
+    }
+    else
+    {
+      cap_ema_ = clearance_cap;
+    }
+    float reference = cap_ema_ + params_.safety_margin.side;
+    tightness = 1.0f - std::max(0.0f, std::min(1.0f, probe_best / std::max(reference, 1e-3f)));
+  }
+
+  // Cruise moderation: precise centering between close walls needs steering
+  // authority (~w/v), so a fully tight passage caps the cruise at
+  // tight_cruise_fraction of the limit (never below the creep floor).
+  if (params_.tight_cruise_fraction < 1.0f)
+  {
+    float moderation = 1.0f - (1.0f - params_.tight_cruise_fraction) * tightness;
+    v_cap = std::min(v_cap, params_.limits.v_max *
+                                std::max(moderation, params_.creep_fraction));
   }
 
   // Dynamic window (accel-limited around the current velocity)
@@ -551,45 +671,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // Reusable buffer for turn-then-go evaluation of the v=0 row
   std::vector<Point2D> rotated_points;
 
-  float clearance_cap = params_.footprint.width / 2.0f + params_.avoid_margin.side;
-
-  // Tightness probe: best RAW bilateral clearance over three probe arcs.
-  // Near 0 in the open (balance term off, pure path following); towards 1 in
-  // passages tighter than cap + safety side margin (geometry takes over the
-  // lateral authority).
-  float tightness  = 0.0f;
-  float probe_best = 0.0f;
-  {
-    float v_probe    = std::max(v_cap, 0.1f);
-    float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
-    for (float wp : { -0.4f, 0.0f, 0.4f })
-    {
-      float dist_clear = probe_dist;
-      if (std::fabs(wp) > 1e-4f)
-      {
-        dist_clear = std::min(dist_clear, (v_probe / std::fabs(wp)) * params_.eval_angle_max);
-      }
-      ArcEvaluation eval = evaluateArcWindows(filtered_points, v_probe, wp, dist_clear, probe_dist);
-      probe_best = std::max(probe_best, std::min(eval.clearance_left, eval.clearance_right));
-    }
-    float cap_floor_probe = params_.footprint.width / 2.0f + params_.safety_margin.side;
-    float probe_clamped   = std::max(cap_floor_probe, std::min(probe_best, clearance_cap));
-    if (params_.cap_adapt_rate > 1e-6f)
-    {
-      if (cap_ema_ < 0.0f)
-      {
-        cap_ema_ = clearance_cap;
-      }
-      cap_ema_ += params_.cap_adapt_rate * (probe_clamped - cap_ema_);
-    }
-    else
-    {
-      cap_ema_ = clearance_cap;
-    }
-    float reference = cap_ema_ + params_.safety_margin.side;
-    tightness = 1.0f - std::max(0.0f, std::min(1.0f, probe_best / std::max(reference, 1e-3f)));
-  }
-
   // Adaptive saturation: aim for the configured avoid margin, but never DEMAND
   // more clearance than the passage towards the goal physically affords -
   // otherwise a corridor narrower than the cap scores permanently worse than
@@ -607,14 +688,15 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   int   admissible_count = 0, candidate_count = 0;
   int   forward_admissible = 0;  // gates the escape-reverse row
 
-  for (float v : v_values)
-  {
-    for (float w : w_values)
-    {
+  auto evaluate_candidate = [&](float v, float w) {
       candidate_count++;
       if (v < -1e-3f && forward_admissible > 0)
       {
-        continue;  // reverse is an escape move: only when forward is hopeless
+        return;  // reverse is an escape move: only when forward is hopeless
+      }
+      if (escape_only && (v > 1e-3f || (std::fabs(v) <= 1e-3f && std::fabs(w) > 1e-3f)))
+      {
+        return;  // emergency standstill: only reverse or stop
       }
 
       // Endpoint pose and the point-free score parts first: they give an
@@ -639,11 +721,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
       // the escape-reverse gate depends on that count, and admissibility is
-      // only known after evaluation.)
-      if (forward_admissible > 0 &&
+      // only known after evaluation. The v=0 row is exempt - its goal
+      // distance improves after evaluation via the turn-then-go advance, so
+      // the pre-evaluation bound would not be an upper bound.)
+      if (std::fabs(v) > 1e-3f && forward_admissible > 0 &&
           params_.weights.clearance * cap_eff - fixed_penalties <= best_score)
       {
-        continue;
+        return;
       }
 
       float clearance, lateral_fraction, clear_left, clear_right;
@@ -651,7 +735,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       {
         if (std::fabs(w) > 1e-3f && !rotation_admissible)
         {
-          continue;
+          return;
         }
         // Turn-then-go: score the rotation (or stop) by the straight run the
         // robot could make AFTER turning by w * sim_time. A myopic "clearance
@@ -672,12 +756,33 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         lateral_fraction = eval.lateral_fraction;
         clear_left       = eval.far_left;
         clear_right      = eval.far_right;
+
+        // The maneuver is turn-THEN-GO: its goal distance is scored at the
+        // post-rotation ADVANCE endpoint (capped by the first body hit on
+        // that run) PLUS the advance itself. A run straight at the goal then
+        // scores exactly the in-place gd (the family baseline against real
+        // moving candidates is unchanged), while a run pointing away pays up
+        // to twice the advance. Without this the v=0 family is scored fully
+        // in place, all sharing one goal distance, and a robot facing open
+        // space away from the goal freezes: the phantom clearance of the run
+        // it never makes rewards holding still, and the heading reward for
+        // turning back is smaller than the hysteresis of starting to turn.
+        float advance = v_ref * params_.sim_time;
+        if (eval.blocking_s < FLT_MAX)
+        {
+          advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_length - lead_margin));
+        }
+        end_x_pre = advance * std::cos(end_th_pre);
+        end_y_pre = advance * std::sin(end_th_pre);
+        gdx_pre   = goal_x - end_x_pre;
+        gdy_pre   = goal_y - end_y_pre;
+        gd_pre    = std::sqrt(gdx_pre * gdx_pre + gdy_pre * gdy_pre) + advance;
       }
       else
       {
         if (std::fabs(w) > 1e-4f && std::fabs(v) / std::fabs(w) < params_.turn_radius_min)
         {
-          continue;  // near-spin arc: degenerate clearance geometry
+          return;  // near-spin arc: degenerate clearance geometry
         }
         float dist_block = std::max(std::fabs(v) * params_.sim_time, params_.min_eval_distance);
         float dist_clear = dist_block;
@@ -702,7 +807,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           float needed   = v * v / (2.0f * stop_decel) + std::fabs(v) * params_.brake_reaction_time;
           if (free_run <= needed)
           {
-            continue;
+            return;
           }
         }
         clearance        = std::min(eval.clearance_left, eval.clearance_right);
@@ -750,6 +855,37 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         best_cmd       = Twist2D(v, w);
         best_clearance = std::min(clearance, cap_eff);
         best_goal_dist = goal_dist;
+      }
+  };
+
+  for (float v : v_values)
+  {
+    for (float w : w_values)
+    {
+      evaluate_candidate(v, w);
+    }
+  }
+
+  // Coarse-to-fine steering: re-sample w around the coarse winner at a finer
+  // pitch (moving candidates only). The uniform grid quantizes w to
+  // 2 * w_max / (w_samples - 1); the hysteresis term then makes the coarse
+  // pitch itself the smallest applicable correction, which shows up as
+  // tick-scale zigzag in narrow passages.
+  if (params_.w_refine_steps > 0 && std::fabs(best_cmd.v) > 1e-3f)
+  {
+    float w_step   = (w_hi - w_lo) / static_cast<float>(std::max(w_samples - 1, 1));
+    float w_center = best_cmd.w;
+    float v_center = best_cmd.v;
+    for (int i = 1; i <= params_.w_refine_steps; ++i)
+    {
+      float dw = w_step * static_cast<float>(i) /
+                 static_cast<float>(params_.w_refine_steps + 1);
+      for (float w : { w_center - dw, w_center + dw })
+      {
+        if (w >= w_lo && w <= w_hi)
+        {
+          evaluate_candidate(v_center, w);
+        }
       }
     }
   }

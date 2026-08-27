@@ -83,15 +83,19 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.window_time         = declare_float("window_time", params.window_time);
   params.v_samples           = declare_int("v_samples", params.v_samples);
   params.w_samples           = declare_int("w_samples", params.w_samples);
+  params.w_refine_steps      = declare_int("w_refine_steps", params.w_refine_steps);
   params.stop_decel          = declare_float("stop_decel", params.stop_decel);
   params.brake_reaction_time = declare_float("brake_reaction_time", params.brake_reaction_time);
   params.max_range           = declare_float("max_range", params.max_range);
   params.max_points          = declare_int("max_points", params.max_points);
   params.velocity_min        = declare_float("velocity_min", params.velocity_min);
   params.angvel_min          = declare_float("angvel_min", params.angvel_min);
-  params.creep_fraction      = declare_float("creep_fraction", params.creep_fraction);
-  params.proximity_governor_range =
-      declare_float("proximity_governor_range", params.proximity_governor_range);
+  params.creep_fraction        = declare_float("creep_fraction", params.creep_fraction);
+  params.tight_cruise_fraction = declare_float("tight_cruise_fraction", params.tight_cruise_fraction);
+  params.side_envelope_headroom =
+      declare_float("side_envelope_headroom", params.side_envelope_headroom);
+  params.side_envelope_lookahead =
+      declare_float("side_envelope_lookahead", params.side_envelope_lookahead);
   params.influence_range      = declare_float("influence_range", params.influence_range);
   params.avoiding_latch_ticks = declare_int("avoiding_latch_ticks", params.avoiding_latch_ticks);
 

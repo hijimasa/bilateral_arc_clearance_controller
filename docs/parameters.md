@@ -33,6 +33,7 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `window_time` | 0.25 | 並進 dynamic window の時間幅 [s] |
 | `v_samples` | 5 | 並進速度サンプル数（停止・回頭行は別途追加） |
 | `w_samples` | 25 | `[-w_max, w_max]` の角速度サンプル数 |
+| `w_refine_steps` | 3 | 粗い最良候補の角速度近傍を片側この本数だけ細分再評価。0 で無効 |
 | `turn_radius_min` | 0.25 | 前進候補の最小旋回半径 [m] |
 | `velocity_min` | 0.005 | これ未満の出力速度を 0 に丸める [m/s] |
 | `angvel_min` | 0.01 | これ未満の出力角速度を 0 に丸める [rad/s] |
@@ -49,7 +50,7 @@ jerk 制限を必ず適用する。
 | `score_lookahead` | 2.5 | ローカルゴールまでの経路長 [m] |
 | `min_eval_distance` | 1.6 | 低速でも確保する最小評価距離 [m] |
 | `eval_angle_max` | 1.05 | 曲線候補の最大評価角 [rad] |
-| `eval_lateral_max` | 0.3 | 曲線候補の最大横変位 [m] |
+| `eval_lateral_max` | 0.5 | 曲線候補の最大横変位 [m] |
 | `goal_los_radius` | 0.45 | ローカルゴール視線の障害物半径 [m]。0 で無効 |
 | `los_onpath_radius` | 0.5 | 経路上障害物を視線トリムから除く半径 [m] |
 | `cap_adapt_rate` | 0.05 | 密度適応クリアランス上限の EMA 更新率。0 で固定 |
@@ -60,7 +61,7 @@ jerk 制限を必ず適用する。
 | `weights.goal_dist` | 1.0 | ロールアウト終端からローカルゴールまでの距離 |
 | `weights.heading` | 0.15 | 終端方位誤差 |
 | `weights.hysteresis` | 0.6 | 前回選択角速度との差 |
-| `weights.squeeze` | 0.3 | 側方余裕が小さいときの速度ペナルティ |
+| `weights.squeeze` | 0.5 | 側方余裕が小さいときの速度ペナルティ |
 
 重みを変更するときは `bac_scenario_harness --strict` を必ず再実行する。特に
 `weights.balance` と `weights.hysteresis` は狭路中心収束と操舵振動の交換になる。
@@ -74,7 +75,9 @@ jerk 制限を必ず適用する。
 | `margin_scale_floor` | 0.5 | 停止時の安全余裕スケール下限 |
 | `margin_scale_speed` | 0.3 | 安全余裕が 100% になる速度 [m/s] |
 | `creep_fraction` | 0.3 | 近接ガバナの最低速度割合 |
-| `proximity_governor_range` | 2.0 | ガバナ開始距離（正規化値。1 が緊急境界） |
+| `side_envelope_lookahead` | 1.0 | ガバナの前方判定距離 [m]。衝突コース上の点への線形減速と、狭接近すれ違い予定点の速度包絡に共通 |
+| `side_envelope_headroom` | 0.1 | 側方包絡の余裕（側方余裕比）。予測すれ違い隙間が「余裕×(1+この値)」以上なら減速しない |
+| `tight_cruise_fraction` | 0.5 | 両側拘束の狭所で許容する巡航速度割合（tightness に線形）。1.0 で無効 |
 | `max_range` | 10.0 | 障害物点の最大距離 [m] |
 | `max_points` | 1000 | 点数上限。超過時は等間隔間引き。0 以下で無制限 |
 | `influence_range` | 1.2 | `CLEAR` とみなす車体からの距離 [m] |

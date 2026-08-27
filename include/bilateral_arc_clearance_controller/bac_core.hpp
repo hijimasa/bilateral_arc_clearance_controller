@@ -133,7 +133,7 @@ struct Weights
   float balance    = 4.0f;  // [score per m]
   float heading    = 0.15f; // [score per rad] endpoint heading vs local-goal bearing
   float hysteresis = 0.6f;  // [score per rad/s] change from the previous w
-  float squeeze    = 0.3f;  // [score per m/s] v scaled by (1 - lateral_fraction)
+  float squeeze    = 0.5f;  // [score per m/s] v scaled by (1 - lateral_fraction)
 };
 
 struct Params
@@ -186,7 +186,7 @@ struct Params
   /// ... and never beyond this LATERAL displacement of the arc: a small-radius
   /// correction extrapolated deep across the passage would self-punish via
   /// the clearance min (the planner re-decides long before that).
-  float eval_lateral_max = 0.3f;  // [m]
+  float eval_lateral_max = 0.5f;  // [m]
   /// A body-hit beyond the clearance window still poisons the clearance when
   /// the hit point is euclidean-NEAR (a tight arc reaches a nearby obstacle
   /// at a long arc length; arc length alone would hide the threat). The
@@ -197,7 +197,7 @@ struct Params
   /// speed; full margins at margin_scale_speed and above, margin_scale_floor
   /// of them at standstill). Without this the robot Zeno-chatters on the
   /// boundary: stop -> tiny margin violation -> stop, never rebuilding speed.
-  float margin_scale_floor = 0.5f;
+  float margin_scale_floor = 0.6f;
   float margin_scale_speed = 0.3f;  // [m/s]
   float window_time = 0.25f;  // [s] accel authority defining the dynamic window
   int   v_samples   = 5;      // forward-speed samples in the window (v=0 row is added)
@@ -205,6 +205,12 @@ struct Params
   /// accel-window around the current w): corrective arcs must always be on
   /// the table, independent of the current state and the planner's target.
   int   w_samples   = 25;
+  /// Coarse-to-fine steering: this many finer w offsets are re-sampled on
+  /// each side of the coarse winner (at its v). Removes the steering
+  /// quantization of the uniform grid, whose pitch otherwise becomes the
+  /// smallest applicable correction (tick-scale zigzag in narrow passages).
+  /// 0 disables.
+  int w_refine_steps = 3;
 
   float stop_decel          = 1.0f;   // [m/s^2] braking capability
   float brake_reaction_time = 0.1f;   // [s] latency covered by braking distances
@@ -217,12 +223,34 @@ struct Params
   float velocity_min = 0.005f;  // [m/s] outputs below are clamped to 0
   float angvel_min   = 0.01f;   // [rad/s] outputs below are clamped to 0
 
-  /// Proximity speed governor: near anything (margin-normalized distance,
-  /// 1.0 = at the emergency boundary) the sampled speed window is capped so
-  /// the actual trajectory tracks the evaluated arc closely. The creep floor
-  /// keeps an escape possible right at the boundary instead of freezing.
-  float creep_fraction           = 0.3f;
-  float proximity_governor_range = 2.0f;
+  /// Proximity speed governor: the sampled speed window is capped in front of
+  /// points the CURRENT motion would actually run into (straight-line slab
+  /// test: a point whose miss distance overlaps the body brakes on a linear
+  /// ramp over side_envelope_lookahead; a wall parallel to the travel
+  /// direction misses and never caps the cruise speed - safety beside the
+  /// body rests on the admissibility test and the emergency layer). The
+  /// creep floor keeps an escape possible right at the boundary instead of
+  /// freezing.
+  float creep_fraction = 0.3f;
+  /// Cruise moderation in bilateral tightness: the sampled speed is scaled by
+  /// (1 - (1 - tight_cruise_fraction) * tightness), i.e. this fraction of
+  /// v_max remains available in a fully tight passage. Steering authority
+  /// (lateral correction per meter, ~w/v) shrinks with speed, so precise
+  /// centering between close walls needs a moderated cruise; 1.0 disables
+  /// (full speed everywhere, coarser centering).
+  float tight_cruise_fraction = 0.5f;
+  /// Side envelope of the governor: while a point sits beside the body (or is
+  /// about to be passed) inside the unscaled side margin plus this cushion
+  /// (in margin units), the sampled speed stays below the speed whose own
+  /// speed-scaled margin would reach within cushion of that point. Prevents
+  /// the pass-accelerate-stop chatter next to obstacles by construction while
+  /// leaving gaps the full margin already clears at full cruise speed.
+  float side_envelope_headroom = 0.1f;
+  /// How far ahead of the stop zone a predicted-close-pass point engages the
+  /// side envelope [m]. Covers the swerve-carving phase around an obstacle
+  /// (the cap must not release mid-carve); has no effect on gaps wider than
+  /// the side margin plus cushion, so corridors stay at full cruise speed.
+  float side_envelope_lookahead = 1.0f;
 
   /// Status is CLEAR when no obstacle point is within this distance of the
   /// footprint rectangle (pass-through arbitration hint for the filter node).
