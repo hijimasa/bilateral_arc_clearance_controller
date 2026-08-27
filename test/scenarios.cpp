@@ -68,23 +68,23 @@ struct ScenarioResult
 // Weight overrides from the command line (for parameter sweeps)
 struct WeightOverrides
 {
-  float clearance               = -1.0f;
-  float fidelity                = -1.0f;
-  float hysteresis              = -1.0f;
-  float fidelity_viability_floor = -1.0f;
+  float clearance  = -1.0f;
+  float goal_dist  = -1.0f;
+  float balance    = -1.0f;
+  float hysteresis = -1.0f;
 };
 WeightOverrides g_weight_overrides;
 
 bac::BacCore
-makeCore()
+makeCore(float v_max = 0.4f)
 {
   // bac::Params defaults; apply CLI overrides
   bac::Params params;
+  params.limits.v_max = v_max;
   if (g_weight_overrides.clearance >= 0.0f) params.weights.clearance = g_weight_overrides.clearance;
-  if (g_weight_overrides.fidelity >= 0.0f) params.weights.fidelity = g_weight_overrides.fidelity;
+  if (g_weight_overrides.goal_dist >= 0.0f) params.weights.goal_dist = g_weight_overrides.goal_dist;
+  if (g_weight_overrides.balance >= 0.0f) params.weights.balance = g_weight_overrides.balance;
   if (g_weight_overrides.hysteresis >= 0.0f) params.weights.hysteresis = g_weight_overrides.hysteresis;
-  if (g_weight_overrides.fidelity_viability_floor >= 0.0f)
-    params.weights.fidelity_viability_floor = g_weight_overrides.fidelity_viability_floor;
   return bac::BacCore(params);
 }
 
@@ -128,11 +128,11 @@ scenarioOpenPassthrough(const std::string &csv_dir)
   ScenarioResult result{ "open_passthrough", Tier::REGRESSION, {}, {} };
 
   World world;  // empty
-  bac::BacCore core = makeCore();
+  bac::BacCore core = makeCore(0.3f);
   SimConfig config;
   config.sim_time = 10.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, constantCommand(0.3f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -160,7 +160,7 @@ scenarioSafetyStop(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 3.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, constantCommand(0.3f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -186,7 +186,7 @@ scenarioAvoidSingleObstacle(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 60.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointCommand(9.0f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(9.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -216,7 +216,7 @@ scenarioCorridorWide(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 60.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointCommand(10.0f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -255,7 +255,7 @@ scenarioCorridorNarrowAligned(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 90.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointCommand(10.0f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -293,7 +293,7 @@ scenarioCorridorNarrowOffset(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 90.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.4f, 0.0f }, gotoPointCommand(10.0f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.4f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -333,7 +333,7 @@ scenarioCorridorNarrowWalled(const std::string &csv_dir)
   SimConfig config;
   config.sim_time = 120.0f;
 
-  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.4f, 0.0f }, gotoPointCommand(10.0f, 0.0f), config);
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.4f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
   writeTraceCsv(csv_dir, result.name, sim, world);
 
   MetricsOptions options;
@@ -355,6 +355,82 @@ scenarioCorridorNarrowWalled(const std::string &csv_dir)
                             "mean |y| " + fmt(m.mean_abs_lateral) + ", max " + fmt(m.max_abs_lateral) });
   result.checks.push_back({ "low oscillation", m.w_sign_changes <= 10,
                             std::to_string(m.w_sign_changes) + " w sign changes" });
+  return result;
+}
+
+// Physical-limit corridor: 1.5 m leaves only 0.275 m of slack per side -
+// close to the 0.2 m safety margin. Requires geometry-driven centering (the
+// balance term): the residual drift that 1.7 m tolerates is fatal here.
+ScenarioResult
+scenarioCorridorExtreme(const std::string &csv_dir)
+{
+  ScenarioResult result{ "corridor_extreme", Tier::TARGET, {}, {} };
+
+  World world;
+  world.addCorridorX(3.0f, 9.0f, 0.0f, 1.5f);
+  world.addWall(3.0f, 0.75f, 3.0f, 6.0f);
+  world.addWall(3.0f, -0.75f, 3.0f, -6.0f);
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 120.0f;
+
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.4f, 0.0f }, gotoPointPath(10.0f, 0.0f), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 10.0f;
+  options.goal_y         = 0.0f;
+  options.goal_tolerance = 0.5f;
+  options.eval_lateral   = true;
+  options.center_y       = 0.0f;
+  options.x_from         = 4.0f;
+  options.x_to           = 8.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "enters and traverses corridor", m.final_x > 9.0f,
+                            "final (" + fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });
+  result.checks.push_back({ "no full stop", m.stop_ticks < 40, std::to_string(m.stop_ticks) + " stop ticks" });
+  result.checks.push_back({ "converges to center", m.lateral_samples > 0 && m.mean_abs_lateral < 0.10f,
+                            "mean |y| " + fmt(m.mean_abs_lateral) + ", max " + fmt(m.max_abs_lateral) });
+  return result;
+}
+
+// L-shaped entry: a wide approach leg ends in a 90-degree turn into a narrow
+// (1.7 m) corridor. Tests cornering into a passage whose entry requires a
+// swing, with a planner-like waypoint path around the corner.
+ScenarioResult
+scenarioCorridorLshape(const std::string &csv_dir)
+{
+  ScenarioResult result{ "corridor_lshape", Tier::TARGET, {}, {} };
+
+  World world;
+  world.addWall(-1.0f, -1.25f, 5.0f, -1.25f);   // approach, bottom
+  world.addWall(-1.0f, 1.25f, 2.8f, 1.25f);     // approach, top (until the branch)
+  world.addWall(4.5f, 1.25f, 5.0f, 1.25f);      // top, right of the branch
+  world.addWall(5.0f, -1.25f, 5.0f, 1.25f);     // dead end ahead
+  world.addWall(2.8f, 1.25f, 2.8f, 7.0f);       // narrow corridor, left
+  world.addWall(4.5f, 1.25f, 4.5f, 7.0f);       // narrow corridor, right
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 120.0f;
+
+  std::vector<Point2D> waypoints{ { 0.0f, 0.0f }, { 3.65f, 0.0f }, { 3.65f, 6.0f } };
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, waypointsPath(waypoints), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 3.65f;
+  options.goal_y         = 6.0f;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "turns into and traverses corridor", m.final_y > 5.0f,
+                            "final (" + fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });
+  result.checks.push_back({ "no full stop", m.stop_ticks < 40, std::to_string(m.stop_ticks) + " stop ticks" });
   return result;
 }
 
@@ -385,23 +461,23 @@ main(int argc, char *argv[])
     {
       g_weight_overrides.clearance = std::atof(argv[++i]);
     }
-    else if (std::strcmp(argv[i], "--w-fidelity") == 0 && i + 1 < argc)
+    else if (std::strcmp(argv[i], "--w-goal-dist") == 0 && i + 1 < argc)
     {
-      g_weight_overrides.fidelity = std::atof(argv[++i]);
+      g_weight_overrides.goal_dist = std::atof(argv[++i]);
+    }
+    else if (std::strcmp(argv[i], "--w-balance") == 0 && i + 1 < argc)
+    {
+      g_weight_overrides.balance = std::atof(argv[++i]);
     }
     else if (std::strcmp(argv[i], "--w-hysteresis") == 0 && i + 1 < argc)
     {
       g_weight_overrides.hysteresis = std::atof(argv[++i]);
     }
-    else if (std::strcmp(argv[i], "--viability-floor") == 0 && i + 1 < argc)
-    {
-      g_weight_overrides.fidelity_viability_floor = std::atof(argv[++i]);
-    }
     else
     {
       std::cerr << "Usage: " << argv[0]
                 << " [--strict] [--csv-dir DIR] [--filter SUBSTRING]"
-                << " [--w-clearance X] [--w-fidelity X] [--w-hysteresis X] [--viability-floor X]" << std::endl;
+                << " [--w-clearance X] [--w-goal-dist X] [--w-hysteresis X]" << std::endl;
       return 2;
     }
   }
@@ -410,7 +486,7 @@ main(int argc, char *argv[])
   const ScenarioFunc scenarios[] = {
     scenarioOpenPassthrough, scenarioSafetyStop,           scenarioAvoidSingleObstacle,
     scenarioCorridorWide,    scenarioCorridorNarrowAligned, scenarioCorridorNarrowOffset,
-    scenarioCorridorNarrowWalled,
+    scenarioCorridorNarrowWalled, scenarioCorridorExtreme, scenarioCorridorLshape,
   };
 
   std::vector<ScenarioResult> results;

@@ -61,11 +61,11 @@ if(ament_cmake_FOUND)
     find_package(tf2 REQUIRED)
     find_package(tf2_geometry_msgs REQUIRED)
 
-    add_library(bilateral_arc_clearance_controller SHARED src/bilateral_arc_clearance_controller.cpp)
+    add_library(bilateral_arc_clearance_controller SHARED src/bac_controller.cpp)
     target_link_libraries(bilateral_arc_clearance_controller bac_core)
     ament_target_dependencies(bilateral_arc_clearance_controller
         rclcpp rclcpp_lifecycle pluginlib nav2_core nav2_costmap_2d nav2_util
-        geometry_msgs nav_msgs tf2 tf2_geometry_msgs
+        geometry_msgs nav_msgs sensor_msgs tf2 tf2_geometry_msgs
     )
     install(TARGETS bilateral_arc_clearance_controller
         ARCHIVE DESTINATION lib

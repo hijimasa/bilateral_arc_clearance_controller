@@ -1,14 +1,14 @@
 /**
- * @file bilateral_arc_clearance_controller.hpp
+ * @file bac_controller.hpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief nav2 controller plugin wrapping bac_core (UNTESTED SKELETON)
- * @date 2026-08-26
+ * @brief nav2 controller plugin wrapping bac_core (DWA-based local planner)
+ * @date 2026-08-27
  * @copyright Copyright (c) 2026 REACT Co., Ltd.
  *
- * WARNING: written against the nav2 Humble API but never compiled or run
- * (nav2 is not installed in this workspace). Treat as a starting point:
- * a simple pure-pursuit generates the intent command from the plan, and
- * bac_core shapes it against lethal costmap cells.
+ * Thin adapter: transforms the nav2 plan into the robot frame, feeds the core
+ * obstacle points (raw laser scan when scan_topic is set; lethal costmap cells
+ * as fallback), and publishes the core's (v, w) output. All planning logic
+ * lives in the framework-free core.
  */
 
 #pragma once
@@ -16,12 +16,15 @@
 #define BILATERAL_ARC_CLEARANCE_CONTROLLER__BAC_CONTROLLER_HPP_
 
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "nav2_core/controller.hpp"
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 namespace bac
 {
@@ -51,8 +54,11 @@ private:
   /// Lethal costmap cells within max_range, in the robot frame
   std::vector<Point2D> collectObstaclePoints(const geometry_msgs::msg::PoseStamped &pose) const;
 
-  /// Pure-pursuit style intent command from the current plan
-  Twist2D planCommand(const geometry_msgs::msg::PoseStamped &pose) const;
+  /// Latest laser scan as robot-frame points (std::nullopt when no fresh scan)
+  std::optional<std::vector<Point2D>> collectScanPoints();
+
+  /// The current plan transformed into the robot frame
+  std::vector<Point2D> transformPlan(const geometry_msgs::msg::PoseStamped &pose) const;
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr       parent_;
   std::string                                    name_;
@@ -60,13 +66,19 @@ private:
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
   nav_msgs::msg::Path                            plan_;
 
+  // Direct laser input (the core's native point source). When scan_topic is
+  // set, fresh scans feed the core; the costmap is a fallback.
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  sensor_msgs::msg::LaserScan::ConstSharedPtr                  latest_scan_;
+  std::mutex                                                   scan_mutex_;
+  rclcpp::Clock::SharedPtr                                     clock_;
+  std::string                                                  scan_topic_;
+  float                                                        scan_timeout_ = 0.5f;  // [s]
+
   BacCore core_;
 
-  float lookahead_    = 0.8f;   // [m]
-  float desired_speed_ = 0.4f;  // [m/s]
-  float k_heading_    = 1.5f;   // [1/s]
-  float w_max_        = 0.6f;   // [rad/s]
-  float speed_limit_  = 0.0f;   // 0 = unlimited
+  float base_v_max_  = 0.4f;  // configured limits.v_max (speed limit re-caps it)
+  float speed_limit_ = 0.0f;  // 0 = unlimited
 };
 
 }  // namespace bac

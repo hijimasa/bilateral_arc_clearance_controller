@@ -47,16 +47,20 @@ public:
     params.avoid_margin.front  = declareF("avoid_margin.front", params.avoid_margin.front);
     params.avoid_margin.rear   = declareF("avoid_margin.rear", params.avoid_margin.rear);
     params.avoid_margin.side   = declareF("avoid_margin.side", params.avoid_margin.side);
-    params.reaction_time       = declareF("reaction_time", params.reaction_time);
     params.stop_decel          = declareF("stop_decel", params.stop_decel);
-    params.w_range             = declareF("w_range", params.w_range);
     params.max_range           = declareF("max_range", params.max_range);
+    params.limits.v_max        = declareF("limits.v_max", params.limits.v_max);
+    params.limits.w_max        = declareF("limits.w_max", params.limits.w_max);
+    params.limits.acc_v        = declareF("limits.acc_v", params.limits.acc_v);
+    params.limits.acc_w        = declareF("limits.acc_w", params.limits.acc_w);
     params.weights.clearance   = declareF("weights.clearance", params.weights.clearance);
-    params.weights.fidelity    = declareF("weights.fidelity", params.weights.fidelity);
+    params.weights.goal_dist   = declareF("weights.goal_dist", params.weights.goal_dist);
+    params.weights.heading     = declareF("weights.heading", params.weights.heading);
     params.weights.hysteresis  = declareF("weights.hysteresis", params.weights.hysteresis);
-    params.weights.fidelity_viability_floor =
-        declareF("weights.fidelity_viability_floor", params.weights.fidelity_viability_floor);
+    params.weights.squeeze     = declareF("weights.squeeze", params.weights.squeeze);
     core_.setParams(params);
+    base_v_max_ = params.limits.v_max;
+    virtual_path_length_ = declareF("virtual_path_length", 3.0f);
 
     // 2D pose of the laser in the robot frame
     sensor_x_   = declareF("sensor.x", 0.0f);
@@ -137,7 +141,41 @@ private:
     }
     else
     {
-      bac::Result result = core_.process(points, command, current);
+      // The upper (v, w) command becomes a virtual local path: the commanded
+      // arc extended over virtual_path_length. The core then plans towards it
+      // (and never faster than the commanded speed).
+      std::vector<bac::Point2D> path;
+      float cv = command.v, cw = command.w;
+      if (std::fabs(cv) > 0.02f || std::fabs(cw) > 0.02f)
+      {
+        float v_dir = (cv >= 0.0f) ? 1.0f : -1.0f;
+        float v_eff = std::max(std::fabs(cv), 0.15f) * v_dir;  // pure turns get a short arc
+        int   n     = 30;
+        for (int i = 1; i <= n; i++)
+        {
+          float s = virtual_path_length_ * static_cast<float>(i) / static_cast<float>(n) * v_dir;
+          if (std::fabs(cw) < 1e-3f)
+          {
+            path.emplace_back(s, 0.0f);
+          }
+          else
+          {
+            float radius = v_eff / cw;
+            float theta  = s / radius;
+            path.emplace_back(radius * std::sin(theta), radius * (1.0f - std::cos(theta)));
+          }
+        }
+      }
+
+      bac::Params params = core_.params();
+      float v_cap = std::min(base_v_max_, std::fabs(cv));
+      if (params.limits.v_max != v_cap)
+      {
+        params.limits.v_max = v_cap;
+        core_.setParams(params);
+      }
+
+      bac::Result result = core_.process(points, path, current);
       // Arbitration: transparent while CLEAR
       bac::Twist2D applied = (result.status == bac::Status::CLEAR) ? command : result.output;
       out.linear.x  = applied.v;
@@ -159,6 +197,8 @@ private:
 
   float sensor_x_ = 0.0f, sensor_y_ = 0.0f, sensor_yaw_ = 0.0f;
   float scan_timeout_ = 0.5f;
+  float base_v_max_ = 0.4f;
+  float virtual_path_length_ = 3.0f;
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr    cmd_pub_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr          status_pub_;

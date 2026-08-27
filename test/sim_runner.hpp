@@ -5,11 +5,10 @@
  * @date 2026-08-26
  * @copyright Copyright (c) 2026 REACT Co., Ltd.
  *
- * Replicates the integration loop the core is designed for:
- *  - v sign mixing with the current velocity before process()
- *  - radius-preserving clamp of the output back to the commanded speed
- *  - arbitration: the avoid output is applied only while status != CLEAR
- * and closes the loop with a unicycle kinematics model and a simulated LiDAR.
+ * Replicates the integration loop the core is designed for: a local path in
+ * the robot frame (recomputed every tick, like a 1 Hz-replanned nav2 plan
+ * followed at 20 Hz), the core as the whole local planner, and a unicycle
+ * plant with an accel-limited actuator and a simulated LiDAR.
  */
 
 #pragma once
@@ -43,17 +42,18 @@ struct TraceRow
 {
   float   t;
   Pose    pose;
-  Twist2D command;  // upper-level command (object_vec)
-  Twist2D output;   // avoid output after main-loop clamp
+  Twist2D command;  // nominal upper intent (v_max while a path exists) for stall metrics
+  Twist2D output;   // core output
   Twist2D actual;   // actuator state applied to kinematics
   int     status;   // Status returned this tick
   float   clearance;
-  float   speed_fraction;     // Result extras, for evaluation plots
-  float   command_clearance;
+  float   speed_fraction;     // admissible candidate fraction (debug)
+  float   command_clearance;  // bilateral clearance of the selected arc (debug)
 };
 
-// Upper-level command source: (pose, current velocities, time) -> command
-using CommandSource = std::function<Twist2D(const Pose &, const Twist2D &, float)>;
+/// Local path source: (pose, time) -> path in the ROBOT frame, near-to-far.
+/// Empty path = no intent (goal reached).
+using PathSource = std::function<std::vector<Point2D>(const Pose &, float)>;
 
 struct SimResult
 {
@@ -69,7 +69,7 @@ clampf(float v, float lo, float hi)
 
 inline SimResult
 runClosedLoop(bac::BacCore &core, const World &world, const Pose &start,
-              const CommandSource &command_source, const SimConfig &config)
+              const PathSource &path_source, const SimConfig &config)
 {
   SimResult result;
   Pose      pose = start;
@@ -84,36 +84,10 @@ runClosedLoop(bac::BacCore &core, const World &world, const Pose &start,
     float t = step * config.dt;
 
     std::vector<Point2D> points = simulateLidar(world, pose, config.lidar_beams, config.lidar_max_range);
+    std::vector<Point2D> path   = path_source(pose, t);
 
-    Twist2D object_vec  = command_source(pose, actual, t);
-    Twist2D current_vec = actual;
-    Twist2D command_vec = object_vec;
-
-    // --- upstream pre-processing: v sign mixing with the current velocity.
-    // (Never mix w: overwriting the commanded w with the current w replaces
-    // the upper-level intent with our own avoidance state and self-locks the
-    // avoidance into its current turn.)
-    if (command_vec.v * current_vec.v < 0.0f && std::fabs(current_vec.v) > 0.1f)
-    {
-      command_vec.v = current_vec.v;
-    }
-
-    bac::Result avoid = core.process(points, command_vec, current_vec);
-    Twist2D           output_vec = avoid.output;
-
-    // --- post-processing: clamp back to the upper command speed, keep radius ---
-    if (std::fabs(output_vec.v) > std::fabs(object_vec.v))
-    {
-      if (output_vec.v != 0.0f && output_vec.w != 0.0f)
-      {
-        float r      = output_vec.v / output_vec.w;
-        output_vec.w = object_vec.v / r;
-      }
-      output_vec.v = object_vec.v;
-    }
-
-    // --- arbitration: the avoid output only overrides while status != CLEAR ---
-    Twist2D applied = (avoid.status == Status::CLEAR) ? object_vec : output_vec;
+    bac::Result avoid   = core.process(points, path, actual);
+    Twist2D     applied = avoid.output;
 
     // --- actuator model: accel-limited tracking ---
     actual.v += clampf(applied.v - actual.v, -config.acc_v * config.dt, config.acc_v * config.dt);
@@ -128,15 +102,17 @@ runClosedLoop(bac::BacCore &core, const World &world, const Pose &start,
     float clearance = robotClearance(pose, footprint, world);
 
     TraceRow row;
-    row.t                 = t;
-    row.pose              = pose;
-    row.command           = object_vec;
-    row.output            = output_vec;
-    row.actual            = actual;
-    row.status            = static_cast<int>(avoid.status);
-    row.clearance         = clearance;
-    row.speed_fraction    = avoid.speed_fraction;
-    row.command_clearance = avoid.command_clearance;
+    row.t              = t;
+    row.pose           = pose;
+    row.command        = Twist2D(path.empty() ? 0.0f : core.params().limits.v_max, 0.0f);
+    row.output         = applied;
+    row.actual         = actual;
+    row.status         = static_cast<int>(avoid.status);
+    row.clearance      = clearance;
+    row.speed_fraction = (avoid.candidate_count > 0)
+                             ? static_cast<float>(avoid.admissible_count) / avoid.candidate_count
+                             : 1.0f;
+    row.command_clearance = avoid.best_clearance;
     result.trace.push_back(row);
 
     if (clearance <= 0.0f)
@@ -149,36 +125,100 @@ runClosedLoop(bac::BacCore &core, const World &world, const Pose &start,
   return result;
 }
 
-// ---- common command sources ----
-
-inline CommandSource
-constantCommand(float v, float w)
-{
-  return [v, w](const Pose &, const Twist2D &, float) { return Twist2D(v, w); };
-}
+// ---- common path sources ----
 
 /**
- * @brief Simple upper-level navigator: P-control on heading towards a goal point.
- *        Stops (0,0) once within goal_tolerance.
+ * @brief Straight-line local path from the robot to a goal point, recomputed
+ *        every tick in the robot frame (the harness stand-in for a replanned
+ *        global plan on a free map). Empty once within goal_tolerance.
  */
-inline CommandSource
-gotoPointCommand(float goal_x, float goal_y, float cruise_v = 0.4f, float k_heading = 1.5f, float w_max = 0.6f,
-                 float goal_tolerance = 0.3f)
+inline PathSource
+gotoPointPath(float goal_x, float goal_y, float goal_tolerance = 0.3f, float path_length = 4.0f,
+              float spacing = 0.1f)
 {
-  return [=](const Pose &pose, const Twist2D &, float) {
+  return [=](const Pose &pose, float) {
+    std::vector<Point2D> path;
     float dx   = goal_x - pose.x;
     float dy   = goal_y - pose.y;
     float dist = std::sqrt(dx * dx + dy * dy);
     if (dist < goal_tolerance)
     {
-      return Twist2D(0.0f, 0.0f);
+      return path;
     }
-    float heading_error = std::atan2(dy, dx) - pose.th;
-    while (heading_error > M_PI) heading_error -= 2.0f * M_PI;
-    while (heading_error < -M_PI) heading_error += 2.0f * M_PI;
-    float w = clampf(k_heading * heading_error, -w_max, w_max);
-    float v = cruise_v * clampf(dist / 1.0f, 0.2f, 1.0f);  // slow down near goal
-    return Twist2D(v, w);
+    // Goal direction in the robot frame
+    float cs = std::cos(-pose.th), sn = std::sin(-pose.th);
+    float gx = cs * dx - sn * dy;
+    float gy = sn * dx + cs * dy;
+    float len = std::min(dist, path_length);
+    int   n   = std::max(2, static_cast<int>(len / spacing));
+    for (int i = 1; i <= n; i++)
+    {
+      float s = len * static_cast<float>(i) / static_cast<float>(n);
+      path.emplace_back(gx / dist * s, gy / dist * s);
+    }
+    return path;
+  };
+}
+
+/**
+ * @brief Piecewise-linear path through waypoints (a stand-in for a planner
+ *        path with corners). Projects the robot onto the polyline and emits
+ *        the next path_length meters; empty once within goal_tolerance of
+ *        the final waypoint.
+ */
+inline PathSource
+waypointsPath(std::vector<Point2D> waypoints, float goal_tolerance = 0.4f, float path_length = 4.0f,
+              float spacing = 0.1f)
+{
+  return [=](const Pose &pose, float) {
+    std::vector<Point2D> path;
+    if (waypoints.size() < 2)
+    {
+      return path;
+    }
+    float gdx = waypoints.back().x - pose.x, gdy = waypoints.back().y - pose.y;
+    if (std::sqrt(gdx * gdx + gdy * gdy) < goal_tolerance)
+    {
+      return path;
+    }
+    // Cumulative arclength and projection of the robot onto the polyline
+    std::vector<float> cum(waypoints.size(), 0.0f);
+    for (size_t i = 1; i < waypoints.size(); i++)
+    {
+      cum[i] = cum[i - 1] + std::hypot(waypoints[i].x - waypoints[i - 1].x,
+                                       waypoints[i].y - waypoints[i - 1].y);
+    }
+    float best_d = 1e9f, s0 = 0.0f;
+    for (size_t i = 0; i + 1 < waypoints.size(); i++)
+    {
+      float ax = waypoints[i].x, ay = waypoints[i].y;
+      float bx = waypoints[i + 1].x, by = waypoints[i + 1].y;
+      float abx = bx - ax, aby = by - ay;
+      float ll = abx * abx + aby * aby;
+      float t  = (ll > 1e-9f)
+                     ? clampf(((pose.x - ax) * abx + (pose.y - ay) * aby) / ll, 0.0f, 1.0f)
+                     : 0.0f;
+      float d = std::hypot(pose.x - (ax + t * abx), pose.y - (ay + t * aby));
+      if (d < best_d)
+      {
+        best_d = d;
+        s0     = cum[i] + t * std::sqrt(ll);
+      }
+    }
+    // Emit world points along the polyline from s0, converted to the robot frame
+    float cs = std::cos(-pose.th), sn = std::sin(-pose.th);
+    for (float s = s0 + spacing; s <= std::min(cum.back(), s0 + path_length); s += spacing)
+    {
+      size_t i = 1;
+      while (i < cum.size() - 1 && cum[i] < s) i++;
+      float seg = std::max(cum[i] - cum[i - 1], 1e-6f);
+      float t   = (s - cum[i - 1]) / seg;
+      float wx  = waypoints[i - 1].x + (waypoints[i].x - waypoints[i - 1].x) * t;
+      float wy  = waypoints[i - 1].y + (waypoints[i].y - waypoints[i - 1].y) * t;
+      float dx = wx - pose.x, dy = wy - pose.y;
+      path.emplace_back(cs * dx - sn * dy, sn * dx + cs * dy);
+    }
+    return path;
   };
 }
 

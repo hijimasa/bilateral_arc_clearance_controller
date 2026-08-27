@@ -1,13 +1,14 @@
 /**
- * @file bilateral_arc_clearance_controller.cpp
+ * @file bac_controller.cpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief nav2 controller plugin wrapping bac_core (UNTESTED SKELETON)
- * @date 2026-08-26
+ * @brief nav2 controller plugin wrapping bac_core (DWA-based local planner)
+ * @date 2026-08-27
  * @copyright Copyright (c) 2026 REACT Co., Ltd.
  */
 
-#include "bilateral_arc_clearance_controller/bilateral_arc_clearance_controller.hpp"
+#include "bilateral_arc_clearance_controller/bac_controller.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "nav2_costmap_2d/cost_values.hpp"
@@ -19,8 +20,8 @@ namespace bac
 
 void
 BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent, std::string name,
-                              std::shared_ptr<tf2_ros::Buffer> tf,
-                              std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
+                         std::shared_ptr<tf2_ros::Buffer> tf,
+                         std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
   parent_      = parent;
   name_        = name;
@@ -43,21 +44,84 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   params.avoid_margin.front  = declareF("avoid_margin.front", params.avoid_margin.front);
   params.avoid_margin.rear   = declareF("avoid_margin.rear", params.avoid_margin.rear);
   params.avoid_margin.side   = declareF("avoid_margin.side", params.avoid_margin.side);
-  params.reaction_time       = declareF("reaction_time", params.reaction_time);
+  params.limits.v_max        = declareF("limits.v_max", params.limits.v_max);
+  params.limits.v_min        = declareF("limits.v_min", params.limits.v_min);
+  params.limits.w_max        = declareF("limits.w_max", params.limits.w_max);
+  params.limits.acc_v        = declareF("limits.acc_v", params.limits.acc_v);
+  params.limits.acc_w        = declareF("limits.acc_w", params.limits.acc_w);
+  params.weights.clearance   = declareF("weights.clearance", params.weights.clearance);
+  params.weights.goal_dist   = declareF("weights.goal_dist", params.weights.goal_dist);
+  params.weights.heading     = declareF("weights.heading", params.weights.heading);
+  params.weights.hysteresis  = declareF("weights.hysteresis", params.weights.hysteresis);
+  params.weights.squeeze     = declareF("weights.squeeze", params.weights.squeeze);
+  params.sim_time            = declareF("sim_time", params.sim_time);
+  params.score_lookahead     = declareF("score_lookahead", params.score_lookahead);
+  params.window_time         = declareF("window_time", params.window_time);
+  params.v_samples           = static_cast<int>(declareF("v_samples", static_cast<float>(params.v_samples)));
+  params.w_samples           = static_cast<int>(declareF("w_samples", static_cast<float>(params.w_samples)));
+  params.min_eval_distance   = declareF("min_eval_distance", params.min_eval_distance);
+  params.turn_radius_min     = declareF("turn_radius_min", params.turn_radius_min);
+  params.eval_angle_max      = declareF("eval_angle_max", params.eval_angle_max);
+  params.blocked_near        = declareF("blocked_near", params.blocked_near);
+  params.blocked_far         = declareF("blocked_far", params.blocked_far);
   params.stop_decel          = declareF("stop_decel", params.stop_decel);
-  params.w_range             = declareF("w_range", params.w_range);
+  params.brake_reaction_time = declareF("brake_reaction_time", params.brake_reaction_time);
   params.max_range           = declareF("max_range", params.max_range);
-  core_.setParams(params);
+  params.creep_fraction      = declareF("creep_fraction", params.creep_fraction);
+  params.proximity_governor_range = declareF("proximity_governor_range", params.proximity_governor_range);
+  params.influence_range     = declareF("influence_range", params.influence_range);
+  params.margin_scale_floor  = declareF("margin_scale_floor", params.margin_scale_floor);
+  params.margin_scale_speed  = declareF("margin_scale_speed", params.margin_scale_speed);
+  base_v_max_                = params.limits.v_max;
 
-  lookahead_     = declareF("lookahead", lookahead_);
-  desired_speed_ = declareF("desired_speed", desired_speed_);
-  k_heading_     = declareF("k_heading", k_heading_);
-  w_max_         = declareF("w_max", w_max_);
+  // Direct laser input: the core is designed for raw scan points. When
+  // scan_topic is set, fresh scans feed it and the costmap is only a fallback
+  // (stale scan / no scan yet).
+  node->declare_parameter<std::string>(name + ".scan_topic", "");
+  scan_topic_   = node->get_parameter(name + ".scan_topic").as_string();
+  scan_timeout_ = declareF("scan_timeout", scan_timeout_);
+  clock_        = node->get_clock();
+  if (!scan_topic_.empty())
+  {
+    scan_sub_ = node->create_subscription<sensor_msgs::msg::LaserScan>(
+        scan_topic_, rclcpp::SensorDataQoS(),
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) {
+          std::lock_guard<std::mutex> lock(scan_mutex_);
+          latest_scan_ = msg;
+        });
+  }
+
+  // Costmap-fed points are cell centers, which can sit up to half a cell
+  // inside the true obstacle surface. Deduct that quantization error from the
+  // safety margins so a wall seen through the costmap does not trigger the
+  // emergency stop earlier than the real geometry would (0 disables the
+  // compensation). With a direct scan feed the points are exact, so the
+  // default is no compensation (the costmap is then only a stale-scan
+  // fallback, where uncompensated margins err on the safe side).
+  float default_compensation = 0.0f;
+  if (scan_topic_.empty())
+  {
+    if (nav2_costmap_2d::Costmap2D *costmap = costmap_ros_->getCostmap())
+    {
+      default_compensation = static_cast<float>(costmap->getResolution()) / 2.0f;
+    }
+  }
+  float compensation         = declareF("costmap_margin_compensation", default_compensation);
+  params.safety_margin.front = std::max(0.05f, params.safety_margin.front - compensation);
+  params.safety_margin.rear  = std::max(0.05f, params.safety_margin.rear - compensation);
+  params.safety_margin.side  = std::max(0.05f, params.safety_margin.side - compensation);
+
+  core_.setParams(params);
 }
 
 void
 BacController::cleanup()
 {
+  scan_sub_.reset();
+  {
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    latest_scan_.reset();
+  }
   core_.reset();
 }
 
@@ -111,68 +175,125 @@ BacController::collectObstaclePoints(const geometry_msgs::msg::PoseStamped &pose
   return points;
 }
 
-Twist2D
-BacController::planCommand(const geometry_msgs::msg::PoseStamped &pose) const
+std::optional<std::vector<Point2D>>
+BacController::collectScanPoints()
 {
-  if (plan_.poses.empty())
+  sensor_msgs::msg::LaserScan::ConstSharedPtr scan;
   {
-    return Twist2D(0.0f, 0.0f);
+    std::lock_guard<std::mutex> lock(scan_mutex_);
+    scan = latest_scan_;
+  }
+  if (!scan)
+  {
+    return std::nullopt;
+  }
+  if ((clock_->now() - rclcpp::Time(scan->header.stamp)).seconds() > scan_timeout_)
+  {
+    return std::nullopt;
   }
 
-  double rx  = pose.pose.position.x;
-  double ry  = pose.pose.position.y;
-  double yaw = tf2::getYaw(pose.pose.orientation);
-
-  // Lookahead target: first plan pose at least `lookahead_` away, else the last
-  const auto *target = &plan_.poses.back();
-  for (const auto &p : plan_.poses)
+  // Sensor pose in the robot base frame (2D); identity if the scan is already
+  // in the base frame.
+  double sx = 0.0, sy = 0.0, syaw = 0.0;
+  const std::string &base_frame = costmap_ros_->getBaseFrameID();
+  if (scan->header.frame_id != base_frame)
   {
-    double dx = p.pose.position.x - rx, dy = p.pose.position.y - ry;
-    if (std::sqrt(dx * dx + dy * dy) >= lookahead_)
+    try
     {
-      target = &p;
-      break;
+      auto tf_msg = tf_->lookupTransform(base_frame, scan->header.frame_id, tf2::TimePointZero);
+      sx   = tf_msg.transform.translation.x;
+      sy   = tf_msg.transform.translation.y;
+      syaw = tf2::getYaw(tf_msg.transform.rotation);
+    }
+    catch (const tf2::TransformException &)
+    {
+      return std::nullopt;  // fall back to costmap points
     }
   }
 
-  double dx            = target->pose.position.x - rx;
-  double dy            = target->pose.position.y - ry;
-  double heading_error = std::atan2(dy, dx) - yaw;
-  while (heading_error > M_PI) heading_error -= 2.0 * M_PI;
-  while (heading_error < -M_PI) heading_error += 2.0 * M_PI;
-
-  float v = desired_speed_;
-  if (speed_limit_ > 0.0f && v > speed_limit_)
+  float max_range = core_.params().max_range;
+  std::vector<Point2D> points;
+  points.reserve(scan->ranges.size());
+  for (size_t i = 0; i < scan->ranges.size(); i++)
   {
-    v = speed_limit_;
+    float r = scan->ranges[i];
+    if (!std::isfinite(r) || r < scan->range_min || r > scan->range_max || r > max_range)
+    {
+      continue;
+    }
+    double angle = syaw + scan->angle_min + static_cast<double>(i) * scan->angle_increment;
+    points.emplace_back(static_cast<float>(sx + r * std::cos(angle)),
+                        static_cast<float>(sy + r * std::sin(angle)));
   }
-  float w = std::max(-w_max_, std::min(w_max_, static_cast<float>(k_heading_ * heading_error)));
-  return Twist2D(v, w);
+  return points;
+}
+
+std::vector<Point2D>
+BacController::transformPlan(const geometry_msgs::msg::PoseStamped &pose) const
+{
+  std::vector<Point2D> path;
+  path.reserve(plan_.poses.size());
+  double rx  = pose.pose.position.x;
+  double ry  = pose.pose.position.y;
+  double yaw = tf2::getYaw(pose.pose.orientation);
+  double cs = std::cos(-yaw), sn = std::sin(-yaw);
+  double max_range = core_.params().max_range;
+  for (const auto &p : plan_.poses)
+  {
+    double dx = p.pose.position.x - rx;
+    double dy = p.pose.position.y - ry;
+    if (dx * dx + dy * dy > max_range * max_range)
+    {
+      break;  // beyond the sensing range: irrelevant for local planning
+    }
+    path.emplace_back(static_cast<float>(cs * dx - sn * dy), static_cast<float>(sn * dx + cs * dy));
+  }
+  return path;
 }
 
 geometry_msgs::msg::TwistStamped
 BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &pose,
-                                            const geometry_msgs::msg::Twist &velocity,
-                                            nav2_core::GoalChecker * /*goal_checker*/)
+                                       const geometry_msgs::msg::Twist &velocity,
+                                       nav2_core::GoalChecker * /*goal_checker*/)
 {
-  std::vector<Point2D> points  = collectObstaclePoints(pose);
-  Twist2D              command = planCommand(pose);
+  // Speed limit re-caps the sampled window
+  Params params = core_.params();
+  float  v_max  = base_v_max_;
+  if (speed_limit_ > 0.0f)
+  {
+    v_max = std::min(v_max, speed_limit_);
+  }
+  if (params.limits.v_max != v_max)
+  {
+    params.limits.v_max = v_max;
+    core_.setParams(params);
+  }
+
+  std::vector<Point2D> points;
+  if (auto scan_points = collectScanPoints())
+  {
+    points = std::move(*scan_points);
+  }
+  else
+  {
+    points = collectObstaclePoints(pose);
+  }
+  std::vector<Point2D> path = transformPlan(pose);
   Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z));
 
-  Result result = core_.process(points, command, current);
-  Twist2D applied = (result.status == Status::CLEAR) ? command : result.output;
+  Result result = core_.process(points, path, current);
 
   geometry_msgs::msg::TwistStamped cmd;
   cmd.header.frame_id = pose.header.frame_id;
-  cmd.twist.linear.x  = applied.v;
-  cmd.twist.angular.z = applied.w;
+  cmd.twist.linear.x  = result.output.v;
+  cmd.twist.angular.z = result.output.w;
   return cmd;
 }
 
 void
 BacController::setSpeedLimit(const double &speed_limit, const bool &percentage)
 {
-  speed_limit_ = percentage ? static_cast<float>(desired_speed_ * speed_limit / 100.0) : static_cast<float>(speed_limit);
+  speed_limit_ = percentage ? static_cast<float>(base_v_max_ * speed_limit / 100.0) : static_cast<float>(speed_limit);
 }
 
 }  // namespace bac

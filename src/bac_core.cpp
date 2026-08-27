@@ -1,22 +1,20 @@
 /**
  * @file bac_core.cpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief Framework-free core of the arc-clearance obstacle avoidance algorithm
+ * @brief Framework-free core of the arc-clearance local planner (DWA-based)
  * @date 2026-08-26
  * @copyright Copyright (c) 2026 REACT Co., Ltd.
  *
  * Algorithm summary (details and rationale in the package README):
  *  1. Emergency stop if any point is inside the body + braking distance zone,
  *     inflated by the safety margins with rounded (elliptical) corners.
- *  2. Evaluate num_candidates+1 arcs around a window center (the command, or
- *     the previous selection while avoiding). Per arc: bilateral clearance =
- *     min(left, right) smallest lateral offset from the arc centerline.
- *  3. Score = clearance (saturated at width/2 + avoid side margin)
- *             - fidelity * viability * |w - command w|
- *             - hysteresis * |w - previous selection|
- *     where viability = command arc's own clearance / body half width.
- *  4. Longitudinal-only speed scaling (steering is never scaled away):
- *     distance to first body-hit, lateral squeeze, proximity governor.
+ *  2. Sample (v, w) candidates inside the accel-limited dynamic window
+ *     (plus a v=0 rotation row and the stop candidate), roll each out as a
+ *     constant-curvature arc over sim_time.
+ *  3. Admissibility: discard candidates that cannot stop before the first
+ *     body hit on their arc (and rotations that sweep into an obstacle).
+ *  4. Score = saturated bilateral clearance + path following (distance /
+ *     progress / heading) - hysteresis - lateral squeeze; output the best.
  */
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
@@ -24,9 +22,25 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#ifdef BAC_DEBUG_CANDIDATES
+#include <cstdio>
+#endif
 
 namespace bac
 {
+
+namespace
+{
+
+float
+wrapAngle(float a)
+{
+  while (a > static_cast<float>(M_PI)) a -= 2.0f * static_cast<float>(M_PI);
+  while (a < -static_cast<float>(M_PI)) a += 2.0f * static_cast<float>(M_PI);
+  return a;
+}
+
+}  // namespace
 
 BacCore::BacCore()
   : BacCore(Params{})
@@ -36,7 +50,6 @@ BacCore::BacCore()
 BacCore::BacCore(const Params &params)
   : params_(params)
   , current_status_(Status::CLEAR)
-  , command_sign_(1)
   , avoiding_counter_(0)
   , prev_selected_w_(0.0f)
 {
@@ -70,7 +83,6 @@ void
 BacCore::reset()
 {
   current_status_   = Status::CLEAR;
-  command_sign_     = 1;
   avoiding_counter_ = 0;
   prev_selected_w_  = 0.0f;
 }
@@ -78,7 +90,15 @@ BacCore::reset()
 ArcEvaluation
 BacCore::evaluateArc(const std::vector<Point2D> &points, float v, float w, float horizon) const
 {
-  ArcEvaluation eval{ FLT_MAX, FLT_MAX, FLT_MAX, 1.0f };
+  float dist = std::fabs(v) * horizon;
+  return evaluateArcWindows(points, v, w, dist, dist);
+}
+
+ArcEvaluation
+BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w, float dist_clear,
+                            float dist_block) const
+{
+  ArcEvaluation eval{ FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, 1.0f };
 
   const Footprint &body = params_.footprint;
   // Body extent in the direction of travel (rear is negative)
@@ -86,7 +106,8 @@ BacCore::evaluateArc(const std::vector<Point2D> &points, float v, float w, float
   float trail_length = (v >= 0.0f) ? -body.rear : body.front;
   float half_width   = body.width / 2.0f;
   float side_margin  = std::max(params_.safety_margin.side, 1e-3f);
-  float s_max        = std::fabs(v) * horizon + lead_length;
+  float s_max_clear  = dist_clear + lead_length;
+  float s_max        = std::max(dist_block, dist_clear) + lead_length;
 
   for (const Point2D &point : points)
   {
@@ -121,28 +142,64 @@ BacCore::evaluateArc(const std::vector<Point2D> &points, float v, float w, float
       continue;  // outside the swept longitudinal window
     }
 
-    if (left_offset >= 0.0f)
-    {
-      eval.clearance_left = std::min(eval.clearance_left, left_offset);
-    }
-    else
-    {
-      eval.clearance_right = std::min(eval.clearance_right, -left_offset);
-    }
-
     float abs_offset = std::fabs(left_offset);
     if (abs_offset < half_width)
     {
-      // The body would hit this point: longitudinal distance governs the speed
+      // The body would hit this point: longitudinal distance to the first hit
+      // (searched over the full blocking window)
       if (s < eval.blocking_s)
       {
         eval.blocking_s = s;
       }
     }
+
+    if (s > s_max_clear)
+    {
+      // Beyond the clearance window: a body-hit point still poisons the
+      // clearance when it is euclidean-near (see Params::blocked_near/far).
+      if (abs_offset < half_width)
+      {
+        float d_e  = std::sqrt(point.x * point.x + point.y * point.y);
+        float fade = (d_e - params_.blocked_near) /
+                     std::max(params_.blocked_far - params_.blocked_near, 1e-3f);
+        fade = std::max(0.0f, std::min(1.0f, fade));
+        if (fade < 1.0f)
+        {
+          float cap_ref = half_width + params_.avoid_margin.side;
+          float pseudo  = abs_offset + fade * (cap_ref - abs_offset);
+          if (left_offset >= 0.0f)
+          {
+            eval.clearance_left = std::min(eval.clearance_left, pseudo);
+          }
+          else
+          {
+            eval.clearance_right = std::min(eval.clearance_right, pseudo);
+          }
+        }
+      }
+      continue;  // clearance/squeeze aggregation uses the (angle-capped) window
+    }
+
+    if (left_offset >= 0.0f)
+    {
+      eval.clearance_left = std::min(eval.clearance_left, left_offset);
+      if (s > lead_length)
+      {
+        eval.far_left = std::min(eval.far_left, left_offset);
+      }
+    }
     else
     {
-      // Non-hitting squeeze: intruding into the safety side margin caps the
-      // speed proportionally instead of forbidding motion outright
+      eval.clearance_right = std::min(eval.clearance_right, -left_offset);
+      if (s > lead_length)
+      {
+        eval.far_right = std::min(eval.far_right, -left_offset);
+      }
+    }
+
+    if (abs_offset >= half_width)
+    {
+      // Non-hitting squeeze: intrusion into the safety side margin
       float fraction = (abs_offset - half_width) / side_margin;
       if (fraction < eval.lateral_fraction)
       {
@@ -155,38 +212,10 @@ BacCore::evaluateArc(const std::vector<Point2D> &points, float v, float w, float
 }
 
 Result
-BacCore::process(const std::vector<Point2D> &points, const Twist2D &command, const Twist2D &current)
+BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
+                 const Twist2D &current)
 {
   Result result;
-
-  Twist2D target_vec = command;
-  if (std::fabs(command.v) < std::fabs(current.v))
-  {
-    target_vec.v = current.v;
-  }
-  if (target_vec.v != 0.0f)
-  {
-    command_sign_ = (target_vec.v > 0.0f) ? 1 : -1;
-  }
-
-  // Legacy creep: while avoiding, a pure-turn command is given a matching
-  // forward speed (capped at creep_speed) so the turn makes spatial progress.
-  if (avoiding_counter_ > 0)
-  {
-    float radius   = params_.footprint.width / 2.0f + params_.safety_margin.side;
-    float velocity = radius * std::fabs(target_vec.w) * command_sign_;
-    float w_ratio  = 1.0f;
-    if (std::fabs(velocity) > params_.creep_speed)
-    {
-      w_ratio  = params_.creep_speed / std::fabs(velocity);
-      velocity = params_.creep_speed * command_sign_;
-    }
-    if (std::fabs(target_vec.v) < std::fabs(velocity))
-    {
-      target_vec.v = velocity;
-      target_vec.w *= w_ratio;
-    }
-  }
 
   // Pre-filter points once (range and ignore-box filters)
   std::vector<Point2D> filtered_points;
@@ -210,38 +239,46 @@ BacCore::process(const std::vector<Point2D> &points, const Twist2D &command, con
   // inflated by the safety margins with ROUNDED corners (elliptical, since the
   // margins are anisotropic). A plain margin rectangle would over-cover the
   // corners by sqrt(2) and dead-lock the robot on diagonal clearances that are
-  // actually larger than the margin. State-based, continuous in speed; whether
-  // the COMMANDED motion is safe is decided by the arc evaluation below.
-  float min_proximity_norm = FLT_MAX;  // nearest point in margin-normalized units (1.0 = at the boundary)
+  // actually larger than the margin.
+  // The same loop computes the plain-footprint nearest distance (influence).
+  float min_proximity_norm = FLT_MAX;  // margin-normalized (1.0 = at the boundary)
+  float nearest_distance   = FLT_MAX;  // Euclidean distance to the footprint rectangle
+  bool  emergency          = false;
   {
     float stop_decel = std::max(params_.stop_decel, 0.1f);
     float brake_dist =
         current.v * current.v / (2.0f * stop_decel) + std::fabs(current.v) * params_.brake_reaction_time;
     float body_x_min = params_.footprint.rear;
     float body_x_max = params_.footprint.front;
+    float zone_x_min = body_x_min;
+    float zone_x_max = body_x_max;
     if (current.v >= 0.0f)
     {
-      body_x_max += brake_dist;
+      zone_x_max += brake_dist;
     }
     else
     {
-      body_x_min -= brake_dist;
+      zone_x_min -= brake_dist;
     }
     float body_y_half  = params_.footprint.width / 2.0f;
-    float margin_front = std::max(params_.safety_margin.front, 1e-3f);
-    float margin_rear  = std::max(params_.safety_margin.rear, 1e-3f);
-    float margin_side  = std::max(params_.safety_margin.side, 1e-3f);
+    float speed_scale  = std::min(
+        1.0f, params_.margin_scale_floor +
+                  (1.0f - params_.margin_scale_floor) *
+                      std::fabs(current.v) / std::max(params_.margin_scale_speed, 1e-3f));
+    float margin_front = std::max(params_.safety_margin.front * speed_scale, 1e-3f);
+    float margin_rear  = std::max(params_.safety_margin.rear * speed_scale, 1e-3f);
+    float margin_side  = std::max(params_.safety_margin.side * speed_scale, 1e-3f);
 
     for (const Point2D &point : filtered_points)
     {
       float dx_norm = 0.0f;
-      if (point.x > body_x_max)
+      if (point.x > zone_x_max)
       {
-        dx_norm = (point.x - body_x_max) / margin_front;
+        dx_norm = (point.x - zone_x_max) / margin_front;
       }
-      else if (point.x < body_x_min)
+      else if (point.x < zone_x_min)
       {
-        dx_norm = (body_x_min - point.x) / margin_rear;
+        dx_norm = (zone_x_min - point.x) / margin_rear;
       }
       float dy_norm = 0.0f;
       if (std::fabs(point.y) > body_y_half)
@@ -252,190 +289,364 @@ BacCore::process(const std::vector<Point2D> &points, const Twist2D &command, con
       min_proximity_norm = std::min(min_proximity_norm, norm);
       if (norm < 1.0f)
       {
-        current_status_           = Status::STOP;
-        result.output             = Twist2D(0.0f, 0.0f);
-        result.status             = Status::STOP;
-        result.min_proximity_norm = min_proximity_norm;
-        return result;
+        emergency = true;
       }
+
+      float ex = std::max(std::max(point.x - body_x_max, body_x_min - point.x), 0.0f);
+      float ey = std::max(std::fabs(point.y) - body_y_half, 0.0f);
+      nearest_distance = std::min(nearest_distance, std::sqrt(ex * ex + ey * ey));
     }
   }
   result.min_proximity_norm = min_proximity_norm;
+  result.nearest_distance   = nearest_distance;
 
-  // Candidate window: centered on the command normally, but on the PREVIOUS
-  // selection while avoiding. Otherwise, when the goal lies behind the
-  // obstacle, the upper command's sign flips with the heading, the window
-  // snaps to the other side, and the avoidance direction flip-flops through
-  // the obstacle forever. Committing the window to the previous choice keeps
-  // one side reachable; the fidelity term still walks the window back to the
-  // command (up to w_range per tick) as soon as clearance allows.
-  float window_center = (avoiding_counter_ > 0) ? prev_selected_w_ : target_vec.w;
-
-  // Bilateral clearance per candidate arc: min(left, right) is the effective
-  // free half-width of the passage along that arc.
-  float horizon        = params_.reaction_time + params_.estimation_time_margin;
-  int   num_candidates = std::max(2, params_.num_candidates) & ~1;  // even, >= 2
-  int   half_num       = num_candidates / 2;
-
-  std::vector<float> candidate_clearances(num_candidates + 1);
-  std::vector<float> candidate_blocking_s(num_candidates + 1);
-  std::vector<float> candidate_lateral_fraction(num_candidates + 1);
-  for (int index = -half_num; index <= half_num; index++)
+  if (emergency)
   {
-    float rotation_speed = window_center + (params_.w_range * index / half_num);
-    ArcEvaluation eval   = evaluateArc(filtered_points, target_vec.v, rotation_speed, horizon);
-    candidate_clearances[index + half_num]       = std::min(eval.clearance_left, eval.clearance_right);
-    candidate_blocking_s[index + half_num]       = eval.blocking_s;
-    candidate_lateral_fraction[index + half_num] = eval.lateral_fraction;
-  }
-
-  // Fidelity viability scaling: measure how passable the commanded arc itself
-  // is (it may lie outside the committed candidate window). The reference is
-  // the body half-width: as long as the commanded arc physically fits, the
-  // intent keeps full weight (a tight but viable corridor entry must not be
-  // discounted); only a command the body cannot follow loses its pull.
-  ArcEvaluation command_eval = evaluateArc(filtered_points, target_vec.v, target_vec.w, horizon);
-  float command_clearance    = std::min(command_eval.clearance_left, command_eval.clearance_right);
-  float body_half_width      = std::max(params_.footprint.width / 2.0f, 1e-3f);
-  float fidelity_scale       = std::max(params_.weights.fidelity_viability_floor,
-                                        std::min(1.0f, command_clearance / body_half_width));
-  result.command_clearance   = command_clearance;
-  result.fidelity_scale      = fidelity_scale;
-
-  // Score = bilateral clearance saturated at the avoid half-width, minus small
-  // penalties for deviating from the commanded w and from the previous choice.
-  // With room, many candidates saturate and the fidelity term picks the one
-  // closest to the command (passthrough / light avoidance). In tight spaces the
-  // max-min clearance dominates, which steers through the middle of the opening.
-  float clearance_cap         = params_.footprint.width / 2.0f + params_.avoid_margin.side;
-  float min_rotation_speed    = target_vec.w;
-  float best_score            = -FLT_MAX;
-  float best_blocking_s       = FLT_MAX;
-  float best_lateral_fraction = 1.0f;
-  // Visit candidates from the window center outwards so ties resolve towards
-  // the smaller deviation (strict > comparison keeps the first best).
-  for (int i = 0; i < num_candidates + 1; i++)
-  {
-    int evaluation_index;
-    if (i == 0)
-    {
-      evaluation_index = 0;
-    }
-    else if (i % 2 == 0)
-    {
-      evaluation_index = (i + 1) / 2;
-    }
-    else
-    {
-      evaluation_index = -(i + 1) / 2;
-    }
-
-    float candidate_w = window_center + (params_.w_range * static_cast<float>(evaluation_index) / half_num);
-    float saturated_clearance = std::min(candidate_clearances[evaluation_index + half_num], clearance_cap);
-    float score = params_.weights.clearance * saturated_clearance -
-                  params_.weights.fidelity * fidelity_scale * std::fabs(candidate_w - target_vec.w) -
-                  params_.weights.hysteresis * std::fabs(candidate_w - prev_selected_w_);
-    if (score > best_score)
-    {
-      best_score            = score;
-      min_rotation_speed    = candidate_w;
-      best_blocking_s       = candidate_blocking_s[evaluation_index + half_num];
-      best_lateral_fraction = candidate_lateral_fraction[evaluation_index + half_num];
-    }
-  }
-  prev_selected_w_   = min_rotation_speed;
-  result.selected_w  = min_rotation_speed;
-
-  // Longitudinal speed scaling on the selected arc, capped by two factors:
-  //  - distance: fraction of the horizon that is free before the first point
-  //    the body would hit (1.0 = no hit within the horizon)
-  //  - squeeze: lateral margin fraction of the tightest non-hitting point
-  //    (grazing the body -> 0, outside the safety side margin -> 1)
-  float min_distance = best_lateral_fraction;
-  if (best_blocking_s < FLT_MAX)
-  {
-    float lead_length      = (target_vec.v >= 0.0f) ? params_.footprint.front : -params_.footprint.rear;
-    float lead_margin      = (target_vec.v >= 0.0f) ? params_.safety_margin.front : params_.safety_margin.rear;
-    float free_run         = best_blocking_s - lead_length - lead_margin;
-    float horizon_distance = std::fabs(target_vec.v) * horizon;
-    float distance_fraction;
-    if (horizon_distance > 1e-6f)
-    {
-      distance_fraction = std::max(0.0f, std::min(1.0f, free_run / horizon_distance));
-    }
-    else
-    {
-      distance_fraction = (free_run > 0.0f) ? 1.0f : 0.0f;
-    }
-    min_distance = std::min(min_distance, distance_fraction);
-  }
-
-  // Proximity speed governor: near anything (in margin-normalized distance,
-  // 1.0 = at the emergency boundary) the speed is capped so the actual
-  // trajectory tracks the evaluated arc closely (actuator lag makes the real
-  // path straighter than the ideal arc; at full speed that eats into the
-  // passing clearance). A small creep floor keeps an escape possible right at
-  // the boundary instead of freezing there.
-  if (min_proximity_norm < params_.proximity_governor_range)
-  {
-    float proximity_fraction = std::max(min_proximity_norm - 1.0f, params_.creep_fraction);
-    min_distance             = std::min(min_distance, proximity_fraction);
-  }
-  result.speed_fraction = min_distance;
-
-  // Longitudinal deceleration only: the selected steering rate is kept even
-  // when the arc is blocked ahead, so a blocked robot turns towards the free
-  // direction (pure rotation at v=0) instead of freezing. Scaling w together
-  // with v would zero the very steering that resolves the blockage.
-  float target_v = command.v;
-  float target_w = min_rotation_speed;
-  if (min_distance < 1.0f)
-  {
-    target_v = target_vec.v * min_distance;
-  }
-  if (std::fabs(target_v) < params_.velocity_min)
-  {
-    target_v = 0.0f;
-  }
-  if (std::fabs(target_w) < params_.angvel_min)
-  {
-    target_w = 0.0f;
-  }
-
-  result.output = Twist2D(target_v, target_w);
-
-  if (std::fabs(target_v - command.v) < 1e-3f && std::fabs(target_w - command.w) < 1e-3f)
-  {
-    avoiding_counter_--;
-    if (avoiding_counter_ < 0)
-    {
-      avoiding_counter_ = 0;
-    }
-    // Latch: while the avoidance was recently active, keep reporting AVOIDING
-    // so a downstream arbitration keeps applying our output. Otherwise a
-    // single converged tick lets the raw upper command through and the
-    // avoidance turn is undone every other tick (status chattering).
-    if (avoiding_counter_ > 0)
-    {
-      current_status_ = Status::AVOIDING;
-      result.status   = Status::AVOIDING;
-      return result;
-    }
-    current_status_ = Status::CLEAR;
-    result.status   = Status::CLEAR;
+    current_status_ = Status::STOP;
+    result.output   = Twist2D(0.0f, 0.0f);
+    result.status   = Status::STOP;
     return result;
   }
 
-  if (target_v == 0.0f && target_w == 0.0f)
+  // No intent: hold still. Influence-based status so the filter node's
+  // pass-through arbitration still works while idling.
+  if (path.empty())
   {
+    result.output   = Twist2D(0.0f, 0.0f);
+    current_status_ = (nearest_distance > params_.influence_range) ? Status::CLEAR : Status::AVOIDING;
+    result.status   = current_status_;
+    return result;
+  }
+
+  // Prune the path behind the robot: start at the point nearest to the origin.
+  size_t start_index = 0;
+  {
+    float best = FLT_MAX;
+    for (size_t i = 0; i < path.size(); i++)
+    {
+      float d = path[i].x * path[i].x + path[i].y * path[i].y;
+      if (d < best)
+      {
+        best        = d;
+        start_index = i;
+      }
+    }
+  }
+  std::vector<Point2D> local_path(path.begin() + static_cast<long>(start_index), path.end());
+  std::vector<float>   cumulative(local_path.size(), 0.0f);
+  for (size_t i = 1; i < local_path.size(); i++)
+  {
+    float dx      = local_path[i].x - local_path[i - 1].x;
+    float dy      = local_path[i].y - local_path[i - 1].y;
+    cumulative[i] = cumulative[i - 1] + std::sqrt(dx * dx + dy * dy);
+  }
+
+  // Local goal: the path point score_lookahead along the path, advanced past
+  // points an obstacle sits on (the body cannot be centered there; pulling
+  // towards them walks the robot into the obstacle).
+  float half_width_goal = params_.footprint.width / 2.0f;
+  size_t goal_index = local_path.size() - 1;
+  for (size_t i = 0; i < local_path.size(); i++)
+  {
+    if (cumulative[i] >= params_.score_lookahead)
+    {
+      goal_index = i;
+      break;
+    }
+  }
+  for (size_t i = goal_index; i < local_path.size(); i++)
+  {
+    bool blocked = false;
+    for (const Point2D &point : filtered_points)
+    {
+      float dx = point.x - local_path[i].x;
+      float dy = point.y - local_path[i].y;
+      if (dx * dx + dy * dy < half_width_goal * half_width_goal)
+      {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked)
+    {
+      goal_index = i;
+      break;
+    }
+    goal_index = i;  // all blocked to the end: use the last examined
+  }
+  float goal_x = local_path[goal_index].x;
+  float goal_y = local_path[goal_index].y;
+  result.goal_x = goal_x;
+  result.goal_y = goal_y;
+
+  // Proximity speed governor: cap the sampled speed near obstacles (with a
+  // creep floor so an escape stays possible right at the boundary).
+  float v_cap = params_.limits.v_max;
+  if (min_proximity_norm < params_.proximity_governor_range && params_.proximity_governor_range > 1.0f)
+  {
+    float fraction = (min_proximity_norm - 1.0f) / (params_.proximity_governor_range - 1.0f);
+    fraction       = std::max(params_.creep_fraction, std::min(1.0f, fraction));
+    v_cap *= fraction;
+  }
+
+  // Dynamic window (accel-limited around the current velocity)
+  float window_dv = params_.limits.acc_v * params_.window_time;
+  float v_lo      = std::max(params_.limits.v_min, current.v - window_dv);
+  float v_hi      = std::min(v_cap, current.v + window_dv);
+  if (v_hi < v_lo)
+  {
+    v_lo = v_hi = std::max(params_.limits.v_min, v_hi);
+  }
+  float w_lo = -params_.limits.w_max;
+  float w_hi = params_.limits.w_max;
+
+  std::vector<float> v_values;
+  v_values.push_back(0.0f);  // rotation / stop row
+  int v_samples = std::max(2, params_.v_samples);
+  for (int i = 0; i < v_samples; i++)
+  {
+    float v = v_lo + (v_hi - v_lo) * static_cast<float>(i) / static_cast<float>(v_samples - 1);
+    if (v > 1e-3f)
+    {
+      v_values.push_back(v);
+    }
+  }
+
+  std::vector<float> w_values;
+  int w_samples = std::max(3, params_.w_samples);
+  for (int i = 0; i < w_samples; i++)
+  {
+    w_values.push_back(w_lo + (w_hi - w_lo) * static_cast<float>(i) / static_cast<float>(w_samples - 1));
+  }
+  if (w_lo < 0.0f && w_hi > 0.0f)
+  {
+    w_values.push_back(0.0f);  // always offer the straight arc
+  }
+
+  // Rotation admissibility: a full in-place rotation sweeps the disk of the
+  // circumscribed radius. Conservative: forbid rotation candidates when any
+  // point lies inside that disk (they are still allowed to stop).
+  float circumscribed = std::sqrt(std::max(params_.footprint.front, -params_.footprint.rear) *
+                                      std::max(params_.footprint.front, -params_.footprint.rear) +
+                                  (params_.footprint.width / 2.0f) * (params_.footprint.width / 2.0f));
+  bool rotation_admissible = true;
+  for (const Point2D &point : filtered_points)
+  {
+    if (std::sqrt(point.x * point.x + point.y * point.y) < circumscribed + 0.02f)
+    {
+      rotation_admissible = false;
+      break;
+    }
+  }
+
+  // Reusable buffer for turn-then-go evaluation of the v=0 row
+  std::vector<Point2D> rotated_points;
+
+  float clearance_cap = params_.footprint.width / 2.0f + params_.avoid_margin.side;
+
+  // Tightness probe: best RAW bilateral clearance over three probe arcs.
+  // Near 0 in the open (balance term off, pure path following); towards 1 in
+  // passages tighter than cap + safety side margin (geometry takes over the
+  // lateral authority).
+  float tightness  = 0.0f;
+  float probe_best = 0.0f;
+  {
+    float v_probe    = std::max(v_cap, 0.1f);
+    float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
+    for (float wp : { -0.4f, 0.0f, 0.4f })
+    {
+      float dist_clear = probe_dist;
+      if (std::fabs(wp) > 1e-4f)
+      {
+        dist_clear = std::min(dist_clear, (v_probe / std::fabs(wp)) * params_.eval_angle_max);
+      }
+      ArcEvaluation eval = evaluateArcWindows(filtered_points, v_probe, wp, dist_clear, probe_dist);
+      probe_best = std::max(probe_best, std::min(eval.clearance_left, eval.clearance_right));
+    }
+    float reference = clearance_cap + params_.safety_margin.side;
+    tightness = 1.0f - std::max(0.0f, std::min(1.0f, probe_best / std::max(reference, 1e-3f)));
+  }
+
+  // Adaptive saturation: aim for the configured avoid margin, but never DEMAND
+  // more clearance than the passage towards the goal physically affords -
+  // otherwise a corridor narrower than the cap scores permanently worse than
+  // hesitating outside it (entry barrier).
+  float cap_floor = params_.footprint.width / 2.0f + std::max(params_.safety_margin.side, 0.05f);
+  float cap_eff   = std::min(clearance_cap, std::max(probe_best, cap_floor));
+
+  float lead_length   = params_.footprint.front;
+  float lead_margin   = params_.safety_margin.front;
+  float stop_decel    = std::max(params_.stop_decel, 0.1f);
+
+  float best_score = -FLT_MAX;
+  Twist2D best_cmd(0.0f, 0.0f);
+  float best_clearance = 0.0f, best_goal_dist = 0.0f;
+  int   admissible_count = 0, candidate_count = 0;
+
+  for (float v : v_values)
+  {
+    for (float w : w_values)
+    {
+      candidate_count++;
+
+      float clearance, lateral_fraction, clear_left, clear_right;
+      if (v <= 1e-3f)
+      {
+        if (std::fabs(w) > 1e-3f && !rotation_admissible)
+        {
+          continue;
+        }
+        // Turn-then-go: score the rotation (or stop) by the straight run the
+        // robot could make AFTER turning by w * sim_time. A myopic "clearance
+        // beside the body" would make stopping/rotating look artificially
+        // clean right in front of a blocked passage.
+        float dth = w * params_.sim_time;
+        float cs = std::cos(-dth), sn = std::sin(-dth);
+        rotated_points.clear();
+        rotated_points.reserve(filtered_points.size());
+        for (const Point2D &p : filtered_points)
+        {
+          rotated_points.emplace_back(cs * p.x - sn * p.y, sn * p.x + cs * p.y);
+        }
+        float v_ref  = std::max(v_cap, 0.05f);
+        float dist   = std::max(v_ref * params_.sim_time, params_.min_eval_distance);
+        ArcEvaluation eval = evaluateArcWindows(rotated_points, v_ref, 0.0f, dist, dist);
+        clearance        = std::min(eval.clearance_left, eval.clearance_right);
+        lateral_fraction = eval.lateral_fraction;
+        clear_left       = eval.far_left;
+        clear_right      = eval.far_right;
+      }
+      else
+      {
+        if (std::fabs(w) > 1e-4f && v / std::fabs(w) < params_.turn_radius_min)
+        {
+          continue;  // near-spin arc: degenerate clearance geometry
+        }
+        float dist_block = std::max(v * params_.sim_time, params_.min_eval_distance);
+        float dist_clear = dist_block;
+        if (std::fabs(w) > 1e-4f)
+        {
+          float radius = v / std::fabs(w);
+          dist_clear   = std::min(dist_clear, radius * params_.eval_angle_max);
+          if (params_.eval_lateral_max < radius)
+          {
+            dist_clear = std::min(
+                dist_clear, radius * std::acos(1.0f - params_.eval_lateral_max / radius));
+          }
+        }
+        ArcEvaluation eval = evaluateArcWindows(filtered_points, v, w, dist_clear, dist_block);
+        if (eval.blocking_s < FLT_MAX)
+        {
+          // DWA admissibility: able to stop (plus front margin) before the hit
+          float free_run = eval.blocking_s - lead_length - lead_margin;
+          float needed   = v * v / (2.0f * stop_decel) + v * params_.brake_reaction_time;
+          if (free_run <= needed)
+          {
+            continue;
+          }
+        }
+        clearance        = std::min(eval.clearance_left, eval.clearance_right);
+        lateral_fraction = eval.lateral_fraction;
+        clear_left       = eval.far_left;
+        clear_right      = eval.far_right;
+      }
+      admissible_count++;
+
+      // Bilateral balance over the FORWARD part of the arc (capped so wide
+      // spaces zero out): first-order centering gradient towards equal
+      // clearance on both sides of where the arc leads.
+      // Balance applies to PASSAGES only (both sides bounded below the cap):
+      // with one side open it would act as a plain wall-repulsion field and
+      // over-steer around isolated obstacles. It keeps the PARAMETER cap -
+      // the adaptive cap would saturate both sides at the worse side's level
+      // and zero the centering out.
+      float balance = (clear_left < clearance_cap && clear_right < clearance_cap)
+                          ? std::fabs(clear_left - clear_right)
+                          : 0.0f;
+
+      // Rollout endpoint after sim_time
+      float end_x, end_y, end_th = w * params_.sim_time;
+      if (std::fabs(w) < 1e-4f)
+      {
+        end_x = v * params_.sim_time;
+        end_y = 0.0f;
+      }
+      else
+      {
+        float radius = v / w;
+        end_x        = radius * std::sin(end_th);
+        end_y        = radius * (1.0f - std::cos(end_th));
+      }
+
+      float goal_dx    = goal_x - end_x;
+      float goal_dy    = goal_y - end_y;
+      float goal_dist  = std::sqrt(goal_dx * goal_dx + goal_dy * goal_dy);
+      float bearing    = std::atan2(goal_dy, goal_dx);
+      float heading_err = wrapAngle(bearing - end_th);
+
+      float score = params_.weights.clearance * std::min(clearance, cap_eff) -
+                    params_.weights.balance * tightness * balance -
+                    params_.weights.goal_dist * goal_dist -
+                    params_.weights.heading * std::fabs(heading_err) -
+                    params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
+                    params_.weights.squeeze * v * (1.0f - lateral_fraction);
+#ifdef BAC_DEBUG_CANDIDATES
+      std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
+                  std::min(clearance, clearance_cap), goal_dist, heading_err, lateral_fraction, score);
+#endif
+      if (score > best_score)
+      {
+        best_score     = score;
+        best_cmd       = Twist2D(v, w);
+        best_clearance = std::min(clearance, cap_eff);
+        best_goal_dist = goal_dist;
+      }
+    }
+  }
+
+  float out_v = best_cmd.v;
+  float out_w = best_cmd.w;
+  if (std::fabs(out_v) < params_.velocity_min)
+  {
+    out_v = 0.0f;
+  }
+  if (std::fabs(out_w) < params_.angvel_min)
+  {
+    out_w = 0.0f;
+  }
+  prev_selected_w_      = out_w;
+  result.output         = Twist2D(out_v, out_w);
+  result.best_clearance = best_clearance;
+  result.best_goal_dist = best_goal_dist;
+  result.admissible_count = admissible_count;
+  result.candidate_count  = candidate_count;
+
+  if (out_v == 0.0f && out_w == 0.0f)
+  {
+    // Intent exists but the best move is to hold still: blocked.
     current_status_ = Status::STOP;
     result.status   = Status::STOP;
     return result;
   }
 
-  current_status_   = Status::AVOIDING;
-  avoiding_counter_ = params_.avoiding_latch_ticks;
-  result.status     = Status::AVOIDING;
+  if (nearest_distance > params_.influence_range)
+  {
+    if (avoiding_counter_ > 0)
+    {
+      avoiding_counter_--;
+      current_status_ = Status::AVOIDING;
+    }
+    else
+    {
+      current_status_ = Status::CLEAR;
+    }
+  }
+  else
+  {
+    current_status_   = Status::AVOIDING;
+    avoiding_counter_ = params_.avoiding_latch_ticks;
+  }
+  result.status = current_status_;
   return result;
 }
 
