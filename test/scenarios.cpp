@@ -74,7 +74,6 @@ struct WeightOverrides
   float hysteresis = -1.0f;
 };
 WeightOverrides g_weight_overrides;
-int             g_station_goal = -1;  // -1: Params default; --station / --point-goal override
 
 bac::BacCore
 makeCore(float v_max = 0.4f)
@@ -82,10 +81,6 @@ makeCore(float v_max = 0.4f)
   // bac::Params defaults; apply CLI overrides
   bac::Params params;
   params.limits.v_max = v_max;
-  if (g_station_goal >= 0)
-  {
-    params.station_goal = (g_station_goal != 0);
-  }
   if (g_weight_overrides.clearance >= 0.0f) params.weights.clearance = g_weight_overrides.clearance;
   if (g_weight_overrides.goal_dist >= 0.0f) params.weights.goal_dist = g_weight_overrides.goal_dist;
   if (g_weight_overrides.balance >= 0.0f) params.weights.balance = g_weight_overrides.balance;
@@ -637,14 +632,6 @@ main(int argc, char *argv[])
     else if (std::strcmp(argv[i], "--w-hysteresis") == 0 && i + 1 < argc)
     {
       g_weight_overrides.hysteresis = std::atof(argv[++i]);
-    }
-    else if (std::strcmp(argv[i], "--station") == 0)
-    {
-      g_station_goal = 1;
-    }
-    else if (std::strcmp(argv[i], "--point-goal") == 0)
-    {
-      g_station_goal = 0;
     }
     else
     {

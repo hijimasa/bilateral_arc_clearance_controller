@@ -175,8 +175,7 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
       // cannot create a new hazard either - braking requires BOTH
       // predictions to hit. Admissibility and the emergency layer are
       // unaffected.
-      if (params.governor_arc_prediction && current.v > 0.05f &&
-          std::fabs(current.w) > 1e-2f)
+      if (current.v > 0.05f && std::fabs(current.w) > 1e-2f)
       {
         const float turn_radius = current.v / current.w;
         const float radial      = std::sqrt(point.x * point.x +
@@ -222,8 +221,7 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
         // the arc offset IS the (sub-band) pass gap, so the release
         // threshold is never met there.
         bool released = false;
-        if (params.governor_arc_prediction && current.v > 0.05f &&
-            std::fabs(current.w) > 1e-2f)
+        if (current.v > 0.05f && std::fabs(current.w) > 1e-2f)
         {
           const float turn_radius = current.v / current.w;
           const float radial      = std::sqrt(point.x * point.x +
@@ -244,123 +242,6 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
     result.distance = std::min(result.distance, std::sqrt(dx * dx + dy * dy));
   }
   return result;
-}
-
-Point2D
-selectLocalGoal(const std::vector<Point2D> &path, const std::vector<Point2D> &obstacles,
-                const Params &params)
-{
-  size_t start_index       = 0;
-  float  nearest_path_dist = FLT_MAX;
-  for (size_t i = 0; i < path.size(); ++i)
-  {
-    const float distance_squared = path[i].x * path[i].x + path[i].y * path[i].y;
-    if (distance_squared < nearest_path_dist)
-    {
-      nearest_path_dist = distance_squared;
-      start_index       = i;
-    }
-  }
-
-  const auto first = path.begin() + static_cast<std::vector<Point2D>::difference_type>(start_index);
-  const std::vector<Point2D> local_path(first, path.end());
-  std::vector<float> cumulative(local_path.size(), 0.0f);
-  for (size_t i = 1; i < local_path.size(); ++i)
-  {
-    const float dx = local_path[i].x - local_path[i - 1].x;
-    const float dy = local_path[i].y - local_path[i - 1].y;
-    cumulative[i]  = cumulative[i - 1] + std::sqrt(dx * dx + dy * dy);
-  }
-
-  size_t goal_index = local_path.size() - 1;
-  for (size_t i = 0; i < local_path.size(); ++i)
-  {
-    if (cumulative[i] >= params.score_lookahead)
-    {
-      goal_index = i;
-      break;
-    }
-  }
-
-  // Do not attract the robot to a path pose occupied by an obstacle. Search
-  // farther along the plan so that bilateral clearance can swerve around it.
-  const float half_width          = params.footprint.width / 2.0f;
-  const float body_radius_squared = half_width * half_width;
-  for (size_t i = goal_index; i < local_path.size(); ++i)
-  {
-    bool blocked = false;
-    for (const Point2D &point : obstacles)
-    {
-      const float dx = point.x - local_path[i].x;
-      const float dy = point.y - local_path[i].y;
-      if (dx * dx + dy * dy < body_radius_squared)
-      {
-        blocked = true;
-        break;
-      }
-    }
-    goal_index = i;
-    if (!blocked)
-    {
-      break;
-    }
-  }
-
-  if (params.goal_los_radius <= 1e-3f)
-  {
-    return local_path[goal_index];
-  }
-
-  // Points on the plan represent a degraded-plan obstacle handled by the
-  // swerve score. Only off-path geometry (for example a corner wall) trims
-  // the line-of-sight goal.
-  std::vector<bool> on_path(obstacles.size(), false);
-  const float on_path_radius_squared = params.los_onpath_radius * params.los_onpath_radius;
-  for (size_t obstacle_index = 0; obstacle_index < obstacles.size(); ++obstacle_index)
-  {
-    for (const Point2D &path_point : local_path)
-    {
-      const float dx = obstacles[obstacle_index].x - path_point.x;
-      const float dy = obstacles[obstacle_index].y - path_point.y;
-      if (dx * dx + dy * dy < on_path_radius_squared)
-      {
-        on_path[obstacle_index] = true;
-        break;
-      }
-    }
-  }
-
-  const float los_radius_squared = params.goal_los_radius * params.goal_los_radius;
-  auto has_line_of_sight = [&](const Point2D &goal) {
-    const float goal_distance_squared = goal.x * goal.x + goal.y * goal.y;
-    for (size_t i = 0; i < obstacles.size(); ++i)
-    {
-      if (on_path[i])
-      {
-        continue;
-      }
-      float projection = 0.0f;
-      if (goal_distance_squared > 1e-9f)
-      {
-        projection = std::max(
-            0.0f, std::min(1.0f, (obstacles[i].x * goal.x + obstacles[i].y * goal.y) /
-                                     goal_distance_squared));
-      }
-      const float dx = obstacles[i].x - projection * goal.x;
-      const float dy = obstacles[i].y - projection * goal.y;
-      if (dx * dx + dy * dy < los_radius_squared)
-      {
-        return false;
-      }
-    }
-    return true;
-  };
-
-  while (goal_index > 0 && !has_line_of_sight(local_path[goal_index]))
-  {
-    --goal_index;
-  }
-  return local_path[goal_index];
 }
 
 }  // namespace
@@ -585,20 +466,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     return result;
   }
 
-  const Point2D local_goal = selectLocalGoal(path, filtered_points, params_);
-  const float   goal_x     = local_goal.x;
-  const float   goal_y     = local_goal.y;
-  result.goal_x            = goal_x;
-  result.goal_y            = goal_y;
-
-  // Station-goal prototype: decimated projection polyline with cumulative
-  // arc length. Candidates are scored by projection station (progress) and
-  // path tangent instead of the fixed-lookahead point (see Params).
+  // Station goal: decimated projection polyline with cumulative arc length.
+  // Candidates are scored by projection station (progress) and path tangent.
   std::vector<Point2D> station_pts;
   std::vector<float>   station_s;
   std::vector<bool>    station_blocked;
-  size_t               station_i0 = 0;  // robot's own projection segment
-  if (params_.station_goal && path.size() >= 2)
+  size_t               station_i0 = 0;   // robot's own projection segment
+  float                station_s0 = 0.0f;  // robot's own projection station
+  if (path.size() >= 2)
   {
     station_pts.reserve(path.size());
     station_pts.push_back(path.front());
@@ -665,17 +540,48 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       {
         best_d2    = d2;
         station_i0 = i;
+        station_s0 = station_s[i] + t * std::sqrt(len2);
       }
     }
   }
-  const bool  station_active = params_.station_goal && station_pts.size() >= 2;
-  const float station_total  = station_active ? station_s.back() : 0.0f;
+  // A single-point (or sub-resolution) path degenerates to a plain point
+  // goal: the cost lambda then returns the Euclidean distance to it.
+  const bool  station_degenerate = station_pts.size() < 2;
+  const float station_total      = station_degenerate ? 0.0f : station_s.back();
+
+  // Diagnostics: the reported local goal is the path point one preview
+  // length ahead of the robot's own projection (display only - scoring uses
+  // the projection itself).
+  {
+    constexpr float kGoalPreview = 2.5f;  // [m]
+    Point2D goal = path.back();
+    if (!station_degenerate)
+    {
+      for (size_t i = 0; i < station_pts.size(); ++i)
+      {
+        goal = station_pts[i];
+        if (station_s[i] >= station_s0 + kGoalPreview)
+        {
+          break;
+        }
+      }
+    }
+    result.goal_x = goal.x;
+    result.goal_y = goal.y;
+  }
 
   // Project a point onto the polyline (from the robot's segment forward).
   // Returns the goal COST (remaining station + weighted lateral offset; full
   // Euclidean distance once past the path end) and the reference bearing
   // (path tangent, or the direction to the final point at the terminal).
   auto station_goal_cost = [&](float px, float py, float &bearing_out) {
+    if (station_degenerate)
+    {
+      const float dx = path.back().x - px, dy = path.back().y - py;
+      const float d  = std::sqrt(dx * dx + dy * dy);
+      bearing_out    = (d > 1e-3f) ? std::atan2(dy, dx) : 0.0f;
+      return d;
+    }
     float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
     float best_qx = 0.0f, best_qy = 0.0f;
     bool  clamped = false, blocked = false;
@@ -901,16 +807,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
       }
       float gd_pre, bearing_pre;
-      if (station_active)
-      {
-        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre);
-      }
-      else
-      {
-        const float gdx = goal_x - end_x_pre, gdy = goal_y - end_y_pre;
-        gd_pre      = std::sqrt(gdx * gdx + gdy * gdy);
-        bearing_pre = std::atan2(gdy, gdx);
-      }
+      gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre);
       float fixed_penalties = params_.weights.goal_dist * gd_pre +
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
@@ -968,16 +865,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
-        if (station_active)
-        {
-          gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre) + advance;
-        }
-        else
-        {
-          const float gdx = goal_x - end_x_pre, gdy = goal_y - end_y_pre;
-          gd_pre      = std::sqrt(gdx * gdx + gdy * gdy) + advance;
-          bearing_pre = std::atan2(gdy, gdx);
-        }
+        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre) + advance;
       }
       else
       {

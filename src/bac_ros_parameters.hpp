@@ -68,26 +68,12 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.weights.squeeze    = declare_float("weights.squeeze", params.weights.squeeze);
 
   params.sim_time            = declare_float("sim_time", params.sim_time);
-  params.score_lookahead     = declare_float("score_lookahead", params.score_lookahead);
-  {
-    const std::string name = prefix + "station_goal";
-    if (!node.has_parameter(name))
-    {
-      node.template declare_parameter<bool>(name, params.station_goal);
-    }
-    params.station_goal = node.get_parameter(name).as_bool();
-  }
   params.station_lateral_weight =
       declare_float("station_lateral_weight", params.station_lateral_weight);
-  params.goal_los_radius     = declare_float("goal_los_radius", params.goal_los_radius);
   params.cap_adapt_rate      = declare_float("cap_adapt_rate", params.cap_adapt_rate);
-  params.los_onpath_radius   = declare_float("los_onpath_radius", params.los_onpath_radius);
   params.min_eval_distance   = declare_float("min_eval_distance", params.min_eval_distance);
   params.turn_radius_min     = declare_float("turn_radius_min", params.turn_radius_min);
-  params.eval_angle_max      = declare_float("eval_angle_max", params.eval_angle_max);
   params.eval_lateral_max    = declare_float("eval_lateral_max", params.eval_lateral_max);
-  params.blocked_near        = declare_float("blocked_near", params.blocked_near);
-  params.blocked_far         = declare_float("blocked_far", params.blocked_far);
   params.margin_scale_floor  = declare_float("margin_scale_floor", params.margin_scale_floor);
   params.margin_scale_speed  = declare_float("margin_scale_speed", params.margin_scale_speed);
   params.window_time         = declare_float("window_time", params.window_time);
@@ -101,17 +87,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.velocity_min        = declare_float("velocity_min", params.velocity_min);
   params.angvel_min          = declare_float("angvel_min", params.angvel_min);
   params.creep_fraction        = declare_float("creep_fraction", params.creep_fraction);
-  {
-    const std::string name = prefix + "governor_arc_prediction";
-    if (!node.has_parameter(name))
-    {
-      node.template declare_parameter<bool>(name, params.governor_arc_prediction);
-    }
-    params.governor_arc_prediction = node.get_parameter(name).as_bool();
-  }
   params.tight_cruise_fraction = declare_float("tight_cruise_fraction", params.tight_cruise_fraction);
-  params.side_envelope_headroom =
-      declare_float("side_envelope_headroom", params.side_envelope_headroom);
   params.side_envelope_lookahead =
       declare_float("side_envelope_lookahead", params.side_envelope_lookahead);
   params.influence_range      = declare_float("influence_range", params.influence_range);

@@ -137,7 +137,6 @@ controller_server:
       limits.acc_v: 0.8
       weights.balance: 4.0
       sim_time: 2.5
-      score_lookahead: 2.5
 ```
 
 プラグインは Nav2 plan と `computeVelocityCommands()` の pose が同じ global frame であるという

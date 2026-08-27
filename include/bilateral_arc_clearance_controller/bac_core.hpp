@@ -146,30 +146,15 @@ struct Params
   Weights   weights{};
 
   float sim_time    = 2.5f;   // [s] candidate arc rollout horizon
-  /// The scoring attractor is the path point this far along the local path
-  /// (advanced past path points blocked by obstacles). Scoring against a
-  /// LOCAL GOAL instead of the nearest path segment keeps the robot from
-  /// being pulled into an obstacle that sits on the path itself.
-  float score_lookahead = 2.5f;  // [m]
-  /// Station goal (default): score candidates by arc-length PROGRESS along
-  /// the local path (projection station) and heading vs the path TANGENT at
-  /// the projection, instead of the fixed-lookahead goal point. Progress and
-  /// tangent are both first-order immune to a laterally drifted path; the
-  /// lateral offset to the path enters with the (deliberately weak) weight
-  /// below so that clearance/balance keep the lateral authority, and exerts
-  /// NO pull on path segments blocked by an obstacle (the swerve must not
-  /// fight the path attraction). At the path end the remaining Euclidean
-  /// distance takes over. false restores the fixed-lookahead point goal.
-  bool  station_goal = true;
-  /// Lateral-offset weight of the station cost, as a fraction of
-  /// weights.goal_dist per meter of offset.
+  /// Path following scores candidates by arc-length PROGRESS along the local
+  /// path (projection station) and heading vs the path TANGENT at the
+  /// projection - both first-order immune to a laterally drifted path. The
+  /// lateral offset to the path enters with this (deliberately weak) weight,
+  /// as a fraction of weights.goal_dist per meter, so that clearance/balance
+  /// keep the lateral authority; it exerts NO pull on path segments blocked
+  /// by an obstacle, and the full Euclidean distance takes over outside the
+  /// path's longitudinal span.
   float station_lateral_weight = 0.3f;
-  /// Line-of-sight goal: while the straight segment from the robot to the
-  /// local goal passes within this radius of an obstacle point, the goal is
-  /// pulled back to the farthest VISIBLE path point. Around a corner the
-  /// attractor then sits at the corner instead of beyond it, so the robot
-  /// stops hugging the inner wall. 0 disables.
-  float goal_los_radius = 0.45f;  // [m]
   /// Density adaptation: the tightness reference tracks an EMA (this rate
   /// per tick) of the probed achievable clearance, clamped to
   /// [body/2 + safety.side, the configured cap]. Where the configured avoid
@@ -178,11 +163,6 @@ struct Params
   /// whole field as a crisis. 0 disables (fixed reference).
   float cap_adapt_rate = 0.05f;
 
-  /// Obstacle points within this distance of the path are treated as
-  /// on-path blockers (degraded plan - the swerve logic's business) and do
-  /// not trim the line of sight. Smaller than half the body width so that
-  /// walls a real planner path legitimately skirts still count as walls.
-  float los_onpath_radius = 0.5f;  // [m]
   /// Clearance/admissibility evaluation reaches at least this far along the
   /// arc regardless of the candidate speed (a purely time-based horizon turns
   /// myopic at low speed: obstacles drop out of range as the robot slows, and
@@ -195,6 +175,7 @@ struct Params
   /// Curved candidates are never evaluated beyond this arc angle: the planner
   /// re-decides every tick, so extrapolating a turn much past ~60 degrees
   /// mis-scores recovery arcs as "hitting the far wall eventually".
+  /// (Method constant - not exposed as a ROS parameter.)
   float eval_angle_max = 1.05f;  // [rad]
   /// ... and never beyond this LATERAL displacement of the arc: a small-radius
   /// correction extrapolated deep across the passage would self-punish via
@@ -204,6 +185,7 @@ struct Params
   /// the hit point is euclidean-NEAR (a tight arc reaches a nearby obstacle
   /// at a long arc length; arc length alone would hide the threat). The
   /// poison fades from full at blocked_near to none at blocked_far.
+  /// (Method constants - not exposed as ROS parameters.)
   float blocked_near = 0.4f;  // [m]
   float blocked_far  = 1.2f;  // [m]
   /// The emergency margins scale with speed (braking distance shrinks with
@@ -245,14 +227,6 @@ struct Params
   /// creep floor keeps an escape possible right at the boundary instead of
   /// freezing.
   float creep_fraction = 0.3f;
-  /// Arc refinement of the governor, RELEASE-ONLY: a point the straight
-  /// prediction calls a collision course is released when the CURRENT (v, w)
-  /// arc carries it past the body (mid-turn, the nose points at the corner's
-  /// outer wall until the heading has swung, which would otherwise pin the
-  /// corner speed at creep). Braking is never ADDED by the arc, so straight
-  /// narrow-corridor behavior is untouched. false restores the pure straight
-  /// slab.
-  bool governor_arc_prediction = true;
   /// Cruise moderation in bilateral tightness: the sampled speed is scaled by
   /// (1 - (1 - tight_cruise_fraction) * tightness), i.e. this fraction of
   /// v_max remains available in a fully tight passage. Steering authority
@@ -266,6 +240,7 @@ struct Params
   /// speed-scaled margin would reach within cushion of that point. Prevents
   /// the pass-accelerate-stop chatter next to obstacles by construction while
   /// leaving gaps the full margin already clears at full cruise speed.
+  /// (Method constant - not exposed as a ROS parameter.)
   float side_envelope_headroom = 0.1f;
   /// How far ahead of the stop zone a predicted-close-pass point engages the
   /// side envelope [m]. Covers the swerve-carving phase around an obstacle

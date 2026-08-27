@@ -47,20 +47,13 @@ jerk 制限を必ず適用する。
 | パラメータ | 既定値 | 説明 |
 |---|---:|---|
 | `sim_time` | 2.5 | 候補円弧のロールアウト時間 [s] |
-| `station_goal` | true | 経路への射影弧長（進行度）と射影点接線で採点する。false で固定距離ゴール点方式 |
-| `station_lateral_weight` | 0.3 | station 方式の経路横偏差の重み（`weights.goal_dist` 比）。障害物で塞がれた経路区間と経路縦断範囲外（クランプ時）は特別扱い |
-| `score_lookahead` | 2.5 | ローカルゴールまでの経路長 [m]（`station_goal: false` 時のみ） |
+| `station_lateral_weight` | 0.3 | 経路横偏差の重み（`weights.goal_dist` 比）。障害物で塞がれた経路区間では 0、経路縦断範囲外（クランプ時）は全重みユークリッド距離 |
 | `min_eval_distance` | 1.6 | 低速でも確保する最小評価距離 [m] |
-| `eval_angle_max` | 1.05 | 曲線候補の最大評価角 [rad] |
 | `eval_lateral_max` | 0.5 | 曲線候補の最大横変位 [m] |
-| `goal_los_radius` | 0.45 | ローカルゴール視線の障害物半径 [m]。0 で無効 |
-| `los_onpath_radius` | 0.5 | 経路上障害物を視線トリムから除く半径 [m] |
 | `cap_adapt_rate` | 0.05 | 密度適応クリアランス上限の EMA 更新率。0 で固定 |
-| `blocked_near` | 0.4 | 評価窓外衝突の完全ペナルティ距離 [m] |
-| `blocked_far` | 1.2 | 評価窓外衝突のペナルティ消失距離 [m] |
 | `weights.clearance` | 2.0 | 左右の小さい方のクリアランス報酬 |
 | `weights.balance` | 4.0 | 狭所での左右差ペナルティ |
-| `weights.goal_dist` | 1.0 | ロールアウト終端からローカルゴールまでの距離 |
+| `weights.goal_dist` | 1.0 | 経路追従コスト（残り射影弧長＋横偏差）の重み |
 | `weights.heading` | 0.15 | 終端方位誤差 |
 | `weights.hysteresis` | 0.6 | 前回選択角速度との差 |
 | `weights.squeeze` | 0.5 | 側方余裕が小さいときの速度ペナルティ |
@@ -74,12 +67,10 @@ jerk 制限を必ず適用する。
 |---|---:|---|
 | `stop_decel` | 1.0 | 許容性判定に使う制動能力 [m/s²] |
 | `brake_reaction_time` | 0.1 | 制動距離に含める反応遅れ [s] |
-| `margin_scale_floor` | 0.5 | 停止時の安全余裕スケール下限 |
+| `margin_scale_floor` | 0.6 | 停止時の安全余裕スケール下限 |
 | `margin_scale_speed` | 0.3 | 安全余裕が 100% になる速度 [m/s] |
 | `creep_fraction` | 0.3 | 近接ガバナの最低速度割合 |
-| `governor_arc_prediction` | true | 旋回中、現在の (v,w) 円弧が余裕を持って外す点をガバナ対象から解除（解除専用。直進時は直線判定と同一で、狭通路の挙動は不変） |
 | `side_envelope_lookahead` | 1.0 | ガバナの前方判定距離 [m]。衝突コース上の点への線形減速と、狭接近すれ違い予定点の速度包絡に共通 |
-| `side_envelope_headroom` | 0.1 | 側方包絡の余裕（側方余裕比）。予測すれ違い隙間が「余裕×(1+この値)」以上なら減速しない |
 | `tight_cruise_fraction` | 0.5 | 両側拘束の狭所で許容する巡航速度割合（tightness に線形）。1.0 で無効 |
 | `max_range` | 10.0 | 障害物点の最大距離 [m] |
 | `max_points` | 1000 | 点数上限。超過時は等間隔間引き。0 以下で無制限 |
@@ -99,3 +90,11 @@ jerk 制限を必ず適用する。
 
 フィルタノードは TF を参照しないので `sensor.*` を実機に合わせる。nav2 プラグインは TF から
 LaserScan を base frame へ変換する。
+
+## 内部定数（ROS パラメータ非公開）
+
+手法固有の形状定数で、ロボットや環境によらず変更を想定しないもの（`bac_core.hpp` の
+コンパイル時既定値）: `eval_angle_max` 1.05 rad（曲線候補の最大評価角）、
+`blocked_near`/`blocked_far` 0.4/1.2 m（評価窓外衝突ペナルティのフェード）、
+`side_envelope_headroom` 0.1（側方包絡のクッション比）。C++ から `bac::Params` 経由で
+上書きは可能。
