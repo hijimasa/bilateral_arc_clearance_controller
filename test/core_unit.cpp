@@ -51,7 +51,9 @@ testBlockingDistance()
   bac::BacCore core;
   const bac::ArcEvaluation eval = core.evaluateArc({ { 1.0f, 0.1f } }, 0.4f, 0.0f, 4.0f);
 
-  expect(near(eval.blocking_s, 1.0f), "first body hit is reported along the arc");
+  // blocking_s is the body-origin travel at FIRST CONTACT: the leading edge
+  // (front = 0.5) reaches the point at x = 1.0 after 0.5 m of travel.
+  expect(near(eval.blocking_s, 0.5f), "first contact is reported as body-origin travel");
 }
 
 void
@@ -163,11 +165,14 @@ testSweptFootprintProperty()
     }
 
     const float horizon = 2.0f;
-    const float s_win   = std::fabs(v) * horizon;
+    // The contact search is angle-capped (see eval_angle_max) - the ground
+    // truth uses the same window.
+    const float t_cap  = std::min(horizon, params.eval_angle_max / std::fabs(w));
+    const float s_win  = std::fabs(v) * t_cap;
     // ground truth via the rotation about the turn center
     const float R = v / w;
     float s_true  = std::numeric_limits<float>::max();
-    for (float t = 0.0f; t <= horizon; t += 0.002f)
+    for (float t = 0.0f; t <= t_cap; t += 0.002f)
     {
       const float rho = w * t;
       const float ux = p.x, uy = p.y - R;

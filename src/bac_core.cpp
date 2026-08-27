@@ -467,7 +467,15 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w
       const float r_p = std::sqrt(rux * rux + ruy * ruy);
       if (r_p >= sweep_r_min - 1e-3f && r_p <= sweep_r_max + 1e-3f)
       {
-        const float s_hit = firstContactArcLength(point, v, w, body, s_max);
+        // The contact search is capped at eval_angle_max of body rotation:
+        // a slow tight arc would otherwise be checked across a huge heading
+        // sweep and read every corridor wall as "eventually hit" - the same
+        // over-extrapolation eval_angle_max exists to prevent (the planner
+        // re-decides ~20x before such a rotation completes; the euclidean
+        // blocked_near/far poison covers genuinely close threats).
+        const float s_angle_cap = std::fabs(v / w) * params_.eval_angle_max;
+        const float s_hit =
+            firstContactArcLength(point, v, w, body, std::min(s_max, s_angle_cap));
         if (s_hit < eval.blocking_s)
         {
           eval.blocking_s = s_hit;
@@ -485,9 +493,13 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w
     if (std::fabs(w) < 1e-4f)
     {
       body_hit = abs_offset < half_width;
-      if (body_hit && s < eval.blocking_s)
+      // blocking_s is the BODY-ORIGIN travel distance at first contact
+      // (unified with the exact curved computation): the leading edge
+      // reaches the point after s - lead_length of travel.
+      const float s_contact = s - lead_length;
+      if (body_hit && s_contact < eval.blocking_s)
       {
-        eval.blocking_s = s;
+        eval.blocking_s = std::max(s_contact, 0.0f);
       }
     }
     else
@@ -937,7 +949,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float cap_floor = params_.footprint.width / 2.0f + std::max(params_.safety_margin.side, 0.05f);
   float cap_eff   = std::min(clearance_cap, std::max(probe_best, cap_floor));
 
-  float lead_length   = params_.footprint.front;
   float lead_margin   = params_.safety_margin.front;
   float stop_decel    = std::max(params_.stop_decel, 0.1f);
 
@@ -1035,7 +1046,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         float advance = v_ref * params_.sim_time;
         if (eval.blocking_s < FLT_MAX)
         {
-          advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_length - lead_margin));
+          advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_margin));
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
@@ -1063,11 +1074,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         ArcEvaluation eval = evaluateArcWindows(filtered_points, v, w, dist_clear, dist_block);
         if (eval.blocking_s < FLT_MAX)
         {
-          // DWA admissibility: able to stop (plus the leading margin in the
-          // direction of travel) before the hit
-          float lead     = (v >= 0.0f) ? lead_length : -params_.footprint.rear;
+          // DWA admissibility: able to stop (keeping the directional safety
+          // margin) before first contact. blocking_s already accounts for
+          // the body extent (it is the body-origin travel at contact).
           float margin   = (v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
-          float free_run = eval.blocking_s - lead - margin;
+          float free_run = eval.blocking_s - margin;
           float needed   = v * v / (2.0f * stop_decel) + std::fabs(v) * params_.brake_reaction_time;
           if (free_run <= needed)
           {
@@ -1176,9 +1187,8 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         const ArcEvaluation ev = evaluateArcWindows(filtered_points, out_v, out_w, 0.0f, dist_block);
         if (ev.blocking_s < FLT_MAX)
         {
-          const float lead     = (out_v >= 0.0f) ? lead_length : -params_.footprint.rear;
           const float margin   = (out_v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
-          const float free_run = ev.blocking_s - lead - margin;
+          const float free_run = ev.blocking_s - margin;
           if (free_run <= 0.0f)
           {
             out_v = 0.0f;

@@ -294,8 +294,9 @@ struct Result
  *
  * clearance_left/right: smallest lateral offset from the arc centerline per
  * side of the travel direction (free half-width of the passage along the arc).
- * blocking_s: distance along the arc to the first point the BODY would hit
- * (|offset| < width/2); FLT_MAX if the path is body-free.
+ * blocking_s: BODY-ORIGIN travel distance along the arc at the FIRST physical
+ * contact with any point (exact swept-rectangle contact on curved arcs,
+ * capped at eval_angle_max of body rotation); FLT_MAX if contact-free.
  * lateral_fraction in [0,1]: tightest squeeze among non-hitting points
  * (0 = grazing the body, 1 = everything outside the safety side margin).
  */
