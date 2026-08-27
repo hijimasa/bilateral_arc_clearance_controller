@@ -29,7 +29,7 @@
 
   <path d="M 205 235 C 375 226, 570 218, 835 220" fill="none" stroke="#94a3b8" stroke-width="4" stroke-dasharray="12 10"/>
   <circle cx="835" cy="220" r="9" fill="#7c3aed"/>
-  <text x="792" y="198" class="label" fill="#7c3aed">local goal</text>
+  <text x="792" y="198" class="label" fill="#7c3aed">path projection</text>
 
   <path d="M 250 220 C 445 210, 650 137, 840 158" fill="none" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="9 8"/>
   <path d="M 250 220 C 445 225, 650 297, 840 280" fill="none" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="9 8"/>
