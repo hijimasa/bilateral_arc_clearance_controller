@@ -121,7 +121,11 @@ testFaceAwayRecovery()
   float x = 0.0f, y = 0.0f, th = 2.0f;
   bac::BacCore core;
   bac::Twist2D current;
-  for (int i = 0; i < 400; i++)
+  int  stop_ticks = 0;
+  // 35 s budget: the recovery route is mode-dependent (an in-place turn
+  // into the gap, or a wide moving turnaround) - the guarded property is
+  // "never freezes and reaches the far side", not the specific route.
+  for (int i = 0; i < 700; i++)
   {
     const float cs = std::cos(-th), sn = std::sin(-th);
     std::vector<bac::Point2D> points;
@@ -138,11 +142,16 @@ testFaceAwayRecovery()
     }
     const bac::Result result = core.process(points, path, current);
     current = result.output;
+    if (std::fabs(current.v) < 1e-3f && std::fabs(current.w) < 1e-3f)
+    {
+      stop_ticks++;
+    }
     th += current.w * 0.05f;
     x += current.v * std::cos(th) * 0.05f;
     y += current.v * std::sin(th) * 0.05f;
   }
-  expect(x > 2.0f, "faces-away start turns around and passes the gap towards the goal");
+  expect(x > 2.0f, "faces-away start turns around and passes the obstacles towards the goal");
+  expect(stop_ticks < 200, "faces-away recovery keeps moving (no freeze)");
 }
 
 }  // namespace

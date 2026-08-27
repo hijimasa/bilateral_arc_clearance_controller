@@ -151,6 +151,19 @@ struct Params
   /// LOCAL GOAL instead of the nearest path segment keeps the robot from
   /// being pulled into an obstacle that sits on the path itself.
   float score_lookahead = 2.5f;  // [m]
+  /// Station goal (default): score candidates by arc-length PROGRESS along
+  /// the local path (projection station) and heading vs the path TANGENT at
+  /// the projection, instead of the fixed-lookahead goal point. Progress and
+  /// tangent are both first-order immune to a laterally drifted path; the
+  /// lateral offset to the path enters with the (deliberately weak) weight
+  /// below so that clearance/balance keep the lateral authority, and exerts
+  /// NO pull on path segments blocked by an obstacle (the swerve must not
+  /// fight the path attraction). At the path end the remaining Euclidean
+  /// distance takes over. false restores the fixed-lookahead point goal.
+  bool  station_goal = true;
+  /// Lateral-offset weight of the station cost, as a fraction of
+  /// weights.goal_dist per meter of offset.
+  float station_lateral_weight = 0.3f;
   /// Line-of-sight goal: while the straight segment from the robot to the
   /// local goal passes within this radius of an obstacle point, the goal is
   /// pulled back to the farthest VISIBLE path point. Around a corner the

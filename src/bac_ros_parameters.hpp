@@ -69,6 +69,16 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
 
   params.sim_time            = declare_float("sim_time", params.sim_time);
   params.score_lookahead     = declare_float("score_lookahead", params.score_lookahead);
+  {
+    const std::string name = prefix + "station_goal";
+    if (!node.has_parameter(name))
+    {
+      node.template declare_parameter<bool>(name, params.station_goal);
+    }
+    params.station_goal = node.get_parameter(name).as_bool();
+  }
+  params.station_lateral_weight =
+      declare_float("station_lateral_weight", params.station_lateral_weight);
   params.goal_los_radius     = declare_float("goal_los_radius", params.goal_los_radius);
   params.cap_adapt_rate      = declare_float("cap_adapt_rate", params.cap_adapt_rate);
   params.los_onpath_radius   = declare_float("los_onpath_radius", params.los_onpath_radius);

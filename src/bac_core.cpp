@@ -533,6 +533,133 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.goal_x            = goal_x;
   result.goal_y            = goal_y;
 
+  // Station-goal prototype: decimated projection polyline with cumulative
+  // arc length. Candidates are scored by projection station (progress) and
+  // path tangent instead of the fixed-lookahead point (see Params).
+  std::vector<Point2D> station_pts;
+  std::vector<float>   station_s;
+  std::vector<bool>    station_blocked;
+  size_t               station_i0 = 0;  // robot's own projection segment
+  if (params_.station_goal && path.size() >= 2)
+  {
+    station_pts.reserve(path.size());
+    station_pts.push_back(path.front());
+    for (const Point2D &p : path)
+    {
+      const Point2D &last = station_pts.back();
+      const float dx = p.x - last.x, dy = p.y - last.y;
+      if (dx * dx + dy * dy >= 0.04f)  // resample at >= 0.2 m spacing
+      {
+        station_pts.push_back(p);
+      }
+    }
+    {
+      const Point2D &last = station_pts.back();
+      const float dx = path.back().x - last.x, dy = path.back().y - last.y;
+      if (dx * dx + dy * dy > 1e-6f)
+      {
+        station_pts.push_back(path.back());
+      }
+    }
+    station_s.assign(station_pts.size(), 0.0f);
+    for (size_t i = 1; i < station_pts.size(); ++i)
+    {
+      const float dx = station_pts[i].x - station_pts[i - 1].x;
+      const float dy = station_pts[i].y - station_pts[i - 1].y;
+      station_s[i]   = station_s[i - 1] + std::sqrt(dx * dx + dy * dy);
+    }
+    // Segments blocked by an obstacle (degraded plan) exert no LATERAL
+    // attraction: pulling back onto a blocked line fights the swerve the
+    // clearance terms are trying to make. Progress and tangent still apply.
+    station_blocked.assign(station_pts.size(), false);
+    const float block_radius   = params_.footprint.width / 2.0f;
+    const float block_r2       = block_radius * block_radius;
+    for (size_t i = 0; i + 1 < station_pts.size(); ++i)
+    {
+      const float ax = station_pts[i].x, ay = station_pts[i].y;
+      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
+      const float len2 = std::max(vx * vx + vy * vy, 1e-9f);
+      for (const Point2D &o : filtered_points)
+      {
+        float t = std::max(0.0f, std::min(1.0f, ((o.x - ax) * vx + (o.y - ay) * vy) / len2));
+        const float qx = ax + t * vx, qy = ay + t * vy;
+        if ((o.x - qx) * (o.x - qx) + (o.y - qy) * (o.y - qy) < block_r2)
+        {
+          station_blocked[i] = true;
+          break;
+        }
+      }
+    }
+    // Robot projection (origin). Candidate projections search only from this
+    // segment forward, which keeps the station monotone on paths that pass
+    // near themselves.
+    float best_d2 = FLT_MAX;
+    for (size_t i = 0; i + 1 < station_pts.size(); ++i)
+    {
+      const float ax = station_pts[i].x, ay = station_pts[i].y;
+      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
+      const float len2 = vx * vx + vy * vy;
+      if (len2 < 1e-9f) continue;
+      float t = std::max(0.0f, std::min(1.0f, (-ax * vx - ay * vy) / len2));
+      const float qx = ax + t * vx, qy = ay + t * vy;
+      const float d2 = qx * qx + qy * qy;
+      if (d2 < best_d2)
+      {
+        best_d2    = d2;
+        station_i0 = i;
+      }
+    }
+  }
+  const bool  station_active = params_.station_goal && station_pts.size() >= 2;
+  const float station_total  = station_active ? station_s.back() : 0.0f;
+
+  // Project a point onto the polyline (from the robot's segment forward).
+  // Returns the goal COST (remaining station + weighted lateral offset; full
+  // Euclidean distance once past the path end) and the reference bearing
+  // (path tangent, or the direction to the final point at the terminal).
+  auto station_goal_cost = [&](float px, float py, float &bearing_out) {
+    float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
+    float best_qx = 0.0f, best_qy = 0.0f;
+    bool  clamped = false, blocked = false;
+    for (size_t i = station_i0; i + 1 < station_pts.size(); ++i)
+    {
+      const float ax = station_pts[i].x, ay = station_pts[i].y;
+      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
+      const float len2 = vx * vx + vy * vy;
+      if (len2 < 1e-9f) continue;
+      float t = std::max(0.0f, std::min(1.0f, ((px - ax) * vx + (py - ay) * vy) / len2));
+      const float qx = ax + t * vx, qy = ay + t * vy;
+      const float d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+      if (d2 < best_d2)
+      {
+        best_d2  = d2;
+        s_best   = station_s[i] + t * std::sqrt(len2);
+        tan_best = std::atan2(vy, vx);
+        best_qx  = qx;
+        best_qy  = qy;
+        // Clamped past either END of the projected span: beyond the last
+        // vertex, or before the first considered segment. In the clamp
+        // region the progress term has no gradient, so the full Euclidean
+        // distance to the clamp point must take over - otherwise a robot
+        // outside the path's longitudinal span (facing away at the path
+        // start, or overshooting the end) can wander at only the weak
+        // lateral cost.
+        clamped = ((i + 2 == station_pts.size()) && t >= 1.0f - 1e-4f) ||
+                  (i == station_i0 && t <= 1e-4f);
+        blocked = station_blocked[i];
+      }
+    }
+    const float d = std::sqrt(best_d2);
+    if (clamped && d > 1e-3f)
+    {
+      bearing_out = std::atan2(best_qy - py, best_qx - px);
+      return (station_total - s_best) + d;
+    }
+    bearing_out = tan_best;
+    const float lateral = blocked ? 0.0f : params_.station_lateral_weight * d;
+    return (station_total - s_best) + lateral;
+  };
+
   // Proximity speed governor: cap the sampled speed in front of points the
   // current motion would actually run into (slab test in evaluateProximity -
   // a wall parallel to the travel direction misses the body and leaves the
@@ -715,8 +842,17 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         end_x_pre    = radius * std::sin(end_th_pre);
         end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
       }
-      float gdx_pre = goal_x - end_x_pre, gdy_pre = goal_y - end_y_pre;
-      float gd_pre  = std::sqrt(gdx_pre * gdx_pre + gdy_pre * gdy_pre);
+      float gd_pre, bearing_pre;
+      if (station_active)
+      {
+        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre);
+      }
+      else
+      {
+        const float gdx = goal_x - end_x_pre, gdy = goal_y - end_y_pre;
+        gd_pre      = std::sqrt(gdx * gdx + gdy * gdy);
+        bearing_pre = std::atan2(gdy, gdx);
+      }
       float fixed_penalties = params_.weights.goal_dist * gd_pre +
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
@@ -774,9 +910,16 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
-        gdx_pre   = goal_x - end_x_pre;
-        gdy_pre   = goal_y - end_y_pre;
-        gd_pre    = std::sqrt(gdx_pre * gdx_pre + gdy_pre * gdy_pre) + advance;
+        if (station_active)
+        {
+          gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre) + advance;
+        }
+        else
+        {
+          const float gdx = goal_x - end_x_pre, gdy = goal_y - end_y_pre;
+          gd_pre      = std::sqrt(gdx * gdx + gdy * gdy) + advance;
+          bearing_pre = std::atan2(gdy, gdx);
+        }
       }
       else
       {
@@ -834,10 +977,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                           : 0.0f;
 
       // Rollout endpoint after sim_time (precomputed above)
-      float end_th     = end_th_pre;
-      float goal_dist  = gd_pre;
-      float bearing    = std::atan2(gdy_pre, gdx_pre);
-      float heading_err = wrapAngle(bearing - end_th);
+      float end_th      = end_th_pre;
+      float goal_dist   = gd_pre;
+      float heading_err = wrapAngle(bearing_pre - end_th);
 
       float score = params_.weights.clearance * std::min(clearance, cap_eff) -
                     params_.weights.balance * tightness * balance -

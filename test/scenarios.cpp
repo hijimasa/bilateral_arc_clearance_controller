@@ -74,6 +74,7 @@ struct WeightOverrides
   float hysteresis = -1.0f;
 };
 WeightOverrides g_weight_overrides;
+int             g_station_goal = -1;  // -1: Params default; --station / --point-goal override
 
 bac::BacCore
 makeCore(float v_max = 0.4f)
@@ -81,6 +82,10 @@ makeCore(float v_max = 0.4f)
   // bac::Params defaults; apply CLI overrides
   bac::Params params;
   params.limits.v_max = v_max;
+  if (g_station_goal >= 0)
+  {
+    params.station_goal = (g_station_goal != 0);
+  }
   if (g_weight_overrides.clearance >= 0.0f) params.weights.clearance = g_weight_overrides.clearance;
   if (g_weight_overrides.goal_dist >= 0.0f) params.weights.goal_dist = g_weight_overrides.goal_dist;
   if (g_weight_overrides.balance >= 0.0f) params.weights.balance = g_weight_overrides.balance;
@@ -438,6 +443,49 @@ scenarioCorridorLshape(const std::string &csv_dir)
   return result;
 }
 
+// Z path (DWPP-style verification shape): two opposite 90-degree corners in
+// close succession, 1.7 m legs, 2.3 m between corner centers. A single
+// carrot point cannot represent the double corner - the path SHAPE must
+// steer the entry and exit.
+ScenarioResult
+scenarioCorridorZigzag(const std::string &csv_dir)
+{
+  ScenarioResult result{ "corridor_zigzag", Tier::TARGET, {}, {} };
+
+  World world;
+  world.addWall(-1.0f, -0.85f, 3.0f, -0.85f);  // leg1 bottom
+  world.addWall(-1.0f, 0.85f, 1.3f, 0.85f);    // leg1 top (until the upturn)
+  world.addWall(1.3f, 0.85f, 1.3f, 3.15f);     // leg2 left
+  world.addWall(3.0f, -0.85f, 3.0f, 1.45f);    // leg2 right (dead end of leg1)
+  world.addWall(3.0f, 1.45f, 8.0f, 1.45f);     // leg3 bottom
+  world.addWall(1.3f, 3.15f, 8.0f, 3.15f);     // leg3 top
+  world.addWall(8.0f, 1.45f, 8.0f, 3.15f);     // end cap behind the goal
+  bac::BacCore core = makeCore();
+  SimConfig config;
+  config.sim_time = 120.0f;
+
+  std::vector<Point2D> waypoints{
+    { 0.0f, 0.0f }, { 2.15f, 0.0f }, { 2.15f, 2.3f }, { 7.0f, 2.3f }
+  };
+  SimResult sim = runClosedLoop(core, world, { 0.0f, 0.0f, 0.0f }, waypointsPath(waypoints), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = 7.0f;
+  options.goal_y         = 2.3f;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided, "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "traverses both corners", m.final_x > 6.0f && m.final_y > 1.8f,
+                            "final (" + fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });
+  result.checks.push_back({ "keeps clearance", m.min_clearance > 0.1f,
+                            "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "no full stop", m.stop_ticks < 40, std::to_string(m.stop_ticks) + " stop ticks" });
+  return result;
+}
+
 // REGRESSION guard for the localization-robustness selling point: the
 // waypoint path rides 0.15 m off the true corridor center (as after
 // localization drift with a correct map). Geometric centering must ignore
@@ -590,6 +638,14 @@ main(int argc, char *argv[])
     {
       g_weight_overrides.hysteresis = std::atof(argv[++i]);
     }
+    else if (std::strcmp(argv[i], "--station") == 0)
+    {
+      g_station_goal = 1;
+    }
+    else if (std::strcmp(argv[i], "--point-goal") == 0)
+    {
+      g_station_goal = 0;
+    }
     else
     {
       std::cerr << "Usage: " << argv[0]
@@ -604,6 +660,7 @@ main(int argc, char *argv[])
     scenarioOpenPassthrough, scenarioSafetyStop,           scenarioAvoidSingleObstacle,
     scenarioCorridorWide,    scenarioCorridorNarrowAligned, scenarioCorridorNarrowOffset,
     scenarioCorridorNarrowWalled, scenarioCorridorExtreme, scenarioCorridorLshape,
+    scenarioCorridorZigzag,
     scenarioPathOffsetNarrow, scenarioBlockedPathObstacle, scenarioClutterField,
   };
 

@@ -47,7 +47,9 @@ jerk 制限を必ず適用する。
 | パラメータ | 既定値 | 説明 |
 |---|---:|---|
 | `sim_time` | 2.5 | 候補円弧のロールアウト時間 [s] |
-| `score_lookahead` | 2.5 | ローカルゴールまでの経路長 [m] |
+| `station_goal` | true | 経路への射影弧長（進行度）と射影点接線で採点する。false で固定距離ゴール点方式 |
+| `station_lateral_weight` | 0.3 | station 方式の経路横偏差の重み（`weights.goal_dist` 比）。障害物で塞がれた経路区間と経路縦断範囲外（クランプ時）は特別扱い |
+| `score_lookahead` | 2.5 | ローカルゴールまでの経路長 [m]（`station_goal: false` 時のみ） |
 | `min_eval_distance` | 1.6 | 低速でも確保する最小評価距離 [m] |
 | `eval_angle_max` | 1.05 | 曲線候補の最大評価角 [rad] |
 | `eval_lateral_max` | 0.5 | 曲線候補の最大横変位 [m] |
