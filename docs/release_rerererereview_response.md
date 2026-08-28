@@ -1,0 +1,34 @@
+# リリース再々々々レビューへの対応
+
+対象レビュー: [release_rerererereview_findings.md](release_rerererereview_findings.md)（2026-08-28、`34e995b` / `3db964b` 時点。本体 Go・成果物 条件付き Go）
+
+## Medium
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 1 | 完全性ゲートの終了 status が伝播しない | **修正**。検査 Python を `if ! python3 ... <<PYEOF ... then exit 1; fi` で明示的にゲートし、失敗時は aggregate へ進まず `run_all.sh` 全体が非ゼロ終了する。出荷コードの当該ブロックをそのまま抽出したテストで、欠損 1 件 → exit 1・aggregate 非到達、完全 → exit 0 を確認。 |
+| 2 | 再実行時に古い episode を受理できる | **修正**。実行前 preflight を追加: 期待される全 controller × scenario × run の出力に既存の `episode.json` / `trace.csv` があれば**既定で拒否して非ゼロ終了**（新しい `RESULTS_ROOT` の使用を案内）。`OVERWRITE=1` 指定時のみ、対象 run ディレクトリだけを限定初期化する（ルート全体は削除しない）。完全性検査には推奨どおり `controller` / `scenario` の期待値照合・`success` の boolean 検査・`outcome` の定義値検査（`success|collision|timeout|aborted(_N)`）を追加。誤 controller 値 → corrupt → 非ゼロ終了も抽出テストで確認。 |
+| 3 | 性能測定が測定ハーネス込みの clean revision に非紐付け | **修正**。raw CSV 変更（下記 Low 4）をコミットして作業ツリーを 0 件にした上で、現行 package HEAD `ef54f50` から clean ビルドし再測定。provenance に HEAD SHA・`git status --porcelain`=0・`src / include / test/perf_benchmark.cpp / CMakeLists.txt` を含む tree hash・CPU・コンパイラ・実際のビルドフラグ（`CMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG"`）・raw CSV・集計値を保存。再測定値: 1000 点で p50 387 / p95 396 / 観測最大 468 µs。 |
+
+## Low
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 4 | raw CSV に `eval_pts` がない | **修正**。raw CSV を `points,eval_pts,iter,us` の 4 列に変更（ファイル単体で間引きを判別可能）。 |
+| 5 | filter node rate limiter の adapter test | **残項目として維持**（次サイクル。実機安全保証の前提条件として記録済み）。 |
+
+## 検証
+
+| 確認項目 | 結果 |
+|---|---|
+| ゲート異常系（出荷コード断片の抽出テスト） | 欠損→exit 1・aggregate 非到達 / 完全→exit 0 / controller 不一致→corrupt→exit 1 / 既存出力→preflight 拒否 / OVERWRITE=1→対象 run のみ初期化 |
+| `bash -n run_all.sh` | 成功 |
+| plain CMake Release build（-Wpedantic） | 警告 0 |
+| CTest | 2/2 成功 |
+| 性能再測定（clean HEAD `ef54f50`） | 480 点 194/198/235、1000 点 387/396/468、2000 点 320/326/370、4000 点 322/329/407 µs（p50/p95/観測最大） |
+
+## 状態
+
+第 5 回レビューの条件付き Go の条件（Medium 1〜3）は本対応で解消。本体は前回から Go 判定継続。
+残項目は従来どおり次サイクル分（adapter test、角加速度過渡 rollout、process() 分割、外乱系評価、
+Collision Monitor 併用ベースライン）のみ。
