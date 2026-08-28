@@ -21,7 +21,7 @@
 | 3 | padding 評価のズレ量表記 | **修正**。0.25 m と訂正済み。 |
 | 4 | ベンチ環境の古い説明 | **修正**。「本リポジトリ外の評価環境」記述を追跡済みハーネス+provenance の説明へ置換。`nav2_benchmark/README.md` を現行構成（正準 18 シナリオ、drift/gap sweep、`RESULTS_ROOT` 分離、provenance、`summarize.py` 運用）へ全面更新。 |
 | 5 | README の角加速度説明 | **修正**。「core が保証するもの（1 周期後に到達可能な目標値）/ まだ保証しないもの（過渡掃引・jerk）/ 下位制御器へ要求するもの」を分けて記載。 |
-| 6 | 実行時間の測定根拠 | **修正**。`bac_perf_benchmark`（warm-up 50 + 2000 反復、p50/p95/max、raw CSV 出力）を追加。実測: 1000 点で p50 388 / p95 404 / max 672 µs、4000 点で p50 322 / p95 336 / max 562 µs（AMD Ryzen 9 5950X、g++ 11.4、-O2）——20 Hz 予算比で最悪 1.3%。条件・raw は `nav2_benchmark/perf/`（provenance.txt + perf_raw.csv）に保存。 |
+| 6 | 実行時間の測定根拠 | **修正**。`bac_perf_benchmark`（warm-up 50 + 2000 反復、p50/p95/max、raw CSV 出力）を追加。実測（クリーンな最終リビジョンで再取得済み・再々々レビュー対応）: 1000 点で p50 391 / p95 404 / 観測最大 548 µs（AMD Ryzen 9 5950X、g++ 11.4、Release）——20 Hz 予算比で p95 0.8%・**保存 2000 反復内の観測最大** 1.1%（WCET 保証ではない）。`max_points=1000` により 2000/4000 点入力は候補評価前に間引かれる（eval_pts 列で明示）。条件・raw・provenance は `nav2_benchmark/perf/` に保存。 |
 
 ## 修正後の再生成（第 4 世代、全実験群 bac_dirty=0・bench_dirty=0）
 

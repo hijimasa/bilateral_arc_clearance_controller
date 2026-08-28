@@ -31,8 +31,10 @@ main(int argc, char **argv)
     std::fprintf(fcsv, "points,iter,us\n");
   }
 
-  std::printf("%8s %10s %10s %10s  (%d iters after %d warm-up)\n", "points", "p50[us]",
-              "p95[us]", "max[us]", iters, warmup);
+  std::printf("%8s %9s %10s %10s %10s  (%d iters after %d warm-up; max = observed max of\n"
+              "%8s %9s %10s %10s %10s   this run, NOT a WCET bound)\n",
+              "points", "eval_pts", "p50[us]", "p95[us]", "max[us]", iters, warmup,
+              "", "", "", "", "");
 
   for (int n_points : { 480, 1000, 2000, 4000 })
   {
@@ -73,7 +75,11 @@ main(int argc, char **argv)
       }
     }
     std::sort(us.begin(), us.end());
-    std::printf("%8d %10.1f %10.1f %10.1f\n", n_points, us[us.size() / 2],
+    // Inputs beyond Params::max_points are decimated before candidate
+    // evaluation - report the evaluated count so larger inputs reading
+    // faster than 1000 points is not misread.
+    const int eval_pts = std::min<int>(n_points, bac::Params{}.max_points);
+    std::printf("%8d %9d %10.1f %10.1f %10.1f\n", n_points, eval_pts, us[us.size() / 2],
                 us[static_cast<size_t>(us.size() * 0.95)], us.back());
   }
   if (fcsv)

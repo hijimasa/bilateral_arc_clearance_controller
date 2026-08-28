@@ -1,0 +1,219 @@
+# bilateral_arc_clearance_controller リリース再々々レビュー指摘
+
+レビュー日: 2026-08-28  
+対象: `1e188e2` (`Fourth-generation benchmark numbers and re-re-review response`)  
+実装修正: `6b7dba8` (`Address re-re-review: advance-angle periodicity, transient-claim scoping`)  
+対応資料: [release_rerereview_response.md](release_rerereview_response.md)
+
+## 結論
+
+前回 Critical であった閉形式矩形接触判定の進行角周期不具合は解消された。固定反例testと
+前後進・左右旋回を網羅する決定論的grid testが追加され、別実装による57,056ケースの高密度照合でも
+接触見逃し0・幻接触0を確認した。plain CMake Release build、core unit test、13本のclosed-loop
+scenarioもすべて成功した。
+
+角加速度過渡は軌道評価へ組み込まれていないが、READMEとparameter referenceでは保証範囲が
+「出力角速度の目標値が1制御周期後に到達可能」までに限定されており、未評価事項も明示された。
+したがって、この項目は技術的に完全解消したのではなく、既知の制約として適切にscopeされた状態である。
+
+新たなCritical / Highの実装不具合は確認しなかった。コード本体はリリース可能と判断する。一方、
+benchmarkの実行例、episode欠損検査、性能測定provenanceにMediumの再現性課題が残るため、
+これらを修正してからrelease tagを作成する**条件付きGo**を推奨する。
+
+## Critical
+
+なし。
+
+### 前回Criticalのクローズ確認
+
+[`firstContactArcLength()`](../src/bac_core.cpp#L118)は進行角を`std::fmod()`で`[0, 2π)`へ
+正規化するようになった。
+
+```cpp
+float rho = std::fmod(sigma * (psi0 - theta), 2.0f * kPi);
+if (rho < 0.0f)
+{
+  rho += 2.0f * kPi;
+}
+```
+
+次を確認した。
+
+- 後退・右旋回の既知反例`v=-0.40 m/s, w=-0.50 rad/s, point=(-0.55,+0.60)`を固定unit test化。
+- 前進・後退 × 左・右旋回を明示的に通す決定論的grid testを常設。
+- 乱数property testも継続。
+- 独立した0.05 m点grid・0.5 ms時間刻みの照合57,056ケースで見逃し0・幻接触0。
+- 修正後commitを使用して正準216 episode、drift sweep、gap sweepを再生成。
+
+初期車体境界の浮動小数点曖昧性は、常設testと独立照合の双方で車体境界から2 cmのshellを除外して
+判定した。境界へ外側から近づけた個別probeでは接触距離が0へ連続的に収束することも確認している。
+
+## High
+
+新規指摘なし。
+
+### 角加速度過渡は既知の保証対象外
+
+[`BacCore::process()`の出力段](../src/bac_core.cpp#L1178)は、出力角速度を
+`current.w ± limits.acc_w * control_period`へ制限し、値がclampされた場合はclamp後の定曲率円弧で
+停止可能性を再検証する。前回指摘した`turn_radius_min`未満での再検証skipも削除された。
+
+また[`bac_filter_node`](../src/bac_filter_node.cpp#L193)の`CLEAR`透過経路にも同じ角速度rate limitが
+適用された。
+
+ただし現在角速度から目標角速度へ遷移する最初の1周期は定曲率軌道ではなく、角加速度過渡中の
+swept trajectoryとjerkは依然として未評価である。この制約は
+[`README.md`](../README.md#L194)と[`parameters.md`](parameters.md#L43)に明記されているため、
+実験的controllerとしてのrelease blockerにはしない。
+
+次の表現は引き続き避ける必要がある。
+
+- 指令軌道全体が常に力学的に到達可能である。
+- 角加速度過渡を含めてstop-before-contactが保証される。
+- 本controller単体が実機の独立したsafety layerになる。
+
+実機安全保証を対象にする場合は、最初の`control_period`を角加速度付きで積分するrollout、
+ROS adapter test、下位制御器を含む遅延・追従誤差評価が追加で必要である。
+
+## Medium
+
+### 1. drift / gap sweepの`RESULTS_ROOT`実行例がコンテナ内パスになっていない
+
+[`nav2_benchmark/README.md`](../../../../nav2_benchmark/README.md#L18)は次のようにホスト側の
+絶対パスを環境変数へ設定する。
+
+```bash
+RESULTS_ROOT=$PWD/results_driftsweep bash scripts/bench.sh ...
+RESULTS_ROOT=$PWD/results_gap_sweep bash scripts/bench.sh ...
+```
+
+一方、[`bench.sh`](../../../../nav2_benchmark/scripts/bench.sh#L11)はrepositoryをコンテナ内の
+`/work`へmountし、`RESULTS_ROOT`を変換せずそのまま渡す。ホストの`$PWD`は通常コンテナ内に存在せず、
+非root userで`mkdir -p`や結果書き込みが失敗する。
+
+READMEの例を次へ変更するか、`bench.sh`でホストパスからコンテナパスへ変換する必要がある。
+
+```bash
+RESULTS_ROOT=/work/nav2_benchmark/results_driftsweep bash scripts/bench.sh ...
+RESULTS_ROOT=/work/nav2_benchmark/results_gap_sweep bash scripts/bench.sh ...
+```
+
+### 2. episode欠損があってもbenchmark全体を成功扱いできる
+
+[`run_all.sh`](../../../../nav2_benchmark/scripts/run_all.sh#L93)は各episodeをbackground実行し、
+`wait -n || true`および`wait || true`で終了statusを無視する。その後、
+[`aggregate.py`](../../../../nav2_benchmark/scripts/aggregate.py#L121)は存在する`episode.json`だけを
+globして集計する。
+
+そのためtimeout、launch失敗、書き込み失敗などでepisodeが欠けても、部分的な`summary.csv`を生成して
+benchmark全体が成功終了できる。少なくとも次を追加する必要がある。
+
+1. controller × scenario × runの期待組合せを実行前に確定する。
+2. 各組合せについて`episode.json`の存在とJSON schemaを検査する。
+3. 欠損・重複・不正ファイルが1件でもあれば非ゼロ終了する。
+4. 集計結果にもexpected / observed episode数を記録する。
+
+今回保存された第4世代結果については、正準216 episode、drift 32 episode、gap 24 episodeが揃っており、
+現在の比較表への直接的な影響はない。
+
+### 3. 性能測定provenanceが測定対象revisionを一意に固定していない
+
+[`perf/provenance.txt`](../../../../nav2_benchmark/perf/provenance.txt#L2)は次の記録になっている。
+
+```text
+bac_commit: c745293... (plus working-tree re-re-review fixes at measurement time)
+```
+
+dirty working treeの内容が保存されていないため、測定対象を一意に復元できない。性能値を引用するなら、
+少なくとも最終実装commit `6b7dba8`、dirty count、source tree hash、compiler optionを記録する必要がある。
+
+また[`perf_benchmark.cpp`](../test/perf_benchmark.cpp#L25)は単一のcorridor-like sceneを2000反復する
+microbenchmarkであり、保存値の`max`はWCETではない。今回の同一buildでの再実行値は次のとおりだった。
+
+| 入力点数 | p50 [µs] | p95 [µs] | max [µs] |
+|---:|---:|---:|---:|
+| 480 | 187.0 | 196.1 | 247.9 |
+| 1000 | 390.1 | 411.1 | 891.4 |
+| 2000 | 321.3 | 338.4 | 580.9 |
+| 4000 | 323.7 | 343.3 | 591.2 |
+
+1000点の観測最大値891.4 µsでも20 Hzの50 ms周期に対して約1.8%であり、性能余裕は十分ある。
+ただしresponseの「最悪1.3%」は「保存した2000反復内の観測最大値1.3%」とscopeすべきである。
+
+なお既定の`max_points=1000`により、2000点・4000点入力は候補評価前に間引かれる。入力点数と
+candidate評価点数を併記すると、4000点が1000点より速い結果を誤解しにくい。
+
+## Low
+
+### 4. 手法比較表の角加速度説明が古い
+
+[`method_comparison.md`](method_comparison.md#L63)のBAC制約欄は
+「角加速度は下位制御器任せ」となっている。現在はcoreも出力目標値を1周期到達可能範囲へ制限するため、
+例えば次のように更新するのが正確である。
+
+```text
+差動二輪・静的点群前提、角加速度過渡・jerkは未評価
+```
+
+### 5. `bac_filter_node`の追加rate limitにadapter testがない
+
+`CLEAR`透過経路へのrate limit追加はsource上で確認でき、Jazzy benchmark世代も再生成されているが、
+command、odometry、statusの組合せを固定したROS adapter unit testはない。core testではこの分岐の
+regressionを直接検出できない。前回からの残項目どおり、次cycleでadapter testを追加することを推奨する。
+
+## 確認できた改善
+
+- 進行角を`[0, 2π)`へ周期正規化した。
+- 後退・右旋回の固定反例testを追加した。
+- 前後進 × 左右旋回の決定論的grid property testを追加した。
+- clamp後円弧を`turn_radius_min`未満でも停止可能性再検証するようにした。
+- filter nodeの`CLEAR`透過にも角速度rate limitを適用した。
+- 角加速度について、保証する目標値と未評価の過渡軌道を文書で分離した。
+- padding評価の自己位置ズレ量を0.25 mへ訂正した。
+- benchmark README、評価環境、provenanceの説明を現行構成へ更新した。
+- core実行時間microbenchmarkとraw CSVを追加した。
+- 第4世代の全実験群で`bac_dirty=0`、`bench_dirty=0`を確認した。
+- `summarize.py`の出力とREADME・手法比較の主要数値が一致した。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| 対象package HEAD | `1e188e2` |
+| 実装修正commit | `6b7dba8` |
+| plain CMake Release build (`-Wall -Wextra -Wpedantic`) | 成功、警告なし |
+| CTest | 2/2成功 |
+| `BacCoreUnit` | 成功（固定反例・乱数property・決定論的gridを含む） |
+| `BacScenarioHarness --strict` | 成功（13 closed-loop scenarios） |
+| 独立した高密度swept-footprint照合 | 57,056ケース、見逃し0・幻接触0 |
+| 正準benchmark | 216 episode、BAC 54/54、衝突0、最小clearance 0.154 m |
+| drift sweep | 32 episode、主要表とraw集計が一致 |
+| gap sweep | 24 episode、主要表とraw集計が一致 |
+| benchmark provenance | 3実験群とも`bac_dirty=0`、`bench_dirty=0` |
+| performance benchmark再実行 | 1000点 p95 411.1 µs、観測最大891.4 µs |
+| package worktree | clean（レビュー開始時・検証後） |
+
+Dockerを用いた全216 episodeの再実行は今回のレビューでは行わず、保存済みraw result、provenance、
+集計scriptの再実行によって整合性を確認した。
+
+## リリース判定チェックリスト
+
+- [x] `firstContactArcLength()`の進行角を`[0, 2π)`へ正規化する
+- [x] 後退・右旋回の固定反例testを追加する
+- [x] 前後進 × 左右旋回を決定論的に網羅するproperty testを追加する
+- [x] clamp後に`turn_radius_min`未満となる円弧も再検証する
+- [x] filter nodeの`CLEAR`透過へ角速度rate limitを適用する
+- [x] 角加速度過渡を保証対象外としてREADME・parameter referenceへ明記する
+- [x] Critical修正後に正準216 episode、drift sweep、gap sweepを再生成する
+- [x] 第4世代結果をcleanなBAC / benchmark revisionで記録する
+- [x] raw summaryと比較文書の主要数値を同期する
+- [ ] `RESULTS_ROOT`のREADME例をコンテナ内pathへ修正する
+- [ ] benchmark runnerに期待episode集合・件数の検査を追加する
+- [ ] 性能測定をcleanな最終revisionで再取得しprovenanceを固定する
+- [ ] 性能の`max`をWCETではなく観測最大値としてscopeする
+- [ ] 手法比較表の角加速度制約を現行実装へ同期する
+- [ ] 実機安全保証が必要なら角加速度過渡rolloutとadapter testを追加する
+
+上の未完了項目のうち、benchmark runnerと性能provenanceはrelease artifactの再現性に直接関係するため、
+release tag作成前の修正を推奨する。角加速度過渡rolloutとadapter testは、保証範囲を現状のまま限定する
+実験的releaseであれば次cycleへ送ることができる。
