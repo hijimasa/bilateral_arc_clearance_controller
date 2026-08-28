@@ -68,12 +68,23 @@ BAC は DWA/DWB の一般的な置き換えというより、狭い開口、経�
 重視した特化型 controller である。既存研究に対する性能優位や学術的新規性を、この実装だけから
 主張するものではない。
 
-## 同一条件 nav2 ベンチマーク
+## Nav2 system benchmark
 
-ワークスペースの `nav2_benchmark` で、ROS 2 Jazzy、同一の矩形車体、速度・加速度上限、NavFn、
-1 Hz 再計画、2D LiDAR シミュレータを使い controller のみを交換した。2026-08-28 に、
-plan の TF 変換・掃引接触の厳密化（リリースレビュー対応）後の単一リビジョンで全 controller を
-同一条件・同一 run 数（18 シナリオ × 各 3 run × 4 controller = 216 episode）で再生成した。
+ワークスペースの `nav2_benchmark` で、ROS 2 Jazzy、共通の矩形車体、NavFn、1 Hz 再計画、world、
+2D LiDARシミュレータを使った。2026-08-28に、planのTF変換・掃引接触の厳密化
+（リリースレビュー対応）後の全controllerを、同じ18シナリオ × 各3 run × 4 controller = 216 episodeで
+再生成した。
+
+ただし、これはcontroller algorithmだけを分離した実験ではない。controller固有の統合経路には次の差がある。
+
+| 要因 | BAC | 比較controller | 解釈上の影響 |
+|---|---|---|---|
+| 障害物入力 | 20 Hz raw scanを直接使用、costmap fallback | 主に10 Hz local costmap | 観測遅延と前処理が異なる |
+| 後退 | `limits.v_min=-0.1` | DWB/RPPは無効、MPPIは-0.15まで許可 | escapeの行動集合が一致しない |
+| tuning | BAC固有のlimitとweight | DWB/MPPI/RPP固有設定 | 単一scoreではなく設定済みsystemの比較になる |
+
+以下の結果は統合evidenceと仮説形成には使えるが、差をbilateral clearanceへ因果帰属するものではない。
+入力条件を揃えた比較とBAC ablationはPublic公開準備の残項目である。
 このデータセットは、エピソード間の `ROS_DOMAIN_ID` 分離を保証する runner で生成されており、
 `results/domain_manifest.csv` により「同一 domain の保持区間の重なり 0」(216 episode、
 90 個すべての domain ID を再利用、初回以降の再割当 126 回)が検証済みである。生成条件は `results/provenance.json`（BAC commit SHA、
@@ -92,7 +103,7 @@ worktree dirty 数 0、Nav2 version、image digest、world/設定ハッシュ、
 速さを否定するものではない(BAC の分布は 32.8 秒が最大で長い裾を持たない)。シミュレータは決定論的で
 run 間の独立性も限定的なため、上の比率を一般的な成功確率とは解釈しない。
 
-差が最も明確だった条件は次の通り。
+結果差が最も大きく観測された条件は次の通り。
 
 - `appearing_obstacle`: BAC 3/3、DWB/MPPI/RPP は各 0/3。経路上へ後から現れた障害物を BAC が
   局所的に迂回した。

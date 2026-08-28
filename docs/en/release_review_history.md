@@ -4,15 +4,17 @@ English | [日本語](../release_review_history.md)
 
 ## Current state
 
-- Checked: 2026-08-28
-- Package: `dcba783`, documentation baseline; controller implementation unchanged from `59a78d3`
+- Checked: 2026-08-29
+- Package: public-readiness update after `ee5bedc`
 - Benchmark: `604780e`
-- Decision: **Go**
+- Decision: code review **Go**; the visibility gate remains tracked in the
+  [public-release readiness checklist](public_release_checklist.md)
 
 All Critical, High, and Medium findings across ten release-review rounds, plus the three Low findings from R10,
-have been addressed. No current release blocker remains. Follow-up work for the next cycle includes ROS adapter
-tests, rollout that integrates the angular-acceleration transient, physical disturbance evaluation, a Collision
-Monitor combined baseline, and decomposition of `BacCore::process()`.
+have been addressed. The 2026-08-29 follow-up added ROS adapter tests and input-source diagnostics. Remaining
+design and evaluation work includes rollout through angular-acceleration transients, physical disturbance
+evaluation, a Collision Monitor combined baseline, matched-condition ablation, and decomposition of
+`BacCore::process()`.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
 a conclusion. In particular, R09 withdrew R08's post-hoc audit based on artifact modification time, and the
@@ -38,8 +40,10 @@ The linked findings and responses are preserved in Japanese as the original audi
 
 ## Current validation contract
 
-- Plain CMake Release build and two CTest entries
+- Plain CMake Release build and three CTest entries; four CTest entries in ROS 2 Jazzy/Nav2 with the adapter test
 - Core unit/property tests and 13 closed-loop scenarios
+- Unit tests for scan projection and plan transform/pruning, plus integration checks for plugin lifecycle, TF
+  errors, scan fallback, speed limits, and diagnostics
 - 31 tests for the benchmark completeness checker
 - 63 checks for runner orchestration
 - Fail-fast expected-set, episode/trace schema, aggregate, and provenance promotion checks

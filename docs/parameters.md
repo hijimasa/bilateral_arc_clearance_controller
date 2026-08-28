@@ -95,11 +95,13 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `cmd_timeout` | filter | 0.5 | 上位指令の途絶判定 [s]。途絶時は出力ゼロ |
 | `odom_timeout` | filter | 0.5 | 速度フィードバックの途絶判定 [s]。途絶時は停止 |
 | `costmap_margin_compensation` | nav2 | 自動 | セル中心量子化の補償 [m] |
+| `diagnostics_publish_period` | nav2 | 1.0 | 標準 `diagnostics` message の周期。0以下で無効 [s] |
 | `sensor.x/y/yaw` | filter | 0 | LaserScan フレームの固定 2D 外部パラメータ |
 | `virtual_path_length` | filter | 3.0 | 入力 `cmd_vel` から作る仮想経路長 [m] |
 
 フィルタノードは TF を参照しないので `sensor.*` を実機に合わせる。nav2 プラグインは TF から
-LaserScan を base frame へ変換する。
+LaserScan を base frame へ変換する。標準 `diagnostics` 出力には `raw_scan`、`costmap`、
+`costmap_fallback`、fallback 理由、BAC status、候補数、選択候補の clearance を含む。
 
 ## 内部定数（ROS パラメータ非公開）
 

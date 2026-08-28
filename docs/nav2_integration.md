@@ -66,8 +66,10 @@ pluginはplanをTFでbase frameへ変換する。planの`frame_id`欠落また�
 fallbackする。costmap入力ではcell中心の量子化を`costmap_margin_compensation`で扱う。
 
 このfallbackは可用性を優先する一方、観測sourceが切り替わることを意味する。「生スキャンに基づく
-地図―odom誤差への低感度」を運用上の要件にする場合は、scan sourceの状態を監視し、fallback中を診断へ
-出すか、上位supervisor / Collision Monitorでfail-stopを構成する。
+地図―odom誤差への低感度」を運用上の要件にする場合は、標準 `diagnostics` topicを監視するか、上位
+supervisor / Collision Monitorでfail-stopを構成する。BACは `raw_scan`、設定された `costmap`、または
+`costmap_fallback` を報告し、fallback時はWARN levelで理由を含める。周期は
+`diagnostics_publish_period` で設定し、0以下で無効になる。
 
 ## Collision Monitorとの併用
 
@@ -95,6 +97,12 @@ task、場所、通路分類、perception confidenceなど、観測可能な条�
 ros2 run bilateral_arc_clearance_controller bac_filter_node \
   --ros-args -r scan:=/scan -r odom:=/odom \
              -r cmd_vel_in:=/nav_cmd_vel -r cmd_vel_out:=/cmd_vel
+```
+
+install済みの例は次のようにも起動できる。
+
+```bash
+ros2 launch bilateral_arc_clearance_controller bac_filter.launch.py
 ```
 
 障害物が`influence_range`外なら入力を透過し、`AVOIDING`ではcore出力を使い、scanまたはodom途絶時は

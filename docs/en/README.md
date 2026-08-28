@@ -16,6 +16,8 @@ This index separates current user documentation from pre-release review records.
 
 ## Development and release documentation
 
+- [Public-release readiness checklist](public_release_checklist.md): private preparation, publication gates, and
+  post-publication actions
 - [Release review history](release_review_history.md): summary of all ten review rounds, their resolutions,
   and remaining follow-up work
 - [Review-record policy](../reviews/README.en.md): naming, metadata, and update rules

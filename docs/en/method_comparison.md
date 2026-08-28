@@ -74,12 +74,25 @@ BAC is not intended as a general replacement for DWA or DWB. It is specialized f
 offset, and obstacles not yet reflected in the path. This implementation alone does not establish academic
 novelty or performance superiority over prior research.
 
-## Controlled Nav2 benchmark
+## Nav2 system benchmark
 
-The workspace `nav2_benchmark` used ROS 2 Jazzy, the same rectangular footprint, velocity and acceleration limits,
-NavFn, 1 Hz replanning, and a 2D LiDAR simulator. Only the controller changed. On 2026-08-28, all controllers were
-regenerated from one package revision after the release-review changes to plan TF handling and swept-contact
-geometry, using the same 18 scenarios × 3 runs × 4 controllers = 216 episodes.
+The workspace `nav2_benchmark` used ROS 2 Jazzy with a common rectangular footprint, NavFn, 1 Hz replanning,
+worlds, and a 2D LiDAR simulator. On 2026-08-28, all controllers were regenerated after the release-review changes
+to plan TF handling and swept-contact geometry, using the same 18 scenarios × 3 runs × 4 controllers = 216
+episodes.
+
+This dataset is not a controller-algorithm-only experiment. The controller-specific integration paths retained
+the following differences:
+
+| Factor | BAC | Comparison controllers | Consequence |
+|---|---|---|---|
+| Obstacle input | Direct 20 Hz raw scan; costmap fallback | Primarily 10 Hz local costmap | Observation latency and preprocessing differ |
+| Reversing | `limits.v_min=-0.1` | DWB/RPP disabled; MPPI allowed to -0.15 | Escape action sets are not matched |
+| Controller tuning | BAC-specific limits and weights | Native DWB/MPPI/RPP settings | The result compares configured systems, not one isolated scoring term |
+
+The results below are useful integration evidence and a source of hypotheses, but they do not causally attribute
+the differences to bilateral clearance. A matched-input benchmark and BAC ablations remain publication-readiness
+work.
 
 The runner prevents simultaneous episodes from sharing a `ROS_DOMAIN_ID`. `results/domain_manifest.csv` verifies
 zero overlap across 216 retained intervals: all 90 domain IDs were reused, with 126 assignments after the initial
@@ -99,7 +112,7 @@ mean exceeds its median because one `corridor_extreme_offset` recovery took 168 
 under nominal conditions. BAC's longest result was 32.8 s. Because the simulator is deterministic and run-level
 independence is limited, do not interpret the ratios as general success probabilities.
 
-The clearest differences appeared in the following conditions:
+The largest observed outcome differences appeared in the following conditions:
 
 - `appearing_obstacle`: BAC 3/3; DWB, MPPI, and RPP each 0/3. BAC locally detoured around an obstacle introduced
   onto the path.

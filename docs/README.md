@@ -13,6 +13,7 @@
 
 ## 開発・リリース向け
 
+- [Public 公開準備チェックリスト](public_release_checklist.md): Private 期間に完了する項目、公開判定、公開後の作業
 - [リリースレビュー履歴](release_review_history.md): 全10回の主要指摘、対応、現在の残項目
 - [レビュー記録規則とアーカイブ](reviews/README.md): 命名、必須メタデータ、更新規則
 - `reviews/rNN-YYYY-MM-DD-{findings,response}.md`: 各時点の根拠と再現手順を残す監査証跡

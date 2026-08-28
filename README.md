@@ -40,8 +40,10 @@ observations, and non-guarantees.
 
 ## Evaluation results
 
-The canonical benchmark used ROS 2 Jazzy, the same robot footprint, NavFn, 1 Hz replanning, and a 2D LiDAR
-simulator, changing only the controller. It contains 18 scenarios × 3 runs × 4 controllers = 216 episodes.
+The canonical benchmark used ROS 2 Jazzy with a common robot footprint, NavFn, 1 Hz replanning, worlds, and a
+2D LiDAR simulator. It contains 18 scenarios × 3 runs × 4 controllers = 216 episodes. This is a system-level
+configuration comparison, not a controller-algorithm-only experiment: BAC consumed the 20 Hz raw scan while the
+comparison controllers primarily consumed the 10 Hz local costmap, and reversing policies also differed.
 
 | Controller | Successes | Collisions | Mean on successful runs | Median | Worst minimum clearance |
 |---|---:|---:|---:|---:|---:|
@@ -52,8 +54,9 @@ simulator, changing only the controller. It contains 18 scenarios × 3 runs × 4
 
 Within this 18-scenario set, BAC had no collision and did not approach an obstacle closer than 0.13 m. In a
 1.5 m corridor sweep with 0.10–0.25 m lateral path offset, its traversal time was 28.8 s and clearance was
-0.22–0.23 m, with no degradation observed within that range. These are results from a limited simulation, not
-general success probabilities or a physical-robot safety guarantee. See
+0.22–0.23 m, with no degradation observed within that range. These are results from a limited simulation and do
+not causally isolate bilateral clearance. They are not general success probabilities or a physical-robot safety
+guarantee. See
 [Method comparison and evaluation](docs/en/method_comparison.md) for conditions, raw-derived tables, and design
 differences from existing controllers.
 
@@ -84,6 +87,7 @@ colcon test-result --verbose
 ```
 
 Minimal configuration follows. Adjust the footprint, braking capability, and rear sensor coverage for the robot.
+An installable, fuller example is provided in [`config/bac_controller.yaml`](config/bac_controller.yaml).
 
 ```yaml
 controller_server:
@@ -137,6 +141,7 @@ python3 test/plot_traces.py --dir traces
 - [Parameter reference](docs/en/parameters.md)
 - [Method comparison and evaluation](docs/en/method_comparison.md)
 - [Release review history](docs/en/release_review_history.md)
+- [Public-release readiness checklist](docs/en/public_release_checklist.md)
 - [Japanese documentation / 日本語ドキュメント](docs/README.md)
 
 ## License

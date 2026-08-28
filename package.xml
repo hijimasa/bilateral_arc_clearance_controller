@@ -10,13 +10,17 @@
     node for evaluation and legacy integration.
   </description>
   <maintainer email="hijikata@react-robot.com">Masaaki Hijikata</maintainer>
+  <author email="hijikata@react-robot.com">Masaaki Hijikata</author>
   <license>MIT</license>
+  <url type="repository">https://github.com/hijimasa/bilateral_arc_clearance_controller</url>
+  <url type="bugtracker">https://github.com/hijimasa/bilateral_arc_clearance_controller/issues</url>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend condition="$ROS_DISTRO != ''">rclcpp</depend>
   <depend condition="$ROS_DISTRO != ''">rclcpp_lifecycle</depend>
   <depend condition="$ROS_DISTRO != ''">geometry_msgs</depend>
+  <depend condition="$ROS_DISTRO != ''">diagnostic_msgs</depend>
   <depend condition="$ROS_DISTRO != ''">nav_msgs</depend>
   <depend condition="$ROS_DISTRO != ''">sensor_msgs</depend>
   <depend condition="$ROS_DISTRO != ''">std_msgs</depend>
@@ -26,6 +30,9 @@
   <depend condition="$ROS_DISTRO != ''">pluginlib</depend>
   <depend condition="$ROS_DISTRO != ''">tf2</depend>
   <depend condition="$ROS_DISTRO != ''">tf2_geometry_msgs</depend>
+  <exec_depend condition="$ROS_DISTRO != ''">ament_index_python</exec_depend>
+  <exec_depend condition="$ROS_DISTRO != ''">launch</exec_depend>
+  <exec_depend condition="$ROS_DISTRO != ''">launch_ros</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -10,9 +10,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
+#include <string>
 
 #include "bac_ros_parameters.hpp"
+#include "bilateral_arc_clearance_controller/adapter_utils.hpp"
 #include "nav2_core/controller_exceptions.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
@@ -53,6 +54,8 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   }
   scan_topic_   = node->get_parameter(name + ".scan_topic").as_string();
   scan_timeout_ = declare_float("scan_timeout", scan_timeout_);
+  diagnostics_publish_period_ =
+      std::max(0.0f, declare_float("diagnostics_publish_period", diagnostics_publish_period_));
   const std::string downsample_name = name + ".scan_downsample";
   if (!node->has_parameter(downsample_name))
   {
@@ -69,6 +72,8 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
           latest_scan_ = msg;
         });
   }
+  diagnostics_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "diagnostics", rclcpp::SystemDefaultsQoS());
 
   // Costmap-fed points are cell centers, which can sit up to half a cell
   // inside the true obstacle surface. Deduct that quantization error from the
@@ -135,6 +140,7 @@ void
 BacController::cleanup()
 {
   scan_sub_.reset();
+  diagnostics_pub_.reset();
   {
     std::lock_guard<std::mutex> lock(scan_mutex_);
     latest_scan_.reset();
@@ -146,11 +152,20 @@ void
 BacController::activate()
 {
   core_.reset();
+  last_diagnostics_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+  if (diagnostics_pub_)
+  {
+    diagnostics_pub_->on_activate();
+  }
 }
 
 void
 BacController::deactivate()
 {
+  if (diagnostics_pub_)
+  {
+    diagnostics_pub_->on_deactivate();
+  }
 }
 
 void
@@ -196,6 +211,11 @@ BacController::collectObstaclePoints(const geometry_msgs::msg::PoseStamped &pose
 std::optional<std::vector<Point2D>>
 BacController::collectScanPoints()
 {
+  if (scan_topic_.empty())
+  {
+    scan_state_ = "disabled";
+    return std::nullopt;
+  }
   sensor_msgs::msg::LaserScan::ConstSharedPtr scan;
   {
     std::lock_guard<std::mutex> lock(scan_mutex_);
@@ -203,10 +223,12 @@ BacController::collectScanPoints()
   }
   if (!scan)
   {
+    scan_state_ = "not_received";
     return std::nullopt;
   }
   if ((clock_->now() - rclcpp::Time(scan->header.stamp)).seconds() > scan_timeout_)
   {
+    scan_state_ = "stale";
     return std::nullopt;
   }
 
@@ -225,44 +247,70 @@ BacController::collectScanPoints()
     }
     catch (const tf2::TransformException &)
     {
+      scan_state_ = "tf_unavailable";
       return std::nullopt;  // fall back to costmap points
     }
   }
 
-  float max_range = core_.params().max_range;
-  std::vector<Point2D> points;
-  points.reserve(scan->ranges.size());
-  int valid_rays = 0;
-  for (size_t i = 0; i < scan->ranges.size(); i += static_cast<size_t>(scan_downsample_))
-  {
-    float r = scan->ranges[i];
-    // A +Inf (or beyond-range_max) return is a VALID "no obstacle in this
-    // direction" measurement on many lidars (see the costmap ObstacleLayer's
-    // inf_is_valid); it contributes no point but counts towards scan
-    // validity. NaN and below-range_min returns are invalid.
-    const bool clear_ray =
-        scan_inf_is_valid_ && ((std::isinf(r) && r > 0.0f) ||
-                               (std::isfinite(r) && r > scan->range_max));
-    const bool hit_ray = std::isfinite(r) && r >= scan->range_min && r <= scan->range_max;
-    if (clear_ray || hit_ray)
-    {
-      ++valid_rays;
-    }
-    if (!hit_ray || r > max_range)
-    {
-      continue;
-    }
-    double angle = syaw + scan->angle_min + static_cast<double>(i) * scan->angle_increment;
-    points.emplace_back(static_cast<float>(sx + r * std::cos(angle)),
-                        static_cast<float>(sy + r * std::sin(angle)));
-  }
-  if (valid_rays < scan_min_points_)
+  ScanProjection projected =
+      projectScan(scan->ranges, scan->angle_min, scan->angle_increment,
+                  scan->range_min, scan->range_max, core_.params().max_range,
+                  scan_downsample_, scan_inf_is_valid_, static_cast<float>(sx),
+                  static_cast<float>(sy), static_cast<float>(syaw));
+  if (projected.valid_ray_count < static_cast<std::size_t>(scan_min_points_))
   {
     // Too few valid MEASUREMENTS (hits or explicit no-returns): a sensor
     // fault, not an empty world - do not treat it as a valid observation.
+    scan_state_ = "insufficient_valid_rays";
     return std::nullopt;
   }
-  return points;
+  scan_state_ = "fresh";
+  return std::move(projected.points);
+}
+
+void
+BacController::publishDiagnostics(const Result &result, bool using_scan)
+{
+  if (!diagnostics_pub_ || !diagnostics_pub_->is_activated() ||
+      diagnostics_publish_period_ <= 0.0f)
+  {
+    return;
+  }
+  const rclcpp::Time stamp = clock_->now();
+  const double elapsed = (stamp - last_diagnostics_time_).seconds();
+  if (last_diagnostics_time_.nanoseconds() > 0 && elapsed >= 0.0 &&
+      elapsed < diagnostics_publish_period_)
+  {
+    return;
+  }
+  last_diagnostics_time_ = stamp;
+
+  diagnostic_msgs::msg::DiagnosticArray message;
+  message.header.stamp = stamp;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = name_ + ": obstacle input and candidate selection";
+  status.hardware_id = "none";
+  const bool fallback = !scan_topic_.empty() && !using_scan;
+  status.level = fallback ? diagnostic_msgs::msg::DiagnosticStatus::WARN :
+                            diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = using_scan ? "raw_scan" : (fallback ? "costmap_fallback" : "costmap");
+
+  auto add_value = [&](const std::string &key, const std::string &value) {
+    diagnostic_msgs::msg::KeyValue entry;
+    entry.key = key;
+    entry.value = value;
+    status.values.push_back(std::move(entry));
+  };
+  add_value("obstacle_source", status.message);
+  add_value("scan_state", scan_state_);
+  add_value("bac_status", std::to_string(static_cast<int>(result.status)));
+  add_value("candidate_count", std::to_string(result.candidate_count));
+  add_value("admissible_count", std::to_string(result.admissible_count));
+  add_value("best_clearance_m", std::to_string(result.best_clearance));
+  add_value("nearest_distance_m", std::to_string(result.nearest_distance));
+  add_value("best_path_cost_m", std::to_string(result.best_path_cost));
+  message.status.push_back(std::move(status));
+  diagnostics_pub_->publish(message);
 }
 
 std::vector<Point2D>
@@ -293,45 +341,17 @@ BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/) c
   {
     throw nav2_core::ControllerTFError(std::string("cannot transform plan: ") + ex.what());
   }
-  const double tx  = tf_msg.transform.translation.x;
-  const double ty  = tf_msg.transform.translation.y;
-  const double yaw = tf2::getYaw(tf_msg.transform.rotation);
-  const double cs = std::cos(yaw), sn = std::sin(yaw);
-
-  std::vector<Point2D> base_pts;
-  base_pts.reserve(plan_.poses.size());
+  std::vector<Point2D> plan_points;
+  plan_points.reserve(plan_.poses.size());
   for (const auto &p : plan_.poses)
   {
-    const double px = p.pose.position.x, py = p.pose.position.y;
-    base_pts.emplace_back(static_cast<float>(tx + cs * px - sn * py),
-                          static_cast<float>(ty + sn * px + cs * py));
+    plan_points.emplace_back(static_cast<float>(p.pose.position.x),
+                             static_cast<float>(p.pose.position.y));
   }
-
-  // Prune from the pose NEAREST the robot (a stale or looping plan may start
-  // far away - breaking on the first far point there would return an empty
-  // path), then keep the local window up to the sensing range.
-  size_t nearest = 0;
-  float  best_d2 = std::numeric_limits<float>::max();
-  for (size_t i = 0; i < base_pts.size(); ++i)
-  {
-    const float d2 = base_pts[i].x * base_pts[i].x + base_pts[i].y * base_pts[i].y;
-    if (d2 < best_d2)
-    {
-      best_d2 = d2;
-      nearest = i;
-    }
-  }
-  const float max_range = core_.params().max_range;
-  for (size_t i = nearest; i < base_pts.size(); ++i)
-  {
-    const float d2 = base_pts[i].x * base_pts[i].x + base_pts[i].y * base_pts[i].y;
-    if (d2 > max_range * max_range)
-    {
-      break;
-    }
-    path.push_back(base_pts[i]);
-  }
-  return path;
+  return transformAndPrunePath(
+      plan_points, static_cast<float>(tf_msg.transform.translation.x),
+      static_cast<float>(tf_msg.transform.translation.y),
+      static_cast<float>(tf2::getYaw(tf_msg.transform.rotation)), core_.params().max_range);
 }
 
 geometry_msgs::msg::TwistStamped
@@ -353,9 +373,11 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
   }
 
   std::vector<Point2D> points;
+  bool using_scan = false;
   if (auto scan_points = collectScanPoints())
   {
     points = std::move(*scan_points);
+    using_scan = true;
   }
   else
   {
@@ -365,6 +387,7 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
   Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z));
 
   Result result = core_.process(points, path, current);
+  publishDiagnostics(result, using_scan);
 
   geometry_msgs::msg::TwistStamped cmd;
   cmd.header.frame_id = pose.header.frame_id;
@@ -376,7 +399,8 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
 void
 BacController::setSpeedLimit(const double &speed_limit, const bool &percentage)
 {
-  speed_limit_ = percentage ? static_cast<float>(base_v_max_ * speed_limit / 100.0) : static_cast<float>(speed_limit);
+  speed_limit_ = percentage ? static_cast<float>(base_v_max_ * speed_limit / 100.0) :
+                              static_cast<float>(speed_limit);
 }
 
 }  // namespace bac

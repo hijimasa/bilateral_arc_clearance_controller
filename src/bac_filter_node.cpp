@@ -22,6 +22,7 @@
 #include <mutex>
 #include <vector>
 
+#include "bilateral_arc_clearance_controller/adapter_utils.hpp"
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "bac_ros_parameters.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -75,32 +76,12 @@ public:
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "scan", rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::LaserScan::SharedPtr msg) {
           std::lock_guard<std::mutex> lock(mutex_);
-          points_.clear();
-          points_.reserve(msg->ranges.size());
-          valid_rays_ = 0;
-          float cs = std::cos(sensor_yaw_), sn = std::sin(sensor_yaw_);
-          for (size_t i = 0; i < msg->ranges.size(); i++)
-          {
-            float r = msg->ranges[i];
-            // +Inf / beyond-range_max = valid "no obstacle here" measurement
-            // (inf_is_valid); NaN and below-range_min = invalid.
-            const bool clear_ray =
-                scan_inf_is_valid_ && ((std::isinf(r) && r > 0.0f) ||
-                                       (std::isfinite(r) && r > msg->range_max));
-            const bool hit_ray =
-                std::isfinite(r) && r >= msg->range_min && r <= msg->range_max;
-            if (clear_ray || hit_ray)
-            {
-              ++valid_rays_;
-            }
-            if (!hit_ray)
-            {
-              continue;
-            }
-            float a  = msg->angle_min + msg->angle_increment * static_cast<float>(i);
-            float lx = r * std::cos(a), ly = r * std::sin(a);
-            points_.emplace_back(sensor_x_ + cs * lx - sn * ly, sensor_y_ + sn * lx + cs * ly);
-          }
+          bac::ScanProjection projected =
+              bac::projectScan(msg->ranges, msg->angle_min, msg->angle_increment,
+                               msg->range_min, msg->range_max, core_.params().max_range,
+                               1, scan_inf_is_valid_, sensor_x_, sensor_y_, sensor_yaw_);
+          points_ = std::move(projected.points);
+          valid_rays_ = static_cast<int>(projected.valid_ray_count);
           last_scan_time_ = now();
         });
 

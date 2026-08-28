@@ -21,6 +21,7 @@
 #include <string>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "nav2_core/controller.hpp"
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -60,6 +61,9 @@ private:
   /// The current plan transformed into the robot frame
   std::vector<Point2D> transformPlan(const geometry_msgs::msg::PoseStamped &pose) const;
 
+  /// Publish the active obstacle source and selected-candidate diagnostics
+  void publishDiagnostics(const Result &result, bool using_scan);
+
   rclcpp_lifecycle::LifecycleNode::WeakPtr       parent_;
   std::string                                    name_;
   std::shared_ptr<tf2_ros::Buffer>               tf_;
@@ -77,6 +81,12 @@ private:
   int                                                          scan_downsample_ = 1;
   int                                                          scan_min_points_ = 10;
   bool                                                         scan_inf_is_valid_ = true;
+  std::string                                                  scan_state_ = "disabled";
+
+  rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+      diagnostics_pub_;
+  float        diagnostics_publish_period_ = 1.0f;  // [s]
+  rclcpp::Time last_diagnostics_time_{ 0, 0, RCL_ROS_TIME };
 
   BacCore core_;
 

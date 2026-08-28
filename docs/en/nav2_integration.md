@@ -69,8 +69,10 @@ too few valid measurements remain, or TF fails, it falls back to lethal costmap 
 `costmap_margin_compensation` accounts for cell-center quantization.
 
 This fallback favors availability but changes the observation source. If low sensitivity to map–odom error from
-raw scans is an operational requirement, monitor scan-source state and expose fallback as diagnostics, or use an
-upstream supervisor or Collision Monitor to implement fail-stop behavior.
+raw scans is an operational requirement, monitor the standard `diagnostics` topic or use an upstream supervisor
+or Collision Monitor to implement fail-stop behavior. BAC reports `raw_scan`, configured `costmap`, or
+`costmap_fallback`; a fallback is WARN-level and includes its reason. `diagnostics_publish_period` controls the
+publication interval and a non-positive value disables it.
 
 ## Using Collision Monitor
 
@@ -99,6 +101,12 @@ location, passage class, or perception confidence—instead of embedding an impl
 ros2 run bilateral_arc_clearance_controller bac_filter_node \
   --ros-args -r scan:=/scan -r odom:=/odom \
              -r cmd_vel_in:=/nav_cmd_vel -r cmd_vel_out:=/cmd_vel
+```
+
+The installed example can instead be started with:
+
+```bash
+ros2 launch bilateral_arc_clearance_controller bac_filter.launch.py
 ```
 
 It passes the command through when obstacles are outside `influence_range`, uses core output while `AVOIDING`,

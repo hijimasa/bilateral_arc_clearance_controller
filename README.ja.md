@@ -38,8 +38,10 @@ BACは、地図上の経路だけに障害物回避を委ねず、robot frameの
 
 ## 評価結果
 
-ROS 2 Jazzy、同一車体・NavFn・1 Hz再計画・2D LiDARシミュレータで、controllerだけを交換しました。
-正準評価は18シナリオ × 3 run × 4 controller = 216 episodeです。
+ROS 2 Jazzyで、同一車体・NavFn・1 Hz再計画・world・2D LiDARシミュレータを使い、正準評価として
+18シナリオ × 3 run × 4 controller = 216 episodeを実行しました。ただし純粋なcontroller algorithm
+だけの比較ではありません。BACは20 Hzのraw scanを直接使い、比較controllerは主に10 Hzのlocal
+costmapを使っており、後退許可条件も異なるため、system-level設定比較として扱います。
 
 | controller | 成功 | 衝突 | 成功時平均 | 中央値 | 最接近の最悪値 |
 |---|---:|---:|---:|---:|---:|
@@ -50,8 +52,9 @@ ROS 2 Jazzy、同一車体・NavFn・1 Hz再計画・2D LiDARシミュレータ�
 
 BACでは、この18シナリオ集合で0.13 m以内への接近と衝突を観測しませんでした。また1.5 m通路の
 経路横ずれ0.10〜0.25 m sweepでは、到達時間28.8 s、クリアランス0.22〜0.23 mで、範囲内の劣化を
-観測しませんでした。これは限定されたシミュレーション結果であり、一般的な成功確率や実機安全保証では
-ありません。条件、raw由来の表、既存controllerとの設計差は[手法比較](docs/method_comparison.md)を
+観測しませんでした。これは限定されたシミュレーション結果で、bilateral clearance単独の因果効果を
+分離していません。一般的な成功確率や実機安全保証でもありません。条件、raw由来の表、
+既存controllerとの設計差は[手法比較](docs/method_comparison.md)を
 参照してください。
 
 ## Nav2での位置づけ
@@ -81,6 +84,7 @@ colcon test-result --verbose
 ```
 
 最小構成例です。車体寸法、制動能力、後方視野は実機に合わせて変更してください。
+install対象のより完全な例は [`config/bac_controller.yaml`](config/bac_controller.yaml) にあります。
 
 ```yaml
 controller_server:
@@ -130,6 +134,7 @@ python3 test/plot_traces.py --dir traces
 - [パラメータリファレンス](docs/parameters.md)
 - [既存手法との比較と評価](docs/method_comparison.md)
 - [リリースレビュー履歴](docs/release_review_history.md)
+- [Public 公開準備チェックリスト](docs/public_release_checklist.md)
 
 ## ライセンス
 

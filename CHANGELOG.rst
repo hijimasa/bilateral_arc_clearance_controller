@@ -18,3 +18,7 @@ Changelog for package bilateral_arc_clearance_controller
   naming, metadata, and update rules.
 * Add an English release README and English user documentation while retaining
   the original Japanese documents and audit records.
+* Add installable Nav2/filter configurations, a filter launch file, hosted CI,
+  contribution and security policies, and a bilingual public-release checklist.
+* Share and test scan projection and plan transformation geometry across ROS
+  adapters, and publish obstacle-source/fallback state through diagnostics.

@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Framework-free algorithm core
-add_library(bac_core STATIC src/bac_core.cpp)
+add_library(bac_core STATIC src/bac_core.cpp src/adapter_utils.cpp)
 target_include_directories(bac_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -25,7 +25,13 @@ find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
   install(DIRECTORY include/ DESTINATION include)
   install(DIRECTORY docs/ DESTINATION share/${PROJECT_NAME}/docs)
-  install(FILES README.md README.ja.md LICENSE CHANGELOG.rst DESTINATION share/${PROJECT_NAME})
+  install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+  install(DIRECTORY launch DESTINATION share/${PROJECT_NAME}
+      PATTERN "__pycache__" EXCLUDE
+      PATTERN "*.pyc" EXCLUDE
+  )
+  install(FILES README.md README.ja.md LICENSE CHANGELOG.rst CONTRIBUTING.md SECURITY.md
+      DESTINATION share/${PROJECT_NAME})
   install(TARGETS bac_core
       EXPORT export_bac_core
       ARCHIVE DESTINATION lib
@@ -42,6 +48,7 @@ if(ament_cmake_FOUND)
   find_package(nav2_costmap_2d REQUIRED)
   find_package(nav2_util REQUIRED)
   find_package(geometry_msgs REQUIRED)
+  find_package(diagnostic_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(std_msgs REQUIRED)
@@ -61,7 +68,7 @@ if(ament_cmake_FOUND)
   target_compile_options(bilateral_arc_clearance_controller PRIVATE -Wall -Wextra -Wpedantic)
   ament_target_dependencies(bilateral_arc_clearance_controller
       rclcpp rclcpp_lifecycle pluginlib nav2_core nav2_costmap_2d nav2_util
-      geometry_msgs nav_msgs sensor_msgs tf2 tf2_geometry_msgs
+      diagnostic_msgs geometry_msgs nav_msgs sensor_msgs tf2 tf2_geometry_msgs
   )
   install(TARGETS bilateral_arc_clearance_controller
       ARCHIVE DESTINATION lib
@@ -79,6 +86,11 @@ if(BUILD_TESTING)
   target_compile_options(bac_core_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacCoreUnit COMMAND bac_core_unit)
 
+  add_executable(bac_adapter_utils_unit test/adapter_utils_unit.cpp)
+  target_link_libraries(bac_adapter_utils_unit bac_core)
+  target_compile_options(bac_adapter_utils_unit PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacAdapterUtilsUnit COMMAND bac_adapter_utils_unit)
+
   add_executable(bac_perf_benchmark test/perf_benchmark.cpp)
   target_link_libraries(bac_perf_benchmark bac_core)
   target_compile_options(bac_perf_benchmark PRIVATE -Wall -Wextra -Wpedantic)
@@ -88,6 +100,17 @@ if(BUILD_TESTING)
   target_link_libraries(bac_scenario_harness bac_core)
   target_compile_options(bac_scenario_harness PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacScenarioHarness COMMAND bac_scenario_harness --strict)
+
+  if(ament_cmake_FOUND)
+    add_executable(bac_ros_adapter_unit test/ros_adapter_unit.cpp)
+    target_link_libraries(bac_ros_adapter_unit bilateral_arc_clearance_controller)
+    target_compile_options(bac_ros_adapter_unit PRIVATE -Wall -Wextra -Wpedantic)
+    ament_target_dependencies(bac_ros_adapter_unit
+        rclcpp rclcpp_lifecycle nav2_core nav2_costmap_2d diagnostic_msgs
+        geometry_msgs nav_msgs sensor_msgs tf2
+    )
+    add_test(NAME BacRosAdapterUnit COMMAND bac_ros_adapter_unit)
+  endif()
 endif()
 
 if(ament_cmake_FOUND)

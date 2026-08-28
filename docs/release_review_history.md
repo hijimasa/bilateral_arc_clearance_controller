@@ -4,14 +4,15 @@
 
 ## 現在の状態
 
-- 確認日: 2026-08-28
-- package: `dcba783`（ドキュメント基準。controller実装は`59a78d3`から不変）
+- 確認日: 2026-08-29
+- package: `ee5bedc`後のPublic公開準備更新
 - benchmark: `604780e`
-- 判定: **Go**
+- 判定: コードレビューは **Go**、Public化gateは[公開準備チェックリスト](public_release_checklist.md)で継続
 
 全10回のリリースレビューで確認されたCritical / High / Mediumと、第10回のLow 3件は対応済みである。
-現在のrelease blockerはない。次cycleへ残す項目は、ROS adapter test、角加速度過渡を積分したrollout、
-実機外乱評価、Collision Monitor併用baseline、`BacCore::process()`の責務分割である。
+全10回のレビュー指摘に対するrelease blockerはない。2026-08-29にROS adapter testと入力source diagnosticsを
+追加した。次cycleへ残す設計・評価項目は、角加速度過渡を積分したrollout、実機外乱評価、Collision Monitor
+併用baseline、比較条件を揃えたablation、`BacCore::process()`の責務分割である。
 
 個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特に第8回の
 artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 episodeを修正後runnerで再生成した。
@@ -34,8 +35,10 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 
 ## 現在の検証contract
 
-- plain CMake Release buildとCTest 2件。
+- plain CMake Release buildとCTest 3件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 4件。
 - core unit / property testと13 closed-loop scenarios。
+- scan投影・plan変換/pruneの単体試験、およびplugin lifecycle、TF error、scan fallback、speed limit、
+  diagnosticsの結合試験。
 - benchmark完全性checker 31 tests。
 - runner orchestration 63 checks。
 - controller × scenario × runの期待集合、episode / trace schema、aggregate、provenance昇格のfail-fast。

@@ -1,0 +1,41 @@
+# Merge this section into the Nav2 parameter file. The footprint and motion
+# limits are examples, not robot-independent safe defaults.
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    controller_plugins: ["FollowPath"]
+
+    FollowPath:
+      plugin: "bac::BacController"
+      scan_topic: /scan
+      scan_timeout: 0.5
+      scan_downsample: 1
+      scan_min_points: 10
+      scan_inf_is_valid: true
+      diagnostics_publish_period: 1.0
+
+      footprint.front: 0.5
+      footprint.rear: -0.5
+      footprint.width: 0.95
+      safety_margin.front: 0.2
+      safety_margin.rear: 0.2
+      safety_margin.side: 0.2
+      avoid_margin.side: 0.6
+
+      limits.v_max: 0.4
+      # Keep this at zero unless the rear sensing envelope is validated.
+      limits.v_min: 0.0
+      limits.w_max: 1.0
+      limits.acc_v: 0.8
+      limits.acc_w: 2.5
+      control_period: 0.05
+      stop_decel: 0.8
+      brake_reaction_time: 0.1
+
+      weights.clearance: 2.0
+      weights.path_dist: 1.0
+      weights.balance: 4.0
+      weights.heading: 0.15
+      weights.hysteresis: 0.6
+      weights.squeeze: 0.5
+      sim_time: 2.5

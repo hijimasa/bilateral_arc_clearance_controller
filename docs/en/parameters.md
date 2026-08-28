@@ -96,11 +96,13 @@ Always re-run `bac_scenario_harness --strict` after changing weights. In particu
 | `cmd_timeout` | filter | 0.5 | Upstream command timeout [s]; output becomes zero |
 | `odom_timeout` | filter | 0.5 | Velocity-feedback timeout [s]; output stops |
 | `costmap_margin_compensation` | Nav2 | automatic | Compensation for cell-center quantization [m] |
+| `diagnostics_publish_period` | Nav2 | 1.0 | Period for standard `diagnostics` messages; non-positive disables publication [s] |
 | `sensor.x/y/yaw` | filter | 0 | Fixed 2D extrinsics of the LaserScan frame |
 | `virtual_path_length` | filter | 3.0 | Length of the virtual path created from input `cmd_vel` [m] |
 
 The filter node does not use TF, so set `sensor.*` for the physical installation. The Nav2 plugin transforms
-LaserScan data into the base frame using TF.
+LaserScan data into the base frame using TF. Its standard `diagnostics` output reports `raw_scan`, `costmap`, or
+`costmap_fallback`, the scan fallback reason, BAC status, candidate counts, and selected-candidate clearance.
 
 ## Internal constants not exposed as ROS parameters
 
