@@ -94,6 +94,14 @@ writeTraceCsv(const std::string &dir, const std::string &name, const SimResult &
   std::filesystem::create_directories(dir);
 
   std::ofstream trace_file(dir + "/" + name + ".csv");
+  if (!trace_file.is_open())
+  {
+    // Same failure shape as the perf CSV finding: a requested artifact that
+    // silently fails to open. Traces are optional for the harness verdict,
+    // so warn loudly instead of aborting the scenario run.
+    std::cerr << "writeTraceCsv: cannot open " << dir << "/" << name << ".csv\n";
+    return;
+  }
   trace_file << "t,x,y,th,cmd_v,cmd_w,out_v,out_w,act_v,act_w,status,clearance,speed_fraction,cmd_clearance\n";
   for (const TraceRow &row : result.trace)
   {

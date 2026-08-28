@@ -25,9 +25,17 @@ main(int argc, char **argv)
   const int         warmup = 50;
   const int         iters  = 2000;
   const std::string csv    = argc > 1 ? argv[1] : "";
-  FILE             *fcsv   = csv.empty() ? nullptr : std::fopen(csv.c_str(), "w");
-  if (fcsv)
+  FILE             *fcsv   = nullptr;
+  if (!csv.empty())
   {
+    fcsv = std::fopen(csv.c_str(), "w");
+    if (!fcsv)
+    {
+      // A requested raw CSV that silently fails to open would let the run
+      // "succeed" without its artifact (6th review Low 5).
+      std::perror(("bac_perf_benchmark: cannot open " + csv).c_str());
+      return 1;
+    }
     std::fprintf(fcsv, "points,eval_pts,iter,us\n");
   }
 
@@ -82,9 +90,10 @@ main(int argc, char **argv)
     std::printf("%8d %9d %10.1f %10.1f %10.1f\n", n_points, eval_pts, us[us.size() / 2],
                 us[static_cast<size_t>(us.size() * 0.95)], us.back());
   }
-  if (fcsv)
+  if (fcsv && std::fclose(fcsv) != 0)
   {
-    std::fclose(fcsv);
+    std::perror("bac_perf_benchmark: fclose");
+    return 1;
   }
   return 0;
 }
