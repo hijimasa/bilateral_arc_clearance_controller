@@ -1,0 +1,41 @@
+# リリース再々々々々レビューへの対応
+
+対象レビュー: [release_rererererereview_findings.md](release_rererererereview_findings.md)（2026-08-28、`3140b8d` / `87f82c8` 時点。本体 Go・成果物 条件付き Go）
+
+指摘 6 件すべてと、依頼に基づく類似問題の掃引に対応した。
+
+## Medium
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 1 | preflight 前に既存 provenance を上書き | **修正**。順序を mkdir → **preflight**（何も書かない）→ 一時 `provenance.json.tmp` → episodes → 完全性検査 → aggregate → **成功時のみ** `provenance.json` へ rename、に再構成。拒否された再実行は既存 dataset を一切変更しない。出荷スクリプトの当該ブロックを逐語抽出したテストで、拒否時に既存 `provenance.json` がバイト不変・tmp 未生成であることを確認。失敗した run が完成 dataset を装えない副次効果（正式 provenance は成功時のみ存在）も得た。 |
+| 2 | `OVERWRITE` がコンテナへ渡らない | **修正**。`bench.sh` の `docker run` に `-e OVERWRITE` を追加。README に上書きの意味論（対象は今回の期待 run ディレクトリのみ・該当 raw は失われる・原則は新規 `RESULTS_ROOT`）を明記。**類似問題の掃引**: `run_all.sh` が環境から読む変数を全数列挙し（`RESULTS_ROOT` / `IMAGE_DIGEST` / `OVERWRITE`）、3 変数とも転送済みであることを確認——他に転送漏れはない。 |
+
+## Low
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 3 | 削除 path の識別子が未検証 | **修正**。controller / scenario 名を `^[A-Za-z0-9_-]+$` に制限して実行冒頭で検証（不正名は exit 2）。さらに `OVERWRITE=1` の削除前に `realpath` 同士の包含判定を行い、正規化後 path が正規化後 `RESULTS_ROOT` 配下でなければ削除せず exit 2。`check_completeness.py` 側でも同じ識別子検証を実施（path traversal は unit test 済み）。 |
+| 4 | 異常系テストが常設されていない | **修正**。完全性判定を `scripts/check_completeness.py` として独立させ（preflight / verify の 2 モード、run_all.sh はこれを呼ぶ）、`scripts/test_check_completeness.py` に指摘の 8 異常系+識別子検証を含む **14 unit test** を常設（`python3 scripts/test_check_completeness.py` で再実行可能、README に記載）。 |
+| 5 | perf CSV の open 失敗を無視 | **修正**。CSV 指定時に `fopen` 失敗なら stderr へ出力して exit 1（`fclose` も検査）。不正 path での非ゼロ終了を実行確認。**類似問題の掃引**: 同型の「要求された成果物ファイルの silent open 失敗」をコードベースで捜索し、ハーネスのトレース書き出し（`writeTraceCsv` の未検査 ofstream）を検出→ open 失敗を stderr 警告するよう修正（トレースはハーネス判定に必須でないため警告に留める）。 |
+| 6 | filter node rate limiter の adapter test | **残項目として維持**（次サイクル）。 |
+
+## 性能 provenance の更新
+
+Low 5 の修正で測定ハーネスが変わったため、規律どおり新しい clean package HEAD `7598ccc`
+（worktree 0 件）から再取得。provenance の結果表は**保存済み raw CSV から再計算した値**を記載する
+方式に変更し（別 run の数値が混ざる余地を排除）、1000 点で p50 378 / p95 384 / 観測最大 575 µs。
+
+## 検証
+
+| 確認項目 | 結果 |
+|---|---|
+| `test_check_completeness.py`（14 tests） | OK |
+| 出荷ブロック抽出テスト: 拒否時 provenance バイト不変・tmp 未生成 / OVERWRITE=1 で対象 run のみ消去 | 確認 |
+| `bash -n`（run_all.sh / bench.sh） | 成功 |
+| 不正 CSV path での `bac_perf_benchmark` | exit 1 |
+| plain CMake Release build（-Wpedantic）+ CTest | 警告 0、2/2 成功 |
+
+## 状態
+
+第 6 回レビューの必須項目（Medium 1〜2）および Low 3〜5 を解消。残項目は従来どおり次サイクル分のみ。
