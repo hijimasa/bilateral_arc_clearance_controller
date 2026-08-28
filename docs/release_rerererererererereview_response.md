@@ -17,8 +17,10 @@
 
 ### 対応
 
-1. **正準 216 episode を修正後 runner で再生成**した(下記「再生成結果」)。新データは実行中に
-   `domain_manifest.csv` を残し、**親プロセスが記録した起動時刻と実際の回収時刻**で分離を証明する。
+1. **正準 216 episode を修正後 runner で再生成**した(結果は下表)。新データは実行中に
+   `domain_manifest.csv` を残し、**親プロセスが記録した起動時刻と実際の回収時刻**で分離を証明する:
+   `216 episodes, 90 domains, 90 reused, 0 overlapping`(domain 再利用は 90 回発生しており、
+   検査が空振りでないことも同時に示している)。
 2. 監査スクリプトは削除せず、**指標(indicator)であって証明ではない**ことを docstring と出力
    メッセージに明記し、時刻の下限として `episode.json` と `launch.log` の遅い方を使うよう変更した。
    README と `method_comparison.md` の「同時に生存し得なかったことが確定」「cross-talk の余地はない」
@@ -55,7 +57,7 @@
 
 | 確認項目 | 結果 |
 |---|---|
-| `test_run_all.sh`(36 → **56 checks**) | すべて成功 |
+| `test_run_all.sh`(36 → **53 checks**) | すべて成功 |
 | domain 排他(子プロセス側の自己申告) | 120 episode / 90 domain / 30 再利用、overlaps=0 |
 | domain 排他(**runner の manifest**: 親の起動〜回収区間) | 120 episode、overlapping 0 |
 | manifest 区間が子の自己申告区間を包含すること | 確認(親側が広い) |
@@ -65,6 +67,27 @@
 | launch status 伝播(成果物は正常・mock が exit 7) | run 全体 exit 1、provenance 未昇格 |
 | `test_check_completeness.py -W error::ResourceWarning` | 31/31 成功 |
 | plain CMake Release build + CTest | 警告 0、2/2 成功 |
+
+## 再生成結果(正準 18 シナリオ × 3 run × 4 controller = 216 episode)
+
+生成条件: package `f1e2a90` / bench `13becc0`、**両 worktree dirty 0**、image digest 記録済み、
+jobs 4 / rtf 2.0。制御コード(`src` / `include`)は旧データ生成時点(`6b7dba8`)から**差分なし**で、
+今回の再生成は runner の分離保証を得るためのものである。
+
+| controller | 成功 | 衝突 | 平均(成功時) | 中央値 | 最接近 最悪値 |
+|---|---:|---:|---:|---:|---:|
+| BAC | 54/54 | 0 | 27.6 s | 28.4 s | **0.139 m** |
+| DWB | 49/54 | 1 | 27.9 s | 25.2 s | 0.000 m |
+| MPPI | 51/54 | 0 | 29.0 s | 27.2 s | 0.091 m |
+| RPP | 48/54 | 0 | 24.2 s | 24.8 s | 0.017 m |
+
+主張の骨格は再現した(BAC のみ全完走・衝突ゼロ・0.10 m 未満非侵入、`appearing_obstacle` は
+BAC 3/3 に対し他 3 手法 0/3、`corridor_locdrift_15x` は BAC 3/3・DWB 衝突 1・RPP 0/3)。
+世代差として、BAC の最悪接近が 0.154 → 0.139 m、DWB の衝突が 2 → 1 件、DWB 平均が
+`corridor_extreme_offset` の 168 秒復帰 1 件に引かれて 24.6 → 27.9 秒(中央値 25.2 秒)へ動いた。
+README・`method_comparison.md`・動画ギャラリーの数値はすべて新データセットへ更新済み。
+ズレ量スイープと隙間幅スイープは 90 episode 未満で domain 再利用が起きないため再生成していない
+(旧データを継続使用していることを本文に明記)。
 
 ## 状態
 
