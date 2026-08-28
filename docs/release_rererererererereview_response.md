@@ -26,7 +26,16 @@
   検査が空振りでないことを確認済み。
 - 重なり検出器自体の自己テスト(既知の重なりログを必ず検出すること)も同梱。
 
-### 既存データセットの事後監査
+### 既存データセットの事後監査 — **この節の結論は第9回レビューで撤回した**
+
+> **訂正(第9回レビュー Medium 1)**: 以下の監査は `episode.json` の mtime を「background
+> `run_episode` プロセスの回収時刻」として扱っていたが、実際には JSON 書込み後に launch の
+> shutdown が続くため、mtime は回収時刻の**下限**にすぎない。したがって「同時に生存し得なかった
+> ことが確定」「cross-talk の余地はない」「再生成不要」という以下の結論は**成立しない**。
+> 正準 216 episode は修正後 runner で再生成し、`domain_manifest.csv`(親が記録した起動〜回収区間)
+> で分離を証明した。詳細は
+> [release_rerererererererereview_response.md](release_rerererererererereview_response.md)。
+> 監査スクリプト自体は「兆候の指標」として残している。
 
 レビューの推奨は「runner 修正後に正準 216 episode を再生成」だが、**再生成しなくても保存成果物だけで
 判定できる**ため、監査スクリプト `scripts/audit_legacy_domains.py` を追加して確定させた。

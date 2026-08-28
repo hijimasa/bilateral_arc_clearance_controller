@@ -1,0 +1,163 @@
+# bilateral_arc_clearance_controller 第9回リリースレビュー指摘
+
+レビュー日: 2026-08-28  
+対象package: `79e7a34` (`Eighth-review response: domain-isolation audit of the release evidence`)  
+対象benchmark: `1090ee2` (`Domain-slot job pool, decimal count normalization, orchestration tests`)  
+対応資料: [release_rererererererereview_response.md](release_rererererererereview_response.md)
+
+## 結論
+
+第8回レビューで指摘したdomain再利用、先頭0付き件数、trace完全性、episode意味論、runner常設test、
+`jobs` provenanceへの対応は確認できた。通常経路ではPIDとdomainの対応を保持し、対象processを
+`wait -n -p`で回収してからdomainをfree-listへ戻すため、旧modulo方式の問題は解消している。
+checker 31 testsとrunner 36 checksはすべて成功し、コントローラ本体にも新たなCritical / Highの
+不具合は確認しなかった。
+
+ただし、旧runnerで生成した正準216 episodeにcross-talkの余地がなかったとする事後監査は、
+`episode.json`のmtimeを**launch processの終了・回収時刻**として扱っている。このfileはevaluatorが
+終了する前に書かれ、その後にexecutor shutdown、evaluator process終了、launch全体のshutdownが続く。
+したがって監査が必要とする終了時刻ではなく、終了時刻の下限にすぎない。保存成果物から得た監査結果
+`0 could have overlapped`だけでは、既存正準結果のdomain分離を確定できない。
+
+またrunnerには、episode起動commandの非ゼロstatusを最終statusへ伝播しない経路と、子processの回収に
+異常が起きた場合に全domainを再びfreeにするfail-open経路が残る。
+
+よって現時点の判定は、**コントローラ本体はGo、修正後runnerの通常経路もGo、旧runnerで生成した正準
+release evidenceは条件付きGo**とする。少なくとも正準216 episodeは修正後runnerで再生成し、その結果を
+release evidenceへ昇格することを推奨する。32 episodeのdrift sweepと24 episodeのgap sweepはdomain pool
+90未満で再利用が発生しないため、この指摘だけを理由とする再生成は必須ではない。
+
+## Critical
+
+なし。
+
+## High
+
+なし。
+
+## Medium
+
+### 1. `episode.json`のmtimeでは旧runnerのdomain重複可能性を確定できない
+
+[`audit_legacy_domains.py`](../../../../nav2_benchmark/scripts/audit_legacy_domains.py#L13)は、
+`episode.json`のmtimeをepisode終了時刻として扱い、episode *k* の起動時に生存し得た先行episodeを
+「mtimeが新しい`JOBS-1`本」として推定する。この順位判定が成立するには、使用する時刻がold runnerの
+`wait -n`が観測する**background `run_episode` processの終了時刻**と一致する必要がある。
+
+実際の終了sequenceは次のとおりである。
+
+1. [`evaluator.py`](../../../../nav2_benchmark/ws/src/bench_bringup/bench_bringup/evaluator.py#L174)が
+   `trace.csv`と`episode.json`を書き、`finish()`から戻る。
+2. 同fileの`main()`がexecutor shutdownとnode破棄を行った後にevaluator processが終了する。
+3. [`episode.launch.py`](../../../../nav2_benchmark/ws/src/bench_bringup/launch/episode.launch.py#L117)の
+   `OnProcessExit`が、その終了を受けてlaunch全体の`Shutdown`を開始する。
+4. simulator / Nav2 node群の停止後に`ros2 launch`、さらにbackground `run_episode`が終了し、旧runnerの
+   `wait -n`がslotを回収できる。
+
+つまり`episode.json`のmtimeは手順1の時刻であり、監査に必要なのは手順4の時刻である。保存された正準
+216 episodeを確認しても、`launch.log`の最終mtimeは`episode.json`より全件で遅く、差は1.54〜2.50秒
+(中央値2.43秒)だった。これはJSON書込み後にもlaunch cleanupが続くことを実データでも示す。
+`launch.log`のmtimeも「最後にlogを書いた時刻」であってprocessをreapした時刻そのものではないため、
+単純な置換だけでは厳密な証明にならない。
+
+この早いproxy時刻を順位付けに使うと、JSONを書き終えたがlaunch processはまだ生存しているepisodeを
+「終了済み」と誤分類できる。したがって監査の`0 could have overlapped`は、実際のprocess overlapが0
+だったことを意味しない。
+
+推奨対応:
+
+1. 正準216 episodeを修正後のdomain free-list runnerで再生成する。
+2. [method comparison](method_comparison.md)と対応資料にある
+   「同時に生存し得なかったことが確定」「cross-talkの余地はない」「再生成不要」という表現は、
+   再生成完了まで「artifact時刻による監査では重複を示す兆候はなかった」に弱める。
+3. 今後の監査用には、episode開始時刻とbackground PIDの**実際のreap時刻**、domain、PIDをrunner自身が
+   append-safeなmanifestへ記録する。これは将来runの検証には使えるが、旧成果物の不足情報を遡及的に
+   補うものではない。
+
+### 2. episode起動commandの非ゼロstatusがbenchmark全体へ伝播しない
+
+[`run_episode()`](../../../../nav2_benchmark/scripts/run_all.sh#L170)は`ros2 launch` / mockのstatusを`rc`へ
+保存するが、最後に実行するのは`echo`であり、`return "$rc"`を行わない。さらに
+[`reap_one()`](../../../../nav2_benchmark/scripts/run_all.sh#L206)は`wait -n -p done_pid || true`として
+child statusを捨てる。そのため起動commandが非ゼロ終了しても、既にparse可能な`episode.json`と
+`trace.csv`があればcompletenessとaggregateを通り、run全体が成功し得る。
+
+evaluatorは`success`、`timeout`、`collision`、`aborted_*`という通常の評価結果を0終了へ写像しているため、
+launch commandの非ゼロはscenario outcomeとは別のinfra異常として扱える。特に`timeout -k 15 400`、
+launch shutdown異常、将来のmock / wrapper異常を黙殺しない方がよい。
+
+推奨対応:
+
+1. `run_episode()`はartifact有無にかかわらずlaunch statusを返す。artifact診断はstatusとは別に出力する。
+2. `reap_one()`は`wait`のstatusをPIDとともに記録し、1件でも非ゼロなら全episode回収後、aggregateと
+   provenance昇格を行わず非ゼロ終了する。
+3. 「有効なepisode pairを書いた後にmockが非ゼロ終了する」testを追加し、completenessが成功しても
+   runner全体は失敗することを固定する。
+
+## Low
+
+### 3. domain poolのbookkeeping異常時にdomainをfail-openで再公開する
+
+[`reap_one()`](../../../../nav2_benchmark/scripts/run_all.sh#L206)は`done_pid`を取得できなかった場合、
+`PID_DOMAIN`を空にしてdomain 10〜99をすべてfree-listへ戻す。`wait -n -p`が正常に使える通常経路では
+到達しない想定だが、未対応Bash、signalによるwait中断、将来のbookkeeping変更などで子processが残った
+ままこの分岐へ入ると、使用中domainを再割当し、今回解消したcross-talkを異常時に再導入する。
+
+また`done_pid`は得られたがmapに存在しない場合はどの分岐も進まず、`PID_DOMAIN`が減らないためloopが
+停止し得る。異常時に測定を継続するより、release benchmarkはfail-closedにすべきである。
+
+推奨対応:
+
+- 起動時にBash 5.1以上を明示検査する。
+- `wait`失敗、空PID、未知PIDはいずれもfatal errorとし、domainをfree-listへ戻さない。
+- `trap`で既知のbackground childを停止・回収してから非ゼロ終了する。
+- 正常回収以外では同じdomainが再公開されないことを異常系testで固定する。
+
+## 解消を確認した項目
+
+- PID→domain mapとfree-listによる通常経路のdomain排他。
+- 120 episode / 90 domain / 30再利用の常設testと旧modulo方式に対する否定対照。
+- `RUNS` / `JOBS`の10進正規化と`RTF`の先頭0拒否。
+- `trace.csv`必須化、header検査、`n_samples`との行数整合。
+- `success` / `outcome` / `collided` / `time_to_goal`の基本意味論検査。
+- shell orchestration testのrepository常設化。
+- Nav2 benchmark provenanceへの`jobs`追加。
+- 保存3 datasetのmissing / corrupt / unexpected検査。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| package HEAD | `79e7a34` |
+| benchmark HEAD | `1090ee2` |
+| package worktree（本レビュー文書作成前） | clean |
+| benchmark関連worktree | clean |
+| plain CMake Release build | 成功 |
+| CTest | 2/2成功 |
+| `test_check_completeness.py -W error::ResourceWarning` | 31/31成功、警告なし |
+| `test_run_all.sh` | 36/36成功 |
+| domain排他test | 120 episodes、30 domain再利用、overlap 0 |
+| shell構文検査 (`bash -n run_all.sh`) | 成功 |
+| 保存dataset厳格verify | 216 / 32 / 24すべてmissing 0・corrupt 0・unexpected 0 |
+| 旧dataset監査script | 報告上0 overlap候補。ただしMedium 1の理由で非重複の確定には使えない |
+
+今回、Docker / ROSで正準216 episodeの再実行は行っていない。通常domain poolの排他testは成功しているが、
+既存release evidenceは旧runnerによる生成物であるため、artifact完全性とprocess分離の証明は分けて扱う
+必要がある。
+
+## リリース判定チェックリスト
+
+- [x] domainを対応processの正常回収後に再利用する通常経路を実装する
+- [x] domain active-set重複を検出するintegration testと否定対照を常設する
+- [x] `RUNS` / `JOBS`を10進正規化し、`RTF`の不正JSON入力を拒否する
+- [x] expected traceとepisode schemaの整合を検査する
+- [x] shell orchestrationの主要な異常系testを常設する
+- [x] Nav2 benchmark provenanceへ`jobs`を追加する
+- [ ] 正準216 episodeを修正後runnerで再生成するか、旧成果物から実際のprocess回収時刻を証明する
+- [ ] launch commandの非ゼロstatusをbenchmark全体へ伝播する
+- [ ] domain poolの回収異常をfail-closedにする
+- [ ] 実機安全保証前に角加速度過渡rolloutとROS adapter testを追加する
+
+release tag前の最優先事項は、正準216 episodeを修正後runnerで再生成し、旧成果物に対する証明不足を
+解消することである。runnerのstatus伝播とfail-closed化も同時に直せば、今回追加された常設test群を
+release orchestrationの明確な契約として固定できる。
