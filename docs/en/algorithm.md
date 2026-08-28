@@ -76,12 +76,14 @@ collision-avoidance guarantee covering unobserved space or physical tracking err
 ### Properties observed in simulation
 
 - BAC succeeded in 54/54 episodes in the canonical 18 scenarios × 3 runs, with zero collisions and a worst
-  minimum clearance of 0.139 m.
-- In a 1.5 m corridor with 0.10–0.25 m lateral path offset, traversal time was 28.8 s and clearance was
-  0.22–0.23 m.
-- It slowed progressively in openings of 1.35 m and 1.25 m and rejected forward entry into a 1.15 m opening.
+  minimum clearance of 0.136 m.
+- In a 1.5 m corridor with 0.10–0.25 m lateral path offset, it succeeded in 8/8 episodes, with a mean traversal
+  time of 28.8 s and clearance of 0.225–0.230 m.
+- In a one-run opening-width sweep, it completed openings down to 1.25 m but timed out at 1.15 m after reaching
+  0.050 m minimum clearance. The other three controllers completed that 1.15 m trial, so BAC showed no advantage
+  at this boundary condition.
 
-These observations apply only to the [evaluation conditions](method_comparison.md#controlled-nav2-benchmark).
+These observations apply only to the [evaluation conditions](method_comparison.md#nav2-system-benchmark).
 They are not probabilistic or universal claims about untested environments.
 
 ### Not guaranteed

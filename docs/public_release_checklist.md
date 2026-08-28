@@ -17,15 +17,18 @@
 | 完了 | ライセンスと著者情報 | MIT LICENSE、source header、`package.xml` の個人名が一致する |
 | 完了 | 最小導入資料 | Nav2 設定例、filter 設定例、launch 例が install 対象になる |
 | 完了 | framework-free 回帰試験 | core、scenario、scan/plan adapter の CTest が通る |
-| 実装済・確認待ち | GitHub Actions | GCC、Clang、ASan/UBSan、ROS 2 Jazzy/Nav2 job が初回 green になる |
+| 完了 | GitHub Actions | GCC、Clang、ASan/UBSan、ROS 2 Jazzy/Nav2 job の初回greenを確認（2026-08-29） |
 | 完了 | Nav2 adapter 結合試験 | lifecycle、TF 失敗、scan stale/invalid、costmap fallback、speed limit を自動試験する |
 | 完了 | 公開物の機密・権利監査 | history を含む tracked files に秘密情報、社内 path、第三者データ、再配布不能物がない |
-| 未完了 | benchmark 公開 archive | source revision、container digest、raw data、summary、SHA256 を同一 release candidate として復元できる |
+| 完了 | benchmark 公開 archive | `release_archive_1f9911e/`にsource、container digest、272 episodeのraw/summary、SHA256を固定 |
 | 完了 | release candidate dry run | clean clone 相当のJazzy/Nav2環境で build/test/install/launch file load が成功する |
 
 P0 がすべて完了するまで repository visibility は変更しない。実機試験は 0.1.0 の公開そのものを
 禁止する条件とはしないが、実施していない場合は「simulation-first preview」と release notes に明記する。
-現在残るP0は、変更をcommit/pushした後のHosted CI初回greenと、そのrevisionでのbenchmark archive生成である。
+2026-08-29時点でP0はすべて完了し、技術的にはPublic化可能である。Hosted CIはpush後の全job greenを
+確認した。benchmark archiveはBAC `1f9911e`、benchmark `026a17a`、ROS 2 Jazzy / Nav2 1.3.12、container
+image digestを記録し、正準216、drift 32、gap 24 episodeを欠損・破損0で収録する。公開操作、tag、
+GitHub Release作成は引き続き所有者が明示的に実施する。
 履歴監査ではsecret、秘密鍵、個人環境の絶対path、大容量binaryを検出しなかった。Git commit metadataには
 `hijimasa@gmail.com` が残るため、これを公開identityに含めない場合だけPublic化前に履歴方針を再検討する。
 
@@ -38,7 +41,7 @@ P0 がすべて完了するまで repository visibility は変更しない。実
 | 未完了 | RViz debug 表示 | 選択円弧、preview goal、停止・回避状態を任意 topic で可視化する |
 | 未完了 | 公平性を揃えた比較 | scan/costmap 更新周期、reverse 可否、速度・加速度条件を揃えた比較を追加する |
 | 未完了 | BAC ablation | `weights.balance=0`、escape 無効、raw scan/costmap の差を分解する |
-| 未完了 | 現行 baseline | 現行 RPP/DWPP、MPPI、DWB、および Collision Monitor 併用条件を比較範囲に含める |
+| 未完了 | 現行 baseline | 現行RPP、MPPI、DWB、およびCollision Monitor併用条件を比較範囲に含める |
 | 未完了 | 実機 evidence | localization offset、出現障害物、通過不能幅の stop/escape を動画と log で示す |
 | 未完了 | 性能予算の CI 化 | core microbenchmark の regression 閾値を、runner ノイズを考慮して設定する |
 

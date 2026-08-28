@@ -18,16 +18,20 @@ or release-candidate exercise is still required.
 | Done | License and authorship | MIT LICENSE, source headers, and personal metadata in `package.xml` agree |
 | Done | Minimum integration material | Installed Nav2 config, filter config, and filter launch examples exist |
 | Done | Framework-free regression tests | Core, scenarios, and scan/path adapter CTest entries pass |
-| Implemented; confirmation pending | GitHub Actions | GCC, Clang, ASan/UBSan, and ROS 2 Jazzy/Nav2 jobs have a first green run |
+| Done | GitHub Actions | First green GCC, Clang, ASan/UBSan, and ROS 2 Jazzy/Nav2 jobs confirmed on 2026-08-29 |
 | Done | Nav2 adapter integration tests | Exercise lifecycle, TF failure, stale/invalid scan, costmap fallback, and speed limits |
 | Done | Confidentiality and rights audit | Tracked history contains no secret, internal path, third-party data, or non-redistributable artifact |
-| Open | Benchmark release archive | Source revisions, image digest, raw data, summary, and SHA256 reconstruct one release candidate |
+| Done | Benchmark release archive | `release_archive_1f9911e/` fixes source, image digest, 272 raw/summary episodes, and SHA256 |
 | Done | Release-candidate dry run | A clean-clone-equivalent Jazzy/Nav2 environment passes build, test, install, and launch-file load |
 
 Do not change repository visibility until every P0 item is complete. Physical-robot evidence is not an absolute
 blocker for a 0.1.0 source release, but without it the release notes must label the version a simulation-first
 preview.
-The remaining P0 work is the first green hosted CI run after commit/push and a benchmark archive for that revision.
+All P0 items were complete on 2026-08-29, so the repository is technically ready to make public. The hosted CI
+jobs were all green after push. The benchmark archive records BAC `1f9911e`, benchmark `026a17a`, ROS 2 Jazzy /
+Nav2 1.3.12, and the container-image digest, with zero missing or corrupt episodes across the canonical 216,
+offset-sweep 32, and opening-sweep 24 episodes. Visibility, tagging, and GitHub Release creation remain explicit
+owner actions.
 The history audit found no secret, private key, local home path, or large binary. Git commit metadata retains
 `hijimasa@gmail.com`; revisit the history policy before publication only if that address is not intended as part
 of the public identity.
@@ -41,7 +45,7 @@ of the public identity.
 | Open | RViz debug output | Optionally show the selected arc, preview goal, and stop/avoid state |
 | Open | Matched comparison | Match scan/costmap update rates, reversing, speed, and acceleration conditions |
 | Open | BAC ablation | Isolate `weights.balance=0`, escape disabled, and raw-scan versus costmap behavior |
-| Open | Current baselines | Include current RPP/DWPP, MPPI, DWB, and a Collision Monitor combined condition where relevant |
+| Open | Current baselines | Include current RPP, MPPI, DWB, and a Collision Monitor combined condition where relevant |
 | Open | Physical-robot evidence | Record localization offset, appearing obstacle, and impassable-gap stop/escape cases with logs |
 | Open | Performance budget in CI | Set a core regression threshold that accounts for runner noise |
 

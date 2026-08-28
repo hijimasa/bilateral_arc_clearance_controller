@@ -5,9 +5,9 @@
 ## 現在の状態
 
 - 確認日: 2026-08-29
-- package: `ee5bedc`後のPublic公開準備更新
-- benchmark: `604780e`
-- 判定: コードレビューは **Go**、Public化gateは[公開準備チェックリスト](public_release_checklist.md)で継続
+- 評価対象package: `1f9911e`
+- benchmark: `026a17a`
+- 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
 
 全10回のリリースレビューで確認されたCritical / High / Mediumと、第10回のLow 3件は対応済みである。
 全10回のレビュー指摘に対するrelease blockerはない。2026-08-29にROS adapter testと入力source diagnosticsを
@@ -49,17 +49,18 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 ## 正準release evidence
 
 - 18 scenarios × 3 runs × 4 controllers = 216 episodes。
-- BAC commit `f1e2a90`、benchmark commit `13becc0`、両worktree dirty 0。
+- BAC commit `1f9911e`、benchmark commit `026a17a`、両worktree dirty 0、provenance v2。
 - 90個すべてのdomain IDを再利用し、初回以降の再割当126回、保持区間overlap 0。
-- BAC 54/54成功、衝突0、最接近0.139 m。
+- BAC 54/54成功、衝突0、最接近0.136 m。DWB 50/54（衝突4）、MPPI 51/54、RPP 47/54。
+- 同じrevisionでdrift sweep 32 episodeとgap sweep 24 episodeを再生成し、全272 episodeで欠損・破損0。
+- `release_archive_1f9911e/`にraw dataset、両source snapshot、`SHA256SUMS`を保存した。
 
-正準datasetはprovenance v1であり、当時の`bench_tree_sha`はignored生成物を含むためcommitから再現できない。
-source同一性は`bench_commit=13becc0`、`bench_dirty=0`、一致する`worlds_sha`で追跡する。次回runから
-Git追跡fileだけを使うprovenance v2になる。詳細は第10回対応文書を参照する。
+3 datasetはいずれもprovenance v2で、`bench_tree_sha`、Git tree object、`worlds_sha`の3/3 digestを
+`verify_provenance.py`で再現した。container imageは
+`sha256:d58fe8c8f5790cd000cf7bdc1b46395ac2567c231cd592ae6d29426ba9eb2737`である。
 
 ## 公開時チェック
 
-1. `nav2_benchmark/scripts/make_release_archive.sh`で正準、drift、gap datasetを検証・梱包する。
-2. archive、`SHA256SUMS`、source tag、container image digestを同じreleaseへ添付する。
-3. READMEとmethod comparisonの数値をarchive内のsummaryと照合する。
-4. 0.1.0がシミュレーション中心であり、実機安全認証を意味しないことをrelease noteへ残す。
+1. 公開後にarchive、`SHA256SUMS`、source tag、container image digestを同じGitHub Releaseへ添付する。
+2. 0.1.0がシミュレーション中心であり、実機安全認証を意味しないことをrelease noteへ残す。
+3. tag作成後、外部cloneからsourceとarchiveの参照可能性を再確認する。

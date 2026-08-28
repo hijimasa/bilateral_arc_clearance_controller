@@ -47,16 +47,17 @@ comparison controllers primarily consumed the 10 Hz local costmap, and reversing
 
 | Controller | Successes | Collisions | Mean on successful runs | Median | Worst minimum clearance |
 |---|---:|---:|---:|---:|---:|
-| BAC | 54/54 | 0 | 27.6 s | 28.4 s | 0.139 m |
-| DWB | 49/54 | 1 | 27.9 s | 25.2 s | 0.000 m |
-| MPPI | 51/54 | 0 | 29.0 s | 27.2 s | 0.091 m |
-| RPP | 48/54 | 0 | 24.2 s | 24.8 s | 0.017 m |
+| BAC | 54/54 | 0 | 27.7 s | 28.6 s | 0.136 m |
+| DWB | 50/54 | 4 | 25.2 s | 25.4 s | 0.000 m |
+| MPPI | 51/54 | 0 | 28.6 s | 27.5 s | 0.027 m |
+| RPP | 47/54 | 0 | 24.3 s | 25.0 s | 0.010 m |
 
 Within this 18-scenario set, BAC had no collision and did not approach an obstacle closer than 0.13 m. In a
-1.5 m corridor sweep with 0.10–0.25 m lateral path offset, its traversal time was 28.8 s and clearance was
-0.22–0.23 m, with no degradation observed within that range. These are results from a limited simulation and do
-not causally isolate bilateral clearance. They are not general success probabilities or a physical-robot safety
-guarantee. See
+separate 1.5 m corridor sweep with 0.10–0.25 m lateral path offset, BAC completed 8/8 episodes with a mean
+traversal time of 28.8 s and 0.225–0.230 m clearance. In a one-run opening-width sweep, it completed openings
+down to 1.25 m but timed out at 1.15 m; the other three controllers completed that trial. These are results from
+limited deterministic simulations and do not causally isolate bilateral clearance. They are not general success
+probabilities or a physical-robot safety guarantee. See
 [Method comparison and evaluation](docs/en/method_comparison.md) for conditions, raw-derived tables, and design
 differences from existing controllers.
 

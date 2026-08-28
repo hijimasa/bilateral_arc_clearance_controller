@@ -5,10 +5,9 @@ English | [日本語](../release_review_history.md)
 ## Current state
 
 - Checked: 2026-08-29
-- Package: public-readiness update after `ee5bedc`
-- Benchmark: `604780e`
-- Decision: code review **Go**; the visibility gate remains tracked in the
-  [public-release readiness checklist](public_release_checklist.md)
+- Evaluated package: `1f9911e`
+- Benchmark: `026a17a`
+- Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 
 All Critical, High, and Medium findings across ten release-review rounds, plus the three Low findings from R10,
 have been addressed. The 2026-08-29 follow-up added ROS adapter tests and input-source diagnostics. Remaining
@@ -54,20 +53,22 @@ The linked findings and responses are preserved in Japanese as the original audi
 ## Canonical release evidence
 
 - 18 scenarios × 3 runs × 4 controllers = 216 episodes
-- BAC commit `f1e2a90`; benchmark commit `13becc0`; zero dirty files in both worktrees
+- BAC commit `1f9911e`; benchmark commit `026a17a`; zero dirty files in both worktrees; provenance v2
 - All 90 domain IDs reused; 126 assignments after initial allocation; zero retained-interval overlap
-- BAC 54/54 successful episodes, zero collisions, worst minimum clearance 0.139 m
+- BAC 54/54 successful episodes, zero collisions, worst minimum clearance 0.136 m; DWB 50/54 with four
+  collisions, MPPI 51/54, and RPP 47/54
+- The same revisions produced the 32-episode offset and 24-episode opening sweeps; all 272 episodes have zero
+  missing or corrupt records
+- `release_archive_1f9911e/` contains the raw datasets, both source snapshots, and `SHA256SUMS`
 
-The canonical dataset uses provenance v1. Its `bench_tree_sha` included ignored generated files and therefore
-cannot be reconstructed from the commit alone. Source identity is instead tracked by `bench_commit=13becc0`,
-`bench_dirty=0`, and the matching `worlds_sha`. New runs use provenance v2, which hashes Git-tracked files only.
-See the R10 response for details.
+All three datasets use provenance v2. `verify_provenance.py` reproduced 3/3 recorded digests: `bench_tree_sha`,
+the Git tree object, and `worlds_sha`. The container image is
+`sha256:d58fe8c8f5790cd000cf7bdc1b46395ac2567c231cd592ae6d29426ba9eb2737`.
 
 ## Publication checklist
 
-1. Validate and package the canonical, offset-sweep, and opening-sweep datasets with
-   `nav2_benchmark/scripts/make_release_archive.sh`.
-2. Attach the archive, `SHA256SUMS`, source tag, and container image digest to the same release.
-3. Compare README and method-comparison values with the archived summary.
-4. State in the release notes that 0.1.0 is evaluated primarily in simulation and is not a physical-robot safety
+1. After publication, attach the archive, `SHA256SUMS`, source tag, and container image digest to the same GitHub
+   Release.
+2. State in the release notes that 0.1.0 is evaluated primarily in simulation and is not a physical-robot safety
    certification.
+3. After tagging, verify source and archive accessibility from an external clone.

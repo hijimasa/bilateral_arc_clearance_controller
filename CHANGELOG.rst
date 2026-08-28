@@ -22,3 +22,6 @@ Changelog for package bilateral_arc_clearance_controller
   contribution and security policies, and a bilingual public-release checklist.
 * Share and test scan projection and plan transformation geometry across ROS
   adapters, and publish obstacle-source/fallback state through diagnostics.
+* Validate the release candidate with green hosted CI and archive 272 Nav2
+  benchmark episodes with clean source provenance and checksums. Document the
+  observed 1.15 m opening timeout as a configuration limit.
