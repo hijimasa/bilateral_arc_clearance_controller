@@ -25,7 +25,7 @@ find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
   install(DIRECTORY include/ DESTINATION include)
   install(DIRECTORY docs/ DESTINATION share/${PROJECT_NAME}/docs)
-  install(FILES README.md LICENSE CHANGELOG.rst DESTINATION share/${PROJECT_NAME})
+  install(FILES README.md README.ja.md LICENSE CHANGELOG.rst DESTINATION share/${PROJECT_NAME})
   install(TARGETS bac_core
       EXPORT export_bac_core
       ARCHIVE DESTINATION lib

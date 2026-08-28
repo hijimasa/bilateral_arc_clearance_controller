@@ -1,5 +1,7 @@
 # Nav2統合ガイド
 
+[English](en/nav2_integration.md) | 日本語
+
 ## 推奨する適用場所
 
 BACの主な適用場所はController Serverである。BACはglobal planを局所的な意図として参照しながら、

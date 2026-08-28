@@ -16,3 +16,5 @@ Changelog for package bilateral_arc_clearance_controller
   and release-review history documents.
 * Archive individual review records under stable IDs and document their
   naming, metadata, and update rules.
+* Add an English release README and English user documentation while retaining
+  the original Japanese documents and audit records.

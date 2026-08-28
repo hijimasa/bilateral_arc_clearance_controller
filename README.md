@@ -1,74 +1,79 @@
 # bilateral_arc_clearance_controller
 
-Bilateral Arc Clearance（BAC、左右分離円弧クリアランス）は、候補円弧の左右に残る自由幅を直接評価する、
-差動二輪向けのNav2ローカルcontrollerです。DWAの速度候補と停止可能性判定を基礎に、狭い開口では
-実観測上の左右クリアランスを釣り合わせ、広い場所ではグローバル経路の追従を優先します。
+English | [日本語](README.ja.md)
 
-![BACが候補円弧の左右クリアランスを評価する幾何](docs/images/bac_geometry.svg)
+Bilateral Arc Clearance (BAC) is a Nav2 local controller for differential-drive robots. It evaluates the
+free space remaining on the left and right sides of candidate arcs. Building on DWA-style velocity candidates
+and stopping admissibility, BAC balances observed bilateral clearance in narrow openings and gives global-path
+tracking priority in open space.
 
-提供する構成要素は次の3つです。
+![BAC candidate-arc and bilateral-clearance geometry](docs/images/bac_geometry.svg)
 
-- `bac::BacCore`: ROSに依存しないC++17アルゴリズム
-- `bac::BacController`: Nav2 `nav2_core::Controller`プラグイン（ROS 2 Jazzyで検証）
-- `bac_filter_node`: 既存`cmd_vel`を生スキャンで整形する評価・レガシー統合用ノード
+The package provides three components:
 
-ライセンスはMIT、現在のパッケージバージョンは0.1.0です。
+- `bac::BacCore`: a ROS-independent C++17 algorithm
+- `bac::BacController`: a Nav2 `nav2_core::Controller` plugin, tested with ROS 2 Jazzy
+- `bac_filter_node`: an evaluation and legacy-integration node that reshapes an existing `cmd_vel` using raw scans
 
-## 目的と主張の範囲
+The package is licensed under MIT and is currently version 0.1.0.
 
-BACは、地図上の経路だけに障害物回避を委ねず、robot frameの局所観測を各制御周期で評価します。
-これにより、単一pose estimateに基づくグローバル経路を有限周期で更新する構成と比べて、
-**地図―odom間の横ずれと再計画遅延に対する感度を低減する**ことを目的とします。
+## Purpose and scope of claims
 
-これは上流から独立した安全保証ではありません。次の前提が必要です。
+BAC evaluates robot-frame observations on every control cycle instead of leaving obstacle response entirely to
+a path represented in the map frame. Compared with an architecture that periodically updates a global path from
+a single pose estimate, BAC is intended to **reduce sensitivity to lateral map–odom error and replanning delay**.
 
-- 障害物観測の視野・鮮度・外部パラメータが用途を満たす
-- planをbase frameへ変換するTFと、現在速度の推定が利用できる
-- footprint、制御周期、制動能力が実機を保守的に表す
-- 下位速度制御器が速度・加速度制限を実行できる
-- 障害物を制御周期内では静的点群として扱える
+This is not a safety guarantee independent of upstream state. The following assumptions must hold:
 
-生スキャンが有効な間、障害物幾何と左右クリアランスは地図―odom誤差に直接依存しません。一方、
-経路追従項はTF変換後のplanに依存し、スキャン異常時のcostmap fallbackは再びcostmapとTFに依存します。
-したがって本パッケージが主張するのは、上記前提と評価範囲内での**感度低減**であり、任意の上流異常に
-対する不変性ではありません。設計上の性質と実測結果の区別は[アルゴリズムと保証範囲](docs/algorithm.md)
-に整理しています。
+- obstacle-sensor coverage, freshness, and extrinsics are adequate for the application;
+- TF can transform the plan into the base frame, and current velocity is available;
+- the footprint, control period, and braking capability conservatively represent the physical robot;
+- the downstream velocity controller enforces velocity and acceleration limits; and
+- obstacles can be treated as static points within one control cycle.
 
-## 評価結果
+While a raw scan is valid, obstacle geometry and bilateral clearance do not directly depend on map–odom error.
+However, path-tracking terms still depend on the transformed plan, and the costmap fallback used after a scan
+failure again depends on the costmap and TF. The claim is therefore **reduced sensitivity within the stated
+assumptions and evaluation range**, not invariance to arbitrary upstream failures. See
+[Algorithm and claim boundaries](docs/en/algorithm.md) for the distinction between algorithmic rules,
+observations, and non-guarantees.
 
-ROS 2 Jazzy、同一車体・NavFn・1 Hz再計画・2D LiDARシミュレータで、controllerだけを交換しました。
-正準評価は18シナリオ × 3 run × 4 controller = 216 episodeです。
+## Evaluation results
 
-| controller | 成功 | 衝突 | 成功時平均 | 中央値 | 最接近の最悪値 |
+The canonical benchmark used ROS 2 Jazzy, the same robot footprint, NavFn, 1 Hz replanning, and a 2D LiDAR
+simulator, changing only the controller. It contains 18 scenarios × 3 runs × 4 controllers = 216 episodes.
+
+| Controller | Successes | Collisions | Mean on successful runs | Median | Worst minimum clearance |
 |---|---:|---:|---:|---:|---:|
 | BAC | 54/54 | 0 | 27.6 s | 28.4 s | 0.139 m |
 | DWB | 49/54 | 1 | 27.9 s | 25.2 s | 0.000 m |
 | MPPI | 51/54 | 0 | 29.0 s | 27.2 s | 0.091 m |
 | RPP | 48/54 | 0 | 24.2 s | 24.8 s | 0.017 m |
 
-BACでは、この18シナリオ集合で0.13 m以内への接近と衝突を観測しませんでした。また1.5 m通路の
-経路横ずれ0.10〜0.25 m sweepでは、到達時間28.8 s、クリアランス0.22〜0.23 mで、範囲内の劣化を
-観測しませんでした。これは限定されたシミュレーション結果であり、一般的な成功確率や実機安全保証では
-ありません。条件、raw由来の表、既存controllerとの設計差は[手法比較](docs/method_comparison.md)を
-参照してください。
+Within this 18-scenario set, BAC had no collision and did not approach an obstacle closer than 0.13 m. In a
+1.5 m corridor sweep with 0.10–0.25 m lateral path offset, its traversal time was 28.8 s and clearance was
+0.22–0.23 m, with no degradation observed within that range. These are results from a limited simulation, not
+general success probabilities or a physical-robot safety guarantee. See
+[Method comparison and evaluation](docs/en/method_comparison.md) for conditions, raw-derived tables, and design
+differences from existing controllers.
 
-## Nav2での位置づけ
+## Position in Nav2
 
-BACは、plan・局所障害物・現在速度から次の`(v,w)`を選び、経路からの局所逸脱も含めて進行を継続するため、
-Nav2ではController Serverのプラグインが主な適用場所です。
+BAC selects the next `(v,w)` from the plan, local obstacles, and current velocity, including locally departing
+from the path when needed. Its primary Nav2 integration point is therefore a Controller Server plugin.
 
 ```text
 Planner → BAC / DWB / MPPI → Velocity Smoother → Collision Monitor → base
 ```
 
-Collision Monitorは最終段で停止・減速する独立安全層であり、BACの代替ではありません。狭路だけBACを
-使う場合は、複数controllerを登録し、BTのControllerSelectorなどで切り替えられます。costmap layer、
-DWB critic、Collision Monitor、`bac_filter_node`との使い分けは[Nav2統合ガイド](docs/nav2_integration.md)
-にまとめています。
+Collision Monitor is an independent final-stage stop/slowdown layer, not a replacement for BAC. To use BAC only
+in narrow passages, register multiple controllers and select among them with a behavior-tree ControllerSelector
+or equivalent application logic. See the [Nav2 integration guide](docs/en/nav2_integration.md) for the distinction
+between BAC, a costmap layer, a DWB critic, Collision Monitor, and `bac_filter_node`.
 
-## クイックスタート
+## Quick start
 
-ROS 2ワークスペースで依存関係を解決してビルドします。
+Resolve the ROS 2 and Nav2 dependencies, then build the package in a colcon workspace:
 
 ```bash
 cd /path/to/colcon_ws
@@ -78,7 +83,7 @@ colcon test --packages-select bilateral_arc_clearance_controller
 colcon test-result --verbose
 ```
 
-最小構成例です。車体寸法、制動能力、後方視野は実機に合わせて変更してください。
+Minimal configuration follows. Adjust the footprint, braking capability, and rear sensor coverage for the robot.
 
 ```yaml
 controller_server:
@@ -92,11 +97,11 @@ controller_server:
       footprint.rear: -0.5
       footprint.width: 0.95
       limits.v_max: 0.4
-      limits.v_min: 0.0  # 十分な後方観測がある場合だけ負値を使う
+      limits.v_min: 0.0  # Use a negative value only with adequate rear sensing
       stop_decel: 0.8
 ```
 
-ROSなしでもcoreと閉ループシナリオを検証できます。
+The core and closed-loop scenarios can also be tested without ROS:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -104,31 +109,36 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-13本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を含みます。
+The 13 closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator, and unicycle
+kinematics.
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces
 python3 test/plot_traces.py --dir traces
 ```
 
-## 制約
+## Limitations
 
-- 2Dの差動二輪と定曲率円弧を前提とし、holonomic / Ackermann motion modelは持ちません。
-- 動的障害物の速度・将来位置は推定しません。
-- 角速度目標は1制御周期後に到達可能な範囲へ制限しますが、角加速度過渡中の掃引軌道とjerkは未評価です。
-- 後退は後方観測範囲が十分な場合だけ有効にしてください。
-- 生スキャン異常時はcostmapへfallbackします。完全なfail-stopはCollision Monitor等の独立層で構成してください。
-- 0.1.0はシミュレーション中心です。実機の遅延、滑り、外れ値、周期超過は別途評価が必要です。
+- BAC assumes a 2D differential-drive robot and constant-curvature arcs; it has no holonomic or Ackermann model.
+- It does not estimate obstacle velocity or future obstacle positions.
+- The angular command is limited to a value reachable after one control cycle, but swept motion during angular
+  acceleration transients and jerk have not been evaluated.
+- Enable reverse motion only when rear sensor coverage is adequate.
+- A raw-scan failure falls back to the costmap. Configure an independent layer such as Collision Monitor when
+  fail-stop behavior is required.
+- Version 0.1.0 is evaluated primarily in simulation. Physical-robot latency, slip, outliers, and control-period
+  overruns require separate validation.
 
-## ドキュメント
+## Documentation
 
-- [ドキュメント索引](docs/README.md)
-- [アルゴリズムと保証範囲](docs/algorithm.md)
-- [Nav2統合ガイド](docs/nav2_integration.md)
-- [パラメータリファレンス](docs/parameters.md)
-- [既存手法との比較と評価](docs/method_comparison.md)
-- [リリースレビュー履歴](docs/release_review_history.md)
+- [Documentation index](docs/en/README.md)
+- [Algorithm and claim boundaries](docs/en/algorithm.md)
+- [Nav2 integration guide](docs/en/nav2_integration.md)
+- [Parameter reference](docs/en/parameters.md)
+- [Method comparison and evaluation](docs/en/method_comparison.md)
+- [Release review history](docs/en/release_review_history.md)
+- [Japanese documentation / 日本語ドキュメント](docs/README.md)
 
-## ライセンス
+## License
 
 [MIT License](LICENSE)

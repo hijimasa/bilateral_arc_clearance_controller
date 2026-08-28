@@ -1,9 +1,11 @@
 # リリースレビュー履歴
 
+[English](en/release_review_history.md) | 日本語
+
 ## 現在の状態
 
 - 確認日: 2026-08-28
-- package: `59a78d3`
+- package: `dcba783`（ドキュメント基準。controller実装は`59a78d3`から不変）
 - benchmark: `604780e`
 - 判定: **Go**
 

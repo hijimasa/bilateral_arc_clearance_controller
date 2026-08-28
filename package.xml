@@ -4,10 +4,10 @@
   <name>bilateral_arc_clearance_controller</name>
   <version>0.1.0</version>
   <description>
-    Arc-clearance obstacle avoidance: shapes an upper-level velocity command so
-    the robot avoids obstacles when there is room and funnels smoothly through
-    the middle of narrow openings when there is not. Framework-free C++17 core
-    library, a cmd_vel filter node for evaluation, and a nav2 controller plugin.
+    Bilateral Arc Clearance local controller for Nav2. It selects admissible
+    constant-curvature commands from left and right obstacle clearance, with a
+    framework-free C++17 core, a Nav2 controller plugin, and a cmd_vel filter
+    node for evaluation and legacy integration.
   </description>
   <maintainer email="hijikata@react-robot.com">Masaaki Hijikata</maintainer>
   <license>MIT</license>

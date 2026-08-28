@@ -1,5 +1,7 @@
 # パラメータリファレンス
 
+[English](en/parameters.md) | 日本語
+
 `bac_filter_node` と `bac::BacController` は、下表のコアパラメータを共通名で公開する。
 nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付ける。単位は SI。
 
