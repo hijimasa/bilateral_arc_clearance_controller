@@ -73,8 +73,8 @@ BAC は DWA/DWB の一般的な置き換えというより、狭い開口、経�
 plan の TF 変換・掃引接触の厳密化（リリースレビュー対応）後の単一リビジョンで全 controller を
 同一条件・同一 run 数（18 シナリオ × 各 3 run × 4 controller = 216 episode）で再生成した。
 このデータセットは、エピソード間の `ROS_DOMAIN_ID` 分離を保証する runner で生成されており、
-`results/domain_manifest.csv` により「同一 domain の保持区間の重なり 0」(216 episode・
-domain 再利用 90 回)が検証済みである。生成条件は `results/provenance.json`（BAC commit SHA、
+`results/domain_manifest.csv` により「同一 domain の保持区間の重なり 0」(216 episode、
+90 個すべての domain ID を再利用、初回以降の再割当 126 回)が検証済みである。生成条件は `results/provenance.json`（BAC commit SHA、
 worktree dirty 数 0、Nav2 version、image digest、world/設定ハッシュ、並列数）に記録される。
 
 | controller | 成功 episode | 衝突 | 成功時平均到達時間 | 中央値 | 観察された傾向 |

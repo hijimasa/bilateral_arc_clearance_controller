@@ -19,8 +19,10 @@
 
 1. **正準 216 episode を修正後 runner で再生成**した(結果は下表)。新データは実行中に
    `domain_manifest.csv` を残し、**親プロセスが記録した起動時刻と実際の回収時刻**で分離を証明する:
-   `216 episodes, 90 domains, 90 reused, 0 overlapping`(domain 再利用は 90 回発生しており、
-   検査が空振りでないことも同時に示している)。
+   `216 episodes, 90 domains, reused_domains=90, reuse_assignments=126, 0 overlapping`
+   (90 個すべての domain ID が再利用され、初回以降の再割当は 126 回。検査が空振りでないことも
+   同時に示している。第10回レビュー Low 3 に従い用語を「再利用された domain 数」と
+   「再割当回数」に分けた)。
 2. 監査スクリプトは削除せず、**指標(indicator)であって証明ではない**ことを docstring と出力
    メッセージに明記し、時刻の下限として `episode.json` と `launch.log` の遅い方を使うよう変更した。
    README と `method_comparison.md` の「同時に生存し得なかったことが確定」「cross-talk の余地はない」
