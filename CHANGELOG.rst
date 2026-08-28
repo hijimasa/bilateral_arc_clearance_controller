@@ -10,3 +10,9 @@ Changelog for package bilateral_arc_clearance_controller
   centering, with emergency stopping and DWA admissibility.
 * Add closed-loop scenario and core geometry tests.
 * Add algorithm, parameter, method-comparison, and benchmark documentation.
+* Scope localization-drift and replanning-delay claims to the tested conditions,
+  with explicit assumptions and non-guarantees.
+* Split the concise README from the algorithm, Nav2 integration, comparison,
+  and release-review history documents.
+* Archive individual review records under stable IDs and document their
+  naming, metadata, and update rules.
