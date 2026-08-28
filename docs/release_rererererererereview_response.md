@@ -1,0 +1,83 @@
+# 第8回リリースレビューへの対応
+
+対象レビュー: [release_rererererererereview_findings.md](release_rererererererereview_findings.md)(2026-08-28、`602544c` / `b8f4f06` 時点。本体 Go・benchmark 成果物 条件付き Go)
+
+指摘 7 件すべてと、類似問題の掃引に対応した。
+
+## Medium
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 1 | `ROS_DOMAIN_ID` を使用中プロセスの完了確認なしに再利用する | **修正**。提案 1・2 の方式を採用し、domain 10〜99 を **free-list** として管理する pool に変更。episode 起動時に free-list 先頭を取り出し、`wait -n -p` で**完了 PID を特定してから**その PID が持っていた domain だけを free-list へ戻す(PID→domain の連想配列で管理)。同時実行数の制限も「実行中 `>= JOBS`」と「free domain が枯渇」の 2 条件で待つ形に変更したため、生存中の 2 episode が同じ domain を持つ状態は構造的に発生しない。バックストップとして、回収すべき子が消えた場合は診断を出して bookkeeping をリセットする(無限ループ防止)。 |
+| 2 | 先頭 0 付き件数が bash の 8 進解釈で検証と job pool を壊す | **修正**。提案どおり `^[0-9]+$` の形式検査**直後**に `RUNS=$((10#$RUNS))` / `JOBS=$((10#$JOBS))` で 10 進正規化し、その後に `>= 1` を検査。provenance には正規化後の値が入る。`--runs 08 --jobs 08` の実行が算術エラーなしで 8 run を生成し、`provenance.json` が有効 JSON(`runs: 8`, `jobs: 8`)になることを常設テストで固定。 |
+
+### Medium 1 の検証(提案 5 の常設テスト)
+
+`scripts/test_run_all.sh` に **domain 排他の常設テスト**を追加した。ROS も Docker も使わず、
+`RUN_ALL_MOCK`(= `scripts/mock_episode.sh`)が episode 起動を差し替え、`RUN_ALL_BENCH_ROOT` が
+一時ツリーを指すことで、**実物の `run_all.sh`** のオーケストレーションをそのまま動かす。
+
+- 120 episode(domain pool 90 を超えるので**再利用が必ず発生**)+ 意図的に 6 秒かかる 1 本
+  + 残りはランダムなジッタで完了順を入れ替える
+- 各 mock が「domain・保持開始・保持終了」を記録し、同一 domain の保持区間の重なりを検査
+- 結果: `episodes=120 domains=90 reused_domains=30 overlaps=0`
+- **否定対照**: `RUN_ALL_SCRIPT` に旧 `domain=$((10 + i % 90))` 方式の runner を指定して同じテストを
+  実行すると `overlaps=1`(domain 10 を長時間 episode と後続 episode が共有)で **FAIL する**。
+  検査が空振りでないことを確認済み。
+- 重なり検出器自体の自己テスト(既知の重なりログを必ず検出すること)も同梱。
+
+### 既存データセットの事後監査
+
+レビューの推奨は「runner 修正後に正準 216 episode を再生成」だが、**再生成しなくても保存成果物だけで
+判定できる**ため、監査スクリプト `scripts/audit_legacy_domains.py` を追加して確定させた。
+
+原理: episode の起動順は決定的で provenance から復元でき、`episode.json` の mtime が完了時刻である。
+ジョブプールは同時実行を `JOBS` に制限するので、episode *k* の起動時点で生存し得る先行 episode は
+高々 `JOBS-1` 本、しかもそれは「*k* 未満の完了時刻のうち最大の `JOBS-1` 本」に限られる。したがって
+`end(i)` がその上位に入らなければ、*i* と *k* は**同時に生存し得なかった**。
+
+| データセット | 結果 |
+|---|---|
+| 正準 `results`(216 ep) | domain 共有 162 対、**同時生存し得た対 0**(並列数を保守的に 8 と仮定しても 0) |
+| `results_driftsweep`(32 ep) | 90 未満のため domain 再利用そのものが発生しない |
+| `results_gap_sweep`(24 ep) | 同上 |
+
+よって既存のリリース証跡に cross-talk の余地はなく、再生成は不要と判断した(`docs/method_comparison.md`
+にもこの監査結果を明記)。監査は誰でも再実行できる。
+
+## Low
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| 3 | 期待 run の `trace.csv` 欠損を許容する | **修正**。verify は各期待 run について `episode.json` と `trace.csv` の**両方**を必須とし、trace のヘッダ検査と**データ行数 == `n_samples`** の整合検査も行う(aggregate は安全指標を trace から算出するため、trace 欠損は「安全指標が空の完全な dataset」を生む)。`--require-traces` のような任意化オプションは設けず、常に必須とした。 |
+| 4 | episode 内の結果意味論を完全には検査しない | **修正**。提案の schema をそのまま固定した: `collided` が必須 boolean、`success == (outcome == "success" && !collided)`、`time_to_goal` は success かつ標本ありのとき有限非負・それ以外は null、`n_samples` は非負整数で trace 行数と一致。`outcome="collision", success=true` などの組み合わせは非ゼロ終了する。 |
+| 5 | shell orchestration の異常系 test が常設されていない | **修正**。前回スクラッチで行っていた検証を `scripts/test_run_all.sh`(**36 checks**)としてリポジトリへ常設し、README に実行方法を記載。カバー範囲: 引数検証(空/重複/`runs 0`/`jobs 0`/不正 rtf/危険な名前)、先頭 0 の 10 進正規化、**domain 排他**、既存 dataset への再実行拒否(バイト不変の確認込み)、`OVERWRITE=1` の対象限定と集合外 episode の拒否、完全性ゲート失敗時の非昇格、aggregate 失敗・provenance 昇格失敗の非ゼロ終了。ROS launch は `RUN_ALL_MOCK` で差し替えるため CI で実行可能(実行時間は約 10 秒)。 |
+| 6 | Nav2 benchmark provenance に `jobs` がない | **修正**。`provenance.json` に正規化後の `jobs` を追加(テストで JSON として検証)。 |
+| 7 | filter node rate limiter の ROS adapter test | **残項目として維持**(次サイクル)。 |
+
+## 類似問題の掃引
+
+Medium 2(先頭 0 → 不正 JSON / 算術エラー)と同型の入力を全数確認し、**`--rtf` に同じ欠陥**を発見した:
+`^[0-9]+(\.[0-9]+)?$` は `007.5` を受理し、provenance へ `"rtf": 007.5` と出力する — JSON は数値の
+先頭 0 を許さないため、`--runs 08` と同じく**不正 JSON になる**。形式を
+`^(0|[1-9][0-9]*)(\.[0-9]+)?$` へ限定して拒否し、`--rtf 007.5` / `--rtf 08` の拒否と、正当な
+`--rtf 0.5` が通って `provenance.json` が有効であることをテストへ追加した。
+その他、provenance へ埋め込まれる値(controllers / scenarios は識別子制限済み)に同種の問題はない。
+
+## 検証
+
+| 確認項目 | 結果 |
+|---|---|
+| `test_check_completeness.py`(23 → **31** tests、`-W error::ResourceWarning`) | OK |
+| `test_run_all.sh`(新規、**36 checks**) | すべて成功 |
+| domain 排他(120 ep / 90 domain / 30 再利用) | overlaps=0 |
+| 同テストを旧 modulo 方式に対して実行(否定対照) | overlaps=1 で FAIL(検出能力を確認) |
+| `audit_legacy_domains.py results results_driftsweep results_gap_sweep` | 同時生存し得た対 0(exit 0) |
+| 保存 3 データセットを厳格化後の checker で verify | 216 / 32 / 24 すべて missing 0・corrupt 0・unexpected 0 |
+| `bash -n`(run_all.sh / bench.sh / test_run_all.sh / mock_episode.sh) | 成功 |
+
+## 状態
+
+第 8 回レビューの必須項目(domain 再利用の排他保証、先頭 0 付き件数の扱い)と Low 3〜6 を解消。
+既存リリース証跡は監査により cross-talk なしが確定したため再生成は行っていない。
+残項目は従来どおり次サイクル分(ROS adapter test、角加速度過渡 rollout)のみ。

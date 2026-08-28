@@ -1,0 +1,218 @@
+# bilateral_arc_clearance_controller 第8回リリースレビュー指摘
+
+レビュー日: 2026-08-28  
+対象package: `602544c` (`Seventh-review fixes: artifact stream checks, response document`)  
+対象benchmark: `b8f4f06` (`Refuse out-of-set episodes, fail-fast finalization, input validation`)  
+対応資料: [release_rerererererereview_response.md](release_rerererererereview_response.md)
+
+## 結論
+
+第7回レビューで指摘したunexpected artifactの拒否、aggregate / provenance昇格のfail-fast化、空集合・
+重複・件数parameterの検証、性能provenance整理、artifact stream検査は実装された。常設checker testは
+23/23成功し、ResourceWarningも解消した。plain CMake Release buildとCTest 2/2も成功しており、
+コントローラ本体に新たなCritical / Highの不具合は確認しなかった。
+
+一方、benchmark runnerの`ROS_DOMAIN_ID`はepisode通番を90で剰余した値であり、「以前そのdomainを
+使ったprocessが終了したこと」を確認せず再利用する。90件前の長時間episodeが残っている場合、同一domain
+のepisodeが同時実行され、`/clock`、action、sensor topicがcross-talkし得る。正準評価は216 episodeなので、
+通常条件でもdomain再利用が2回発生する。
+
+また`--jobs 08`や`--runs 08`はdecimal integerとして受理する意図に見えるが、Bash算術では先頭0が
+8進数として扱われる。`08` / `09`は算術errorを出しながら検証を通過し、job pool制限の無効化や不正JSON
+provenanceにつながる。
+
+したがって、**コントローラ本体はGo、benchmark成果物は条件付きGoを継続**とする。domainをprocessの
+完了に連動して再利用するpoolへ変更し、件数を明示的に10進正規化してからrelease tagを作成することを
+推奨する。
+
+## Critical
+
+なし。
+
+## High
+
+新規指摘なし。
+
+角加速度過渡中のswept trajectoryとjerk、ROS adapter test、実機遅延・追従誤差は従来どおり
+保証対象外または次cycleの残項目である。
+
+## Medium
+
+### 1. `ROS_DOMAIN_ID`を使用中processの完了確認なしに再利用する
+
+[`run_all.sh`のjob pool](../../../../nav2_benchmark/scripts/run_all.sh#L160)は、各episodeのdomainを
+次の式で割り当てる。
+
+```bash
+domain=$((10 + i % 90))
+```
+
+domainは10〜99の90個を周期的に再利用する。並列数は`JOBS`で制限されるが、poolが待つのは
+`wait -n`によって**どれか1件**が完了することだけであり、次に再利用するdomainの旧processが完了した
+ことは確認しない。`pids`配列も追加されるだけで、PIDとdomainの対応管理には使われていない。
+
+例えば`JOBS=4`で次のscheduleは許容される。
+
+1. episode 0がdomain 10で開始し、timeout近くまで長時間実行される。
+2. 残り3slotの短いepisodeが順次完了し、`wait -n`によりepisode投入が進む。
+3. 通番が90に達すると、新しいepisodeへdomain 10が再割り当てされる。
+4. episode 0がまだ動作中なら、2つのepisodeがdomain 10を同時使用する。
+
+この場合、コメントとREADMEの「各episodeは一意な`ROS_DOMAIN_ID`」は成立せず、`/clock`、Nav2 action、
+scan、odometryなどがcross-talkする可能性がある。episode fileの存在・schema・期待集合を調べる現在の
+完全性ゲートでは、内容が別episodeのtopicから汚染されたことを検出できない。
+
+正準評価は18 scenario × 4 controller × 3 run = 216 episodeなので、通番90と180で必ずdomain番号を
+再利用する。実際に同時使用された証拠を保存結果から確認できたわけではないが、runnerは分離を保証しない。
+
+推奨対応:
+
+1. domain IDを固定slotへ割り当て、対応processが完了したslotだけを再利用する。
+2. Bash 5.1以降の`wait -n -p completed_pid`とPID→domain mapを使い、完了domainをfree poolへ戻す。
+3. より単純には、90 episodeごとに全processへ`wait`してから次batchでdomainを再利用する。
+4. `JOBS`をdomain pool数未満へ制限するだけでは、特定の長時間processが残る反例を防げないため、
+   再利用対象domain自身の完了確認が必要である。
+5. mock episodeの実行時間を意図的にばらつかせ、active domainの重複が常に0であるtestを常設する。
+
+既存第4世代結果を正式release evidenceにする場合は、runner修正後に正準216 episode、drift sweep、
+gap sweepを再生成するのが最も確実である。
+
+### 2. 先頭0付き件数がBashの8進解釈で検証とjob poolを壊す
+
+[`run_all.sh`の件数検証](../../../../nav2_benchmark/scripts/run_all.sh#L44)は`^[0-9]+$`でdecimal digit列を
+受理した後、`[[ $RUNS -lt 1 ]]`と`[[ $JOBS -lt 1 ]]`で算術比較する。Bash算術では先頭0付き整数を
+8進数として解釈するため、`08`と`09`は「基底の値が大きすぎる」というerrorになる。
+
+独立確認では次の挙動になった。
+
+```text
+value=08 -> arithmetic errorをstderrへ出すが検証結果はaccept
+value=09 -> arithmetic errorをstderrへ出すが検証結果はaccept
+```
+
+影響はparameterごとに異なる。
+
+- `--jobs 08`: job poolの`[[ running_jobs -ge $JOBS ]]`でも算術errorとなり、並列数制限が実質的に
+  機能しない。多数episodeの同時起動とdomain重複を誘発できる。
+- `--runs 08`: `seq`とPython checkerは8として扱うが、provenanceは`"runs": 08`と出力する。
+  JSONでは先頭0付き数値は無効なので、`provenance.json`が不正JSONになる。
+
+入力を検証後すぐに明示的な10進数へ正規化する必要がある。
+
+```bash
+if [[ ! "$RUNS" =~ ^[0-9]+$ ]]; then ...; fi
+RUNS=$((10#$RUNS))
+if [[ $RUNS -lt 1 ]]; then ...; fi
+
+if [[ ! "$JOBS" =~ ^[0-9]+$ ]]; then ...; fi
+JOBS=$((10#$JOBS))
+if [[ $JOBS -lt 1 ]]; then ...; fi
+```
+
+または入力形式を`^[1-9][0-9]*$`へ限定し、先頭0を拒否する。`01`、`08`、`09`をunit testへ追加し、
+正規化後の値をprovenanceへ記録することを推奨する。
+
+## Low
+
+### 3. 完全性検査が期待runの`trace.csv`欠損を許容する
+
+[`check_completeness.py`のverify](../../../../nav2_benchmark/scripts/check_completeness.py#L85)は
+`episode.json`を必須とするが、期待run directory内の`trace.csv`は存在しなくても成功する。実際、unit
+testの`full_set()`はepisodeだけを生成し、traceなしで完全な集合として扱う。
+
+[`aggregate.py`](../../../../nav2_benchmark/scripts/aggregate.py#L126)はtraceがない場合に空配列を使い、
+path length、clearance、speed、oscillationなどを空値のままsummaryへ出す。evaluatorの通常実装はtraceを
+先に書き、その後episodeを書くため通常runではepisodeだけが残る可能性は低いが、artifactの手動移動、
+I/O障害、将来のwriter変更では安全指標が欠けたdatasetを完全と判定できる。
+
+release benchmarkでは各期待runについて`episode.json`と`trace.csv`の両方を必須にし、trace header、
+最低行数、episodeの`n_samples`との整合も検査することを推奨する。traceを任意にする用途が必要なら、
+`--require-traces`をrelease runで有効にする構成でもよい。
+
+### 4. episode内の結果意味論を完全には検査しない
+
+checkerは`success`がbooleanであることと`outcome`が既知文字列であることを個別に検査するが、両者の
+整合は検査しない。例えば`outcome="collision", success=true`や`outcome="success", success=false`が
+通過する。またaggregateが使用する`collided`は必須key・boolean型の対象外である。
+
+少なくとも次をschemaとして固定することを推奨する。
+
+- `collided`がbooleanである。
+- `success == (outcome == "success" && !collided)`である。
+- `time_to_goal`はsuccess時に有限非負、非success時はnullである。
+- `n_samples`は非負整数でtrace行数と一致する。
+
+### 5. shell orchestrationの異常系testがrepositoryに常設されていない
+
+`check_completeness.py`の23 unit testは常設されている。一方、対応資料にある「出荷ブロック逐語抽出
+test 22 checks」はrepository内に見つからず、aggregate失敗、provenance昇格失敗、`OVERWRITE=1`、
+入力parameter、job poolなど`run_all.sh`自体の制御はCIから再実行できない。
+
+ROS launch部分を関数またはmock可能なcommandへ分離し、temporary `RESULTS_ROOT`とfake episode writerを
+使うshell integration testを常設することを推奨する。特にdomain pool、aggregate failure、promotion
+failure、overwrite containmentを固定する必要がある。
+
+### 6. performance測定provenanceに`JOBS`がない
+
+一般benchmarkの`provenance.json`はcontrollers、scenarios、runs、rtfを記録するが、並列数`JOBS`を
+記録しない。並列度はCPU負荷、sim-time進行、timing変動、domain再利用条件に影響するため、再現条件へ
+含めるべきである。これはcore microbenchmarkの`perf/provenance.txt`ではなく、Nav2 episode benchmarkの
+provenanceに関する指摘である。
+
+### 7. filter nodeのrate limiterにROS adapter testがない
+
+従来からの残項目。対応資料でも次cycle送りとして明示されており、実験的releaseのblockerにはしない。
+実機安全保証を対象にする前には追加が必要である。
+
+## 解消を確認した項目
+
+- preflightは期待集合内外を問わず既存episode / traceを拒否する。
+- verifyは期待集合外artifactを`unexpected`として記録し非ゼロ終了する。
+- `OVERWRITE=1`でも期待directory削除後に必ずpreflightを行う。
+- aggregate失敗とprovenance昇格失敗を明示的にgateする。
+- `mkdir`、期待directory削除、temporary provenance生成の失敗を明示的にgateする。
+- 空集合、重複名、非正件数、非正RTFを通常形式では拒否する。
+- performance provenanceをraw由来の単一結果表へ整理した。
+- trace / world artifact streamのopen、write、close状態を検査する。
+- 完全性checker testのResourceWarningを解消した。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| package HEAD | `602544c` |
+| benchmark HEAD | `b8f4f06` |
+| package worktree | clean |
+| benchmark関連worktree | clean |
+| plain CMake Release build (`-Wall -Wextra -Wpedantic`) | 成功、警告なし |
+| CTest | 2/2成功 |
+| `BacCoreUnit` | 成功 |
+| `BacScenarioHarness --strict` | 成功（13 closed-loop scenarios） |
+| `test_check_completeness.py -W error::ResourceWarning` | 23/23成功、警告なし |
+| shell構文検査 (`bash -n`) | 成功 |
+| checker、unexpected controller / scenario / run / trace | すべて非ゼロ終了 |
+| checker、empty / duplicate / nonpositive runs | すべて拒否 |
+| `--runs 08` / `--jobs 08`相当のBash算術 | errorを出すが検証を通過（Medium 2） |
+| performance provenance | raw由来の単一結果表、tree hash一致 |
+
+今回、Dockerで全216 episodeは再実行していない。`ROS_DOMAIN_ID`重複はprocess schedulingに依存するため、
+保存結果から発生を断定していない。ただし現在の割当方式には再利用対象processの完了を保証する状態管理が
+なく、並列分離contractは成立しない。
+
+## リリース判定チェックリスト
+
+- [x] unexpected artifactをpreflight / verifyの両方で拒否する
+- [x] aggregate / provenance昇格をfail-fastにする
+- [x] empty / duplicate / nonpositive parameterを検査する
+- [x] performance provenanceをraw由来の単一表へ整理する
+- [x] artifact streamとResourceWarningを修正する
+- [ ] domain IDを対応processの完了後だけ再利用する
+- [ ] domain active-set重複を検出するintegration testを追加する
+- [ ] `RUNS` / `JOBS`を10進正規化するか先頭0を拒否する
+- [ ] expected traceとepisode schemaの整合を検査する
+- [ ] shell orchestrationの異常系testを常設する
+- [ ] Nav2 benchmark provenanceへ`jobs`を追加する
+- [ ] 実機安全保証前に角加速度過渡rolloutとROS adapter testを追加する
+
+release tag前の必須対応は、domain ID再利用の排他保証と先頭0付き件数の扱い修正である。runner修正後は、
+cross-talkの可能性を排除した状態で正準216 episode、drift sweep、gap sweepを再生成することを推奨する。
