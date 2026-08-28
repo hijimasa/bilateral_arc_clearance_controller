@@ -1,0 +1,206 @@
+# bilateral_arc_clearance_controller 第7回リリースレビュー指摘
+
+レビュー日: 2026-08-28  
+対象package: `25fb091` (`Sixth-review response document`)  
+性能測定package: `7598ccc` (`Fail on unopenable artifact files`)  
+対象benchmark: `30cd5fa` (`Preflight before any writes, standalone completeness checker with tests`)  
+対応資料: [release_rererererereview_response.md](release_rererererereview_response.md)
+
+## 結論
+
+前回の必須指摘であったpreflightの順序、`OVERWRITE`のコンテナ転送、削除path検証、完全性検査の
+常設test、performance CSVのopen失敗処理は実装された。コントローラ本体に新たなCritical / Highの
+不具合はなく、plain CMake Release buildとCTest 2/2も成功した。性能raw、測定対象tree hash、
+記載集計値も整合している。
+
+一方、結果rootに今回の期待集合**以外**の古いepisodeがある場合、preflightと完全性検査はそれを無視し、
+aggregateは古いepisodeを含めて集計する。このため、単一の`provenance.json`が示す実行条件と実際の
+summaryが再び複数世代へ分離し得る。また、aggregate失敗とprovenance昇格の失敗statusがshellで検査
+されず、失敗後の`echo`によりbenchmark全体が終了status 0になり得る。
+
+したがって、**コントローラ本体はGo、リリース成果物は条件付きGoを継続**とする。unexpected episodeの
+拒否と最終化処理のfail-fast化をrelease tag前に修正することを推奨する。
+
+## Critical
+
+なし。
+
+## High
+
+新規指摘なし。
+
+角加速度過渡中のswept trajectoryとjerk、ROS adapter test、実機遅延・追従誤差は従来どおり
+保証対象外または次cycleの残項目である。
+
+## Medium
+
+### 1. 期待集合外の古いepisodeを許容し、aggregateが複数世代を混在させる
+
+[`check_completeness.py`](../../../../nav2_benchmark/scripts/check_completeness.py#L37)のpreflightは、
+今回指定されたcontroller × scenario × runのpathだけを検査する。verifyも同じ期待pathについて
+missing / corruptを検査するだけで、`RESULTS_ROOT`内に存在する期待外の`episode.json`を検出しない。
+
+一方、[`aggregate.py`](../../../../nav2_benchmark/scripts/aggregate.py#L121)は
+`RESULTS_ROOT/*/*/run*/episode.json`をglobし、期待集合に関係なく全episodeを集計する。
+
+例えば、既存rootに旧scenario `old_scenario`の結果があり、今回の実行条件が新scenario
+`new_scenario`だけの場合、次の処理になる。
+
+1. preflightは`new_scenario`だけを見るため通過する。
+2. `new_scenario`のepisodeを生成する。
+3. verifyは`new_scenario`が完全なので通過する。
+4. aggregateは`old_scenario`と`new_scenario`の両方をsummaryへ入れる。
+5. 正式provenanceはcontrollers / scenariosとして今回指定した`new_scenario`だけを記録する。
+
+`OVERWRITE=1`も今回の期待run directoryだけを削除するため、期待集合外の古い結果は残る。これは以前の
+「結果世代の混在」と同じ形のprovenance不整合である。
+
+推奨対応:
+
+1. verify時にroot配下の全`episode.json`を列挙し、期待集合との差分を`unexpected`として検出する。
+2. unexpectedが1件でもあれば非ゼロ終了し、aggregateとprovenance昇格へ進まない。
+3. preflightも既定ではroot配下の任意のepisode / traceを検出したら拒否する。
+4. subsetだけを再実行して既存結果へ統合する機能が必要なら、episodeごとのprovenanceまたは世代manifestを
+   導入し、root単位の単一provenanceで異なる世代を表現しない。
+5. unit testへunexpected controller / scenario / run directoryを追加する。
+
+最も単純で安全なrelease運用は、READMEの推奨どおり毎回空の新規`RESULTS_ROOT`を使い、checkerも
+それを強制することである。
+
+### 2. aggregateまたはprovenance昇格が失敗しても成功終了できる
+
+[`run_all.sh`の最終化処理](../../../../nav2_benchmark/scripts/run_all.sh#L157)は次の順に実行される。
+
+```bash
+python3 .../aggregate.py ...
+mv provenance.json.tmp provenance.json
+echo "=== done ==="
+```
+
+scriptには`set -e`がなく、aggregateと`mv`の終了statusを検査する`if`もない。そのため次が成立する。
+
+- aggregateが失敗しても`mv`へ進み、正式provenanceを公開する。
+- `mv`が失敗しても最後の`echo`へ進む。
+- 最後の`echo`が成功すると、`run_all.sh`全体の終了statusは0になる。
+
+これによりsummary / plot生成が失敗したdatasetや、正式provenanceが存在しないdatasetを呼び出し側が
+成功として扱える。次のように各artifact確定処理を明示的にgateする必要がある。
+
+```bash
+if ! python3 /work/nav2_benchmark/scripts/aggregate.py ...; then
+  echo "run_all: aggregation failed" >&2
+  exit 1
+fi
+if ! mv "$RESULTS_ROOT/provenance.json.tmp" "$RESULTS_ROOT/provenance.json"; then
+  echo "run_all: provenance promotion failed" >&2
+  exit 1
+fi
+```
+
+同じ理由で、`OVERWRITE=1`時の`rm -rf`、temporary provenance生成、`mkdir -p`など、後続処理の前提になる
+操作も明示的に失敗判定することを推奨する。全面的に`set -euo pipefail`へ変更する場合はbackground jobと
+`wait`の挙動を固定testする必要がある。
+
+## Low
+
+### 3. 空の実行集合と不正な件数parameterを拒否しない
+
+[`run_all.sh`](../../../../nav2_benchmark/scripts/run_all.sh#L16)と
+[`check_completeness.py`](../../../../nav2_benchmark/scripts/check_completeness.py#L93)は次を拒否しない。
+
+- `--controllers ""`
+- `--scenarios ""`
+- `--runs 0`または負値
+- controller / scenarioの重複
+- `--jobs 0`または負値
+
+独立確認では、checkerのempty controllerと`runs=0`のpreflightはいずれも終了status 0となった。
+重複名は同じ出力directoryへ複数episodeを並行起動し、同じfileへ書き込む可能性がある。`jobs=0`はjob
+pool条件を満たし続けて進行不能になる可能性がある。
+
+引数parse直後に非空、重複なし、`RUNS >= 1`、`JOBS >= 1`、有限かつ正の`RTF`を検査し、checker側も
+空集合と`runs < 1`をValueErrorにすることを推奨する。
+
+### 4. performance provenanceに相互矛盾する2組の測定値が残る
+
+[`perf/provenance.txt`](../../../../nav2_benchmark/perf/provenance.txt#L11)には、説明のない4行の数値表と、
+「saved perf_raw.csvから計算」と明記された結果表の2組がある。例えば1000点は前者が
+`390.9 / 399.3 / 506.7 µs`、後者が`378.1 / 384.0 / 574.5 µs`で一致しない。
+
+後者は保存rawからの再計算値と一致しており、対応資料も後者を引用している。前者は別実行のconsole
+summaryと推定されるが、labelがないためprovenance単体では判断できない。raw由来の結果表だけを残すか、
+別実行値を保持するなら実行日時・目的・raw非対応であることを明記する必要がある。
+
+### 5. 類似file-open問題の掃引で`world_file`が未確認のまま残る
+
+[`writeTraceCsv()`](../test/scenarios.cpp#L96)はtrace fileのopen失敗を検査するようになったが、同じ関数内の
+[`world_file`](../test/scenarios.cpp#L114)はopen状態、write状態、close状態を検査しない。
+通常は同じdirectoryのtrace fileが開ければworld fileも開けるが、path collision、容量不足、I/O errorでは
+world CSVだけが欠落・途中書きになり得る。
+
+また常設testの[`test_check_completeness.py`](../../../../nav2_benchmark/scripts/test_check_completeness.py#L120)は
+2箇所で`open(...).write(...)`を直接使い、実行時に`ResourceWarning: unclosed file`を出す。いずれも
+`with open(...) as f:`へ変更することを推奨する。
+
+### 6. filter nodeのrate limiterにROS adapter testがない
+
+従来からの残項目。対応資料でも次cycle送りとして明示されており、実験的releaseのblockerにはしない。
+実機安全保証を対象にする前には追加が必要である。
+
+## 解消を確認した項目
+
+- preflightを正式provenance生成より前へ移動した。
+- preflight拒否時は既存provenanceを変更しない構成にした。
+- `bench.sh`から`OVERWRITE`をコンテナへ転送した。
+- controller / scenario識別子を制限した。
+- 削除前に正規化pathが`RESULTS_ROOT`配下であることを検査した。
+- 完全性検査を独立Python moduleへ分離した。
+- 完全性検査の14 unit testをrepositoryへ常設した。
+- performance CSVのopen / close失敗を非ゼロ終了にした。
+- raw性能CSVをclean package HEAD `7598ccc`から再生成した。
+- 性能provenanceのtree hashは対象fileからの再計算値と一致した。
+
+## 今回の確認結果
+
+| 確認項目 | 結果 |
+|---|---|
+| package HEAD | `25fb091` |
+| performance測定package HEAD | `7598ccc` |
+| benchmark HEAD | `30cd5fa` |
+| package worktree | clean |
+| benchmark関連worktree | clean |
+| plain CMake Release build (`-Wall -Wextra -Wpedantic`) | 成功、警告なし |
+| CTest | 2/2成功 |
+| `BacCoreUnit` | 成功 |
+| `BacScenarioHarness --strict` | 成功（13 closed-loop scenarios） |
+| `test_check_completeness.py` | 14/14成功（ResourceWarning 2件） |
+| shell構文検査 (`bash -n`) | 成功 |
+| checker、empty controllers | exit 0（Low 3） |
+| checker、`runs=0` | exit 0（Low 3） |
+| 不正CSV出力先でのperformance benchmark | exit 1 |
+| performance tree hash | 再計算値と一致 |
+| 保存raw CSV | 4列、各point count 2,000 sample |
+| 保存性能、1000点 | p50 378.1 / p95 384.0 / 観測最大574.5 µs |
+
+今回、Dockerで全216 episodeは再実行していない。既存datasetの世代混在を発生させる操作は、保存rawを
+変更するため実行せず、checkerとaggregateの対象集合のsource reviewによって確認した。aggregate / mvの
+終了status問題は、同じshell制御を独立に再現して最終`echo`によりstatus 0となることを確認した。
+
+## リリース判定チェックリスト
+
+- [x] preflightを既存datasetへの書き込みより前へ移動する
+- [x] `OVERWRITE`をコンテナへ転送する
+- [x] 削除pathの識別子・包含関係を検査する
+- [x] 完全性検査と異常系testを常設する
+- [x] performance CSVのopen / close失敗を検出する
+- [ ] 期待集合外のepisode / traceをunexpectedとして拒否する
+- [ ] aggregate失敗を`run_all.sh`全体へ伝播する
+- [ ] provenance昇格失敗を`run_all.sh`全体へ伝播する
+- [ ] 空集合、重複、`RUNS < 1`、`JOBS < 1`を拒否する
+- [ ] performance provenanceをraw由来の単一結果表へ整理する
+- [ ] `world_file`のopen / write / close失敗を扱う
+- [ ] 完全性testのResourceWarningを解消する
+- [ ] 実機安全保証前に角加速度過渡rolloutとROS adapter testを追加する
+
+release tag前の必須対応は、unexpected artifactの拒否とaggregate / provenance昇格のfail-fast化である。
+残るLow項目は同じ修正cycleで対応すると、benchmark runnerの入力・出力契約を一度で固定できる。

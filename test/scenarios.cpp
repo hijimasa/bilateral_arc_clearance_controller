@@ -110,12 +110,27 @@ writeTraceCsv(const std::string &dir, const std::string &name, const SimResult &
                << row.actual.w << ',' << row.status << ',' << row.clearance << ',' << row.speed_fraction << ','
                << row.command_clearance << '\n';
   }
+  trace_file.close();
+  if (!trace_file)
+  {
+    std::cerr << "writeTraceCsv: write/close failed for " << dir << "/" << name << ".csv\n";
+  }
 
   std::ofstream world_file(dir + "/" + name + "_world.csv");
+  if (!world_file.is_open())
+  {
+    std::cerr << "writeTraceCsv: cannot open " << dir << "/" << name << "_world.csv\n";
+    return;
+  }
   world_file << "x1,y1,x2,y2\n";
   for (const Segment &seg : world.walls)
   {
     world_file << seg.x1 << ',' << seg.y1 << ',' << seg.x2 << ',' << seg.y2 << '\n';
+  }
+  world_file.close();
+  if (!world_file)
+  {
+    std::cerr << "writeTraceCsv: write/close failed for " << dir << "/" << name << "_world.csv\n";
   }
 }
 
