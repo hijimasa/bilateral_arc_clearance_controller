@@ -28,7 +28,7 @@ main(int argc, char **argv)
   FILE             *fcsv   = csv.empty() ? nullptr : std::fopen(csv.c_str(), "w");
   if (fcsv)
   {
-    std::fprintf(fcsv, "points,iter,us\n");
+    std::fprintf(fcsv, "points,eval_pts,iter,us\n");
   }
 
   std::printf("%8s %9s %10s %10s %10s  (%d iters after %d warm-up; max = observed max of\n"
@@ -55,6 +55,10 @@ main(int argc, char **argv)
       path.emplace_back(0.1f * static_cast<float>(i), 0.0f);
     }
     const bac::Twist2D current(0.3f, 0.1f);
+    // Inputs beyond Params::max_points are decimated before candidate
+    // evaluation - record the evaluated count in the raw CSV too, so the
+    // file is self-describing.
+    const int eval_pts = std::min<int>(n_points, bac::Params{}.max_points);
 
     for (int i = 0; i < warmup; i++)
     {
@@ -71,14 +75,10 @@ main(int argc, char **argv)
       us.push_back(dt);
       if (fcsv)
       {
-        std::fprintf(fcsv, "%d,%d,%.2f\n", n_points, i, dt);
+        std::fprintf(fcsv, "%d,%d,%d,%.2f\n", n_points, eval_pts, i, dt);
       }
     }
     std::sort(us.begin(), us.end());
-    // Inputs beyond Params::max_points are decimated before candidate
-    // evaluation - report the evaluated count so larger inputs reading
-    // faster than 1000 points is not misread.
-    const int eval_pts = std::min<int>(n_points, bac::Params{}.max_points);
     std::printf("%8d %9d %10.1f %10.1f %10.1f\n", n_points, eval_pts, us[us.size() / 2],
                 us[static_cast<size_t>(us.size() * 0.95)], us.back());
   }
