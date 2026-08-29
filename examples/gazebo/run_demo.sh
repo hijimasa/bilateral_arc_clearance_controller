@@ -105,7 +105,7 @@ ffmpeg -hide_banner -loglevel error -y -framerate 12 \
   -metadata title="BAC Gazebo adaptive-clearance evidence" \
   "${CAPTURE_DIR}/${VIDEO_NAME}.mp4"
 ffmpeg -hide_banner -loglevel error -y \
-  -ss 31 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
+  -ss 13 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
   "${CAPTURE_DIR}/${VIDEO_NAME}_thumbnail.jpg"
 
 set +e
