@@ -20,6 +20,7 @@ bac_filter:
     odom_timeout: 0.5
     scan_min_points: 10
     scan_inf_is_valid: true
+    max_range: 2.5
     sensor.x: 0.25
     sensor.y: 0.0
     sensor.yaw: 0.0

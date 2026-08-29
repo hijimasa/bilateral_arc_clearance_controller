@@ -34,7 +34,7 @@ class DemoRecorder(Node):
     def __init__(self):
         super().__init__("bac_demo_recorder")
         self.output_dir = os.environ["BAC_DEMO_OUTPUT"]
-        self.duration = float(os.environ.get("BAC_DEMO_DURATION", "34"))
+        self.duration = float(os.environ.get("BAC_DEMO_DURATION", "36"))
         self.frames_dir = os.path.join(self.output_dir, "frames")
         os.makedirs(self.frames_dir, exist_ok=True)
         self.csv_file = open(os.path.join(self.output_dir, "telemetry.csv"), "w", newline="")

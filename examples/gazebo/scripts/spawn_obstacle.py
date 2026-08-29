@@ -26,7 +26,7 @@ class PositionTriggeredSpawner(Node):
         request.name = "appearing_obstacle"
         request.xml = self.model_xml
         request.initial_pose.position.x = 3.4
-        request.initial_pose.position.y = 0.35
+        request.initial_pose.position.y = 0.20
         request.initial_pose.position.z = 0.4
         self.future = self.client.call_async(request)
         self.request_sent = True

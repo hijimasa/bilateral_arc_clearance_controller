@@ -39,7 +39,7 @@ set -u
 export LIBGL_ALWAYS_SOFTWARE=1
 export RCUTILS_COLORIZED_OUTPUT=1
 export BAC_DEMO_OUTPUT="${CAPTURE_DIR}"
-export BAC_DEMO_DURATION=${BAC_DEMO_DURATION:-34}
+export BAC_DEMO_DURATION=${BAC_DEMO_DURATION:-36}
 export BAC_GAZEBO_VERSION
 # Gazebo Classic 11 reports its version but exits 255 in some headless builds.
 BAC_GAZEBO_VERSION=$(gazebo --version 2>&1 || true)
@@ -104,7 +104,7 @@ ffmpeg -hide_banner -loglevel error -y -framerate 12 \
   -metadata title="BAC Gazebo adaptive-clearance evidence" \
   "${CAPTURE_DIR}/${VIDEO_NAME}.mp4"
 ffmpeg -hide_banner -loglevel error -y \
-  -ss 25 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
+  -ss 31 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
   "${CAPTURE_DIR}/${VIDEO_NAME}_thumbnail.jpg"
 
 set +e

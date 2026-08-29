@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from std_msgs.msg import Int8
 
 
 def yaw_from_quaternion(q):
@@ -21,8 +22,10 @@ class DemoDriver(Node):
         self.y = 0.0
         self.yaw = 0.0
         self.have_odom = False
+        self.status = 2
         self.publisher = self.create_publisher(Twist, "/nav_cmd_vel", 10)
         self.create_subscription(Odometry, "/odom", self.on_odom, 10)
+        self.create_subscription(Int8, "/avoid_status", self.on_status, 10)
         self.create_timer(0.05, self.publish_command)
 
     def on_odom(self, msg):
@@ -30,15 +33,21 @@ class DemoDriver(Node):
         self.yaw = yaw_from_quaternion(msg.pose.pose.orientation)
         self.have_odom = True
 
+    def on_status(self, msg):
+        self.status = int(msg.data)
+
     def publish_command(self):
         command = Twist()
         if self.have_odom:
             command.linear.x = 0.35
-            # The upstream path follower continuously requests y=0/yaw=0,
-            # including while BAC reports AVOIDING. This mirrors the Nav2
-            # filter integration: upstream supplies intent and BAC modifies
-            # it as needed for local collision avoidance.
-            command.angular.z = max(-0.6, min(0.6, -0.3 * self.y - 0.8 * self.yaw))
+            # Avoid fighting BAC's selected detour while it owns the local
+            # avoidance turn. Once CLEAR, restore centerline tracking so the
+            # upstream intent is recovered before the narrow gate.
+            if self.status == 1:
+                correction = max(-0.65, min(0.65, -0.35 * self.y - 1.0 * self.yaw))
+                command.angular.z = 0.30 * correction
+            else:
+                command.angular.z = max(-1.0, min(1.0, -0.9 * self.y - 1.6 * self.yaw))
         self.publisher.publish(command)
 
 
