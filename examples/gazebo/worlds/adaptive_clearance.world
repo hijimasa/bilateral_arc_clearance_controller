@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <sdf version="1.6">
-  <world name="bac_appearing_obstacle">
+  <world name="bac_adaptive_clearance">
     <physics name="default_physics" type="ode">
       <real_time_update_rate>1000</real_time_update_rate>
       <max_step_size>0.001</max_step_size>
@@ -13,34 +13,63 @@
       <uri>model://ground_plane</uri>
     </include>
 
-    <!-- High-contrast lane markers make the detour visible in the video. -->
+    <!-- High-contrast lane markers make the detour and recovery visible. -->
     <model name="center_line">
       <static>true</static>
-      <pose>3.5 0 0.006 0 0 0</pose>
+      <pose>5.5 0 0.006 0 0 0</pose>
       <link name="link">
         <visual name="visual">
-          <geometry><box><size>8.5 0.04 0.01</size></box></geometry>
+          <geometry><box><size>12.0 0.04 0.01</size></box></geometry>
           <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
         </visual>
       </link>
     </model>
     <model name="left_boundary">
       <static>true</static>
-      <pose>3.5 2.0 0.01 0 0 0</pose>
+      <pose>5.5 2.0 0.01 0 0 0</pose>
       <link name="link">
         <visual name="visual">
-          <geometry><box><size>8.5 0.06 0.02</size></box></geometry>
+          <geometry><box><size>12.0 0.06 0.02</size></box></geometry>
           <material><ambient>0.25 0.85 0.25 1</ambient><diffuse>0.25 0.85 0.25 1</diffuse></material>
         </visual>
       </link>
     </model>
     <model name="right_boundary">
       <static>true</static>
-      <pose>3.5 -2.0 0.01 0 0 0</pose>
+      <pose>5.5 -2.0 0.01 0 0 0</pose>
       <link name="link">
         <visual name="visual">
-          <geometry><box><size>8.5 0.06 0.02</size></box></geometry>
+          <geometry><box><size>12.0 0.06 0.02</size></box></geometry>
           <material><ambient>0.25 0.85 0.25 1</ambient><diffuse>0.25 0.85 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- A 1.0 m opening demonstrates that the same controller does not keep
+         the open-space detour when the available free space becomes narrow. -->
+    <model name="narrow_gate_left">
+      <static>true</static>
+      <pose>8.0 1.4 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.35 1.8 0.8</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.35 1.8 0.8</size></box></geometry>
+          <material><ambient>0.20 0.55 0.95 1</ambient><diffuse>0.20 0.55 0.95 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="narrow_gate_right">
+      <static>true</static>
+      <pose>8.0 -1.4 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.35 1.8 0.8</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.35 1.8 0.8</size></box></geometry>
+          <material><ambient>0.20 0.55 0.95 1</ambient><diffuse>0.20 0.55 0.95 1</diffuse></material>
         </visual>
       </link>
     </model>
@@ -48,7 +77,7 @@
     <!-- A fixed ROS camera supplies frames without requiring gzclient/X11. -->
     <model name="overhead_camera">
       <static>true</static>
-      <pose>4.5 0 14.0 0 1.57079632679 0</pose>
+      <pose>5.5 0 16.0 0 1.57079632679 0</pose>
       <link name="camera_link">
         <sensor name="camera" type="camera">
           <always_on>true</always_on>

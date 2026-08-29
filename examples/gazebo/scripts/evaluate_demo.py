@@ -41,27 +41,32 @@ def main():
     ys = [float(row["y_m"]) for row in rows]
     statuses = [int(row["status"]) for row in rows]
     collisions = [bool(int(row["collision"])) for row in rows]
+    pre_gate_ys = [abs(y) for x, y in zip(xs, ys) if 7.2 <= x <= 7.6]
+    gate_ys = [abs(y) for x, y in zip(xs, ys) if 7.75 <= x <= 8.25]
     metrics = {
         "frame_count": len(frames),
         "telemetry_rows": len(rows),
         "final_x_m": xs[-1],
         "max_abs_lateral_deviation_m": max(abs(y) for y in ys),
+        "max_abs_y_before_gate_m": max(pre_gate_ys, default=math.inf),
+        "max_abs_y_in_gate_m": max(gate_ys, default=math.inf),
         "avoiding_frames": sum(status == 1 for status in statuses),
         "stop_frames": sum(status == 2 for status in statuses),
         "collision_detected": any(collisions),
     }
     checks = {
         "camera_stream_recorded": len(frames) >= 180,
-        "forward_progress": xs[-1] >= 4.5,
+        "forward_progress_beyond_gate": xs[-1] >= 9.0,
         "avoidance_activated": metrics["avoiding_frames"] >= 5,
         "visible_detour": metrics["max_abs_lateral_deviation_m"] >= 0.25,
         "stayed_in_camera_lane": metrics["max_abs_lateral_deviation_m"] <= 2.4,
-        "returned_toward_center": abs(ys[-1]) <= 1.0,
+        "recentered_before_gate": bool(pre_gate_ys) and max(pre_gate_ys) <= 0.30,
+        "passed_one_meter_gate": bool(gate_ys) and max(gate_ys) <= 0.24,
         "no_contact": not metrics["collision_detected"],
     }
     inputs = [
         "src/bac_core.cpp", "src/bac_filter_node.cpp", "examples/gazebo/bac_demo.yaml",
-        "examples/gazebo/worlds/appearing_obstacle.world", "examples/gazebo/models/robot.urdf",
+        "examples/gazebo/worlds/adaptive_clearance.world", "examples/gazebo/models/robot.urdf",
         "examples/gazebo/models/appearing_obstacle.sdf",
         "examples/gazebo/Dockerfile", "examples/gazebo/run_demo.sh",
         "examples/gazebo/scripts/demo_driver.py", "examples/gazebo/scripts/spawn_obstacle.py",
@@ -70,7 +75,7 @@ def main():
     result = {
         "schema_version": 1,
         "evidence_scope": "Gazebo Classic simulation; not physical-robot validation",
-        "scenario": "an obstacle is spawned on the upstream path after motion begins",
+        "scenario": "open-space appearing-obstacle avoidance, centerline recovery, then a 1.0 m gate",
         "ros_distribution": os.environ.get("ROS_DISTRO", "unknown"),
         "gazebo_version": os.environ.get("BAC_GAZEBO_VERSION", "unknown"),
         "package_commit_at_capture": git_value(package_root, "rev-parse", "HEAD"),

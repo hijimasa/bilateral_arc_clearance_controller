@@ -34,7 +34,7 @@ class DemoRecorder(Node):
     def __init__(self):
         super().__init__("bac_demo_recorder")
         self.output_dir = os.environ["BAC_DEMO_OUTPUT"]
-        self.duration = float(os.environ.get("BAC_DEMO_DURATION", "28"))
+        self.duration = float(os.environ.get("BAC_DEMO_DURATION", "34"))
         self.frames_dir = os.path.join(self.output_dir, "frames")
         os.makedirs(self.frames_dir, exist_ok=True)
         self.csv_file = open(os.path.join(self.output_dir, "telemetry.csv"), "w", newline="")
@@ -104,7 +104,7 @@ class DemoRecorder(Node):
 
         status_name = {0: "CLEAR", 1: "AVOIDING", 2: "STOP"}.get(self.status, "UNKNOWN")
         cv2.rectangle(image, (0, 0), (msg.width, 78), (18, 22, 30), -1)
-        cv2.putText(image, "BAC / Gazebo appearing-obstacle evidence", (20, 30),
+        cv2.putText(image, "BAC / Gazebo adaptive-clearance evidence", (20, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
         line = (f"t={elapsed:4.1f}s  status={status_name:<8}  "
                 f"pose=({self.pose[0]:.2f}, {self.pose[1]:+.2f}) m  "

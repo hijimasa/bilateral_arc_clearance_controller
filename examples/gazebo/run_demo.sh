@@ -4,7 +4,7 @@ set -euo pipefail
 DEMO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PACKAGE_ROOT=$(cd "${DEMO_DIR}/../.." && pwd)
 OUTPUT_DIR=${BAC_DEMO_OUTPUT_DIR:-${PACKAGE_ROOT}/docs/media}
-VIDEO_NAME=bac_gazebo_appearing_obstacle
+VIDEO_NAME=bac_gazebo_adaptive_clearance
 WORK_DIR=$(mktemp -d /tmp/bac-gazebo-demo.XXXXXX)
 CAPTURE_DIR=${WORK_DIR}/capture
 WS_DIR=${WORK_DIR}/ws
@@ -39,7 +39,7 @@ set -u
 export LIBGL_ALWAYS_SOFTWARE=1
 export RCUTILS_COLORIZED_OUTPUT=1
 export BAC_DEMO_OUTPUT="${CAPTURE_DIR}"
-export BAC_DEMO_DURATION=${BAC_DEMO_DURATION:-28}
+export BAC_DEMO_DURATION=${BAC_DEMO_DURATION:-34}
 export BAC_GAZEBO_VERSION
 # Gazebo Classic 11 reports its version but exits 255 in some headless builds.
 BAC_GAZEBO_VERSION=$(gazebo --version 2>&1 || true)
@@ -54,7 +54,7 @@ if [[ -z "${DISPLAY:-}" ]]; then
 fi
 
 ros2 launch gazebo_ros gazebo.launch.py \
-  world:="${DEMO_DIR}/worlds/appearing_obstacle.world" gui:=false verbose:=false \
+  world:="${DEMO_DIR}/worlds/adaptive_clearance.world" gui:=false verbose:=false \
   extra_gazebo_args:="--seed 42" \
   >"${CAPTURE_DIR}/gazebo.log" 2>&1 &
 PIDS+=("$!")
@@ -101,10 +101,10 @@ wait "${RECORDER_PID}"
 ffmpeg -hide_banner -loglevel error -y -framerate 12 \
   -i "${CAPTURE_DIR}/frames/frame_%05d.jpg" \
   -c:v libx264 -preset medium -crf 25 -pix_fmt yuv420p -movflags +faststart \
-  -metadata title="BAC Gazebo appearing-obstacle evidence" \
+  -metadata title="BAC Gazebo adaptive-clearance evidence" \
   "${CAPTURE_DIR}/${VIDEO_NAME}.mp4"
 ffmpeg -hide_banner -loglevel error -y \
-  -ss 9 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
+  -ss 25 -i "${CAPTURE_DIR}/${VIDEO_NAME}.mp4" -frames:v 1 \
   "${CAPTURE_DIR}/${VIDEO_NAME}_thumbnail.jpg"
 
 set +e
