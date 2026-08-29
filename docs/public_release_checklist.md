@@ -42,15 +42,14 @@ GitHub Release作成は引き続き所有者が明示的に実施する。
 | 完了 | [公平性を揃えた比較](ablation_and_matched_evaluation.md) | costmap入力、controller reverse不可、並進上限・actuator条件を揃えた216 episodeを検証 |
 | 完了 | [BAC ablation](ablation_and_matched_evaluation.md) | `weights.balance=0`、escape無効、raw scan/costmapの216 episodeを分離評価 |
 | 一部完了 | 現行 baseline | RPP、MPPI、DWBは比較済み。Collision Monitor併用条件は未評価 |
-| 完了 | [Gazebo動画](ablation_and_matched_evaluation.md#gazebo動画1系列) | 1系列をcommit・入力hash・同期telemetry・接触判定・simulation表示とともに保存 |
+| 完了 | [比較・Gazebo動画](ablation_and_matched_evaluation.md#動画evidence) | BAC/DWB同期replayと、回避・復帰・1.0 m gateのGazebo 1系列をhash・telemetry・接触判定とともに保存 |
 | 未完了 | 実機 evidence | localization offset、出現障害物、通過不能幅の stop/escape を動画と log で示す |
 | 未完了 | 性能予算の CI 化 | core microbenchmark の regression 閾値を、runner ノイズを考慮して設定する |
 
 比較結果には「何を同一にし、何が controller 固有で異なるか」を表で残す。3 回の deterministic run は
-独立な統計標本として扱わず、再現性確認と位置付ける。Gazebo動画1系列はsimulation-first公開のデモには
-使えるが、実機evidenceや安全検証の代替にはしない。
-2026-08-29のBAC 1系列は7判定を通過した。これは4 controllerの公平比較動画ではなく、Gazebo上の
-sensor-to-actuator統合evidenceとして扱う。
+独立な統計標本として扱わず、再現性確認と位置付ける。matched traceの左右比較は選択したrunのreplayで、
+集計表の代替ではない。Gazebo 1系列はsimulation-first公開のデモには使えるが、実機evidenceや安全検証の
+代替にはしない。2026-08-29のBAC 1系列は8判定を通過し、Gazebo上のsensor-to-actuator統合evidenceとして扱う。
 
 ## P2: 継続的なプロジェクト運営
 

@@ -138,36 +138,43 @@ costmap版37.2 s / 0.118 mとなり、2反復で後退指令を選んだ。出�
 
 結果rootは`results_matched_release_25f12be/`と`results_ablation_release_25f12be/`である。
 
-## Gazebo動画1系列
+## 動画evidence
 
-[![Gazebo出現障害物デモ](media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](media/bac_gazebo_appearing_obstacle.mp4)
+### BAC対DWBの左右比較
 
-数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。Gazeboの
-差動駆動、ray sensor、odometry、body contact sensor、固定cameraを使い、上流は最大0.35 m/sの中心線追従指令を
-与える。odometryがx = 1.0 mへ到達した時点で、進路に一部重なるoffset障害物を出現させた。BACのJazzy
-Nav2 adapterはこのHumble
-環境ではビルドせず、同じ`bac_core`を使う`bac_filter_node`を接続した。
+[![BAC対DWBのmatched benchmark同期replay](media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+
+matched datasetの`appearing_obstacle/run1`を左右で同期し、2倍速で再生した25.5 sの動画である。同じ
+world、出現時刻、初期状態で、BACは25.6 sで完走し、DWBは最終的に`aborted_6`となった。画面下の
+「BAC 3/3、DWB 0/3（abort 2、timeout 1）」はrun 1だけでなく同条件3反復の集計である。
+[evidence JSON](media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)にworld、両trace、episode、renderer、
+出力のSHA-256を保存した。これは保存済み2D ray-cast traceのreplayであり、Gazeboや実機の映像ではない。
+
+### Gazebo adaptive-clearance 1系列
+
+[![Gazebo adaptive-clearanceデモ](media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](media/bac_gazebo_adaptive_clearance.mp4)
+
+数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。20 Hz
+ray sensor、odometry、body contact sensor、差動駆動を接続し、上流は最大0.35 m/sで中心線を追従する。
+x = 1.0 mでoffset障害物を出現させ、回避・中心線復帰・幅1.0 mのgate通過を左から右への連続takeにした。
+0.50 mのbodyと左右0.12 mの設定marginを合わせた必要幅は0.74 mである。Humble環境ではJazzy Nav2
+adapterを除外し、同じ`bac_core`を使う`bac_filter_node`を接続した。
 
 | 判定量 | 結果 |
 |---|---:|
-| 動画 | 27.1 s、960 × 540、12 fps、325 frame |
-| `AVOIDING` | 143 frame |
-| `STOP` | 1 frame（sensor/odom立ち上がり時） |
-| 最終進行距離 x | 9.21 m |
-| 最大横偏差 | 1.23 m |
-| 終了時横位置 y | -0.30 m |
+| 動画 | 約33.1 s、960 × 540、12 fps、約400 frame |
+| 最大横偏差 | 0.37 m |
+| 最大偏差から`abs(y) <= 0.10 m`まで | 約9.6 s |
+| gate直前の最大`abs(y)` | 0.07 m |
+| gate内の最大`abs(y)` | 0.03 m |
+| 最終進行距離 x | 11.08 m |
 | body contact | 0 |
 
 動画内に時刻、状態、pose、出力commandと「実機検証ではない」旨を重畳した。全frameと同期した
-[telemetry CSV](media/bac_gazebo_appearing_obstacle_telemetry.csv)、7判定の
-[evidence JSON](media/bac_gazebo_appearing_obstacle_evidence.json)、Docker/world/URDF/収録・評価scriptを含む
-[再現手順](../examples/gazebo/README.md)を保存している。JSONは収録時commitと、core・filter・world・robot・
-設定のSHA-256を記録する。
+[telemetry CSV](media/bac_gazebo_adaptive_clearance_telemetry.csv)、8判定の
+[evidence JSON](media/bac_gazebo_adaptive_clearance_evidence.json)、Docker/world/URDF/収録・評価scriptを含む
+[再現手順](../examples/gazebo/README.md)を保存する。JSONは収録時commitと主要入力のSHA-256を記録する。
 
-同じclean commit・seed・位置triggerで直前に行った確認runも7/7判定を通過し、331 frame、
-`AVOIDING` 145 frame、最終x 9.19 m、最大横偏差1.229 m、body contact 0だった。採用runとの差は小さいが、
-この2反復も独立な統計標本ではなく、再現性のsanity checkとしてのみ扱う。
-
-これはGazebo上でsensorからactuatorまで接続できることと、当該1条件で接触せず通過したことを示す
-定性的な統合evidenceである。上記の4 controller比較は専用2D raycast simulatorの別データであり、この
-動画は公平比較を再現していない。独立な成功確率、実機の遅延・滑り・外れ値、安全性を示すものでもない。
+これはGazebo上でsensor-to-actuator接続が動き、当該1条件で広い場所の余裕と狭所通過を両立したという
+定性的な統合evidenceである。左右比較とはsimulatorもデータも別であり、独立な成功確率、実機の遅延・
+滑り・外れ値、安全性を示すものではない。

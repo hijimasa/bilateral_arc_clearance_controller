@@ -46,16 +46,16 @@ of the public identity.
 | Done | [Matched comparison](ablation_and_matched_evaluation.md) | Verified 216 episodes with costmap input, no controller reverse candidates, and common forward/actuator constraints |
 | Done | [BAC ablation](ablation_and_matched_evaluation.md) | Separated `weights.balance=0`, escape disabled, and raw-scan versus costmap behavior over 216 episodes |
 | Partial | Current baselines | RPP, MPPI, and DWB are covered; the Collision Monitor combined condition remains open |
-| Done | [Gazebo video](ablation_and_matched_evaluation.md#one-series-gazebo-video) | Stored one series with commit/input hashes, synchronized telemetry, contact checks, and simulation labeling |
+| Done | [Comparison and Gazebo videos](ablation_and_matched_evaluation.md#video-evidence) | Stored a synchronized BAC/DWB replay and a Gazebo avoidance/recovery/1.0 m-gate series with hashes, telemetry, and contact checks |
 | Open | Physical-robot evidence | Record localization offset, appearing obstacle, and impassable-gap stop/escape cases with logs |
 | Open | Performance budget in CI | Set a core regression threshold that accounts for runner noise |
 
 For every comparison, retain a table of what is matched and what necessarily differs by controller. Three
-deterministic repetitions demonstrate reproducibility; they are not independent statistical samples. One Gazebo
+deterministic repetitions demonstrate reproducibility; they are not independent statistical samples. The
+side-by-side matched-trace video replays one selected run and does not replace the aggregate table. One Gazebo
 series is suitable for a simulation-first launch demo, but is not a substitute for physical evidence or safety
-validation.
-The 2026-08-29 BAC-only series passed seven gates. It is sensor-to-actuator Gazebo integration evidence, not a
-video reproduction of the four-controller matched comparison.
+validation. The 2026-08-29 BAC-only series passed eight gates and is sensor-to-actuator Gazebo integration
+evidence; it is separate from the matched comparison.
 
 ## P2: continuing project operation
 

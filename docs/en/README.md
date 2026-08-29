@@ -35,4 +35,5 @@ and claims, use the root README, the user documentation above, and the latest st
 - [BAC geometry](../images/bac_geometry.svg): candidate arc, path projection, and bilateral clearance
 - [Matched appearing-obstacle trajectories](../images/matched_appearing_obstacle.png): BAC/DWB/MPPI/RPP overlay
 - [Extreme-offset ablation trajectories](../images/ablation_extreme_offset.png): four BAC variants
-- [Gazebo appearing-obstacle video](../media/bac_gazebo_appearing_obstacle.mp4): one BAC-filter sensor-to-actuator run
+- [BAC-versus-DWB side-by-side video](../media/bac_vs_dwb_matched_appearing_obstacle.mp4): synchronized replay of matched benchmark run 1
+- [Gazebo adaptive-clearance video](../media/bac_gazebo_adaptive_clearance.mp4): one continuous avoidance, recovery, and 1.0 m-gate run

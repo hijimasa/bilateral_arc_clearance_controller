@@ -67,20 +67,28 @@ physical-robot safety evidence, or proof of general superiority. See the
 [method comparison](docs/en/method_comparison.md) for conditions, limitations, earlier feature-enabled results,
 and design differences from existing controllers.
 
-### Gazebo evidence run
+### Visual evidence
 
-[![BAC passing an obstacle spawned in Gazebo](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
+[![BAC and DWB replayed side by side](docs/media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)
 
-[Watch the 27.1 s MP4](docs/media/bac_gazebo_appearing_obstacle.mp4). A separate Gazebo Classic 11 / ROS 2
-Humble run drives the BAC filter from simulated 20 Hz LiDAR, odometry, and an upstream centerline follower.
-An offset obstacle appears after motion starts. BAC entered `AVOIDING`, passed without a body contact, returned
-to `CLEAR`, progressed to x = 9.21 m, and returned from a 1.23 m maximum lateral detour to y = -0.30 m by the end.
-The synchronized [telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv),
-[machine-readable checks and input hashes](docs/media/bac_gazebo_appearing_obstacle_evidence.json), and
+[Watch the 25.5 s side-by-side MP4](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4). It synchronously
+replays run 1 of the matched `appearing_obstacle` benchmark at 2x speed: BAC completed the run, while DWB
+eventually aborted. The annotation also reports the three-repeat result (BAC 3/3, DWB 0/3). This is a replay
+of stored deterministic 2D ray-cast traces—not Gazebo footage—and its
+[input/output hashes](docs/media/bac_vs_dwb_matched_appearing_obstacle_evidence.json) accompany it.
+
+[![BAC demonstrating adaptive clearance in Gazebo](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
+
+[Watch the 33.1 s Gazebo MP4](docs/media/bac_gazebo_adaptive_clearance.mp4). In one continuous left-to-right
+take, an offset obstacle appears after motion starts, BAC detours by 0.37 m, returns to within 0.07 m of the
+centerline, and passes through a 1.0 m gate with its center within 0.03 m of the gate center. The 0.50 m body
+plus configured side margins requires 0.74 m. It reached x = 11.08 m with no body contact. Synchronized
+[telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv),
+[machine-readable checks and input hashes](docs/media/bac_gazebo_adaptive_clearance_evidence.json), and the
 [reproduction harness](examples/gazebo/README.md) accompany the video.
 
-This single BAC run is qualitative integration evidence, not the four-controller matched benchmark above,
-an independent trial, physical-robot evidence, or safety validation.
+The replay supports only its selected matched run and aggregate annotation. The single BAC Gazebo run is
+qualitative integration evidence, not an independent trial, physical-robot evidence, or safety validation.
 
 ## Position in Nav2
 

@@ -1,0 +1,29 @@
+{
+  "controllers": [
+    "bac_matched",
+    "dwb"
+  ],
+  "evidence_scope": "replay of stored deterministic 2D ray-cast Nav2 benchmark traces; not Gazebo or physical-robot footage",
+  "input_sha256": {
+    "left_episode": "7f1edef85782df6ab56e7f9a4f655f943f56987355e89c74b4d8c4ab44d51d81",
+    "left_trace": "118b75463ad557a8ca15a83546ad535d6a4d0832aa4e8d8430eb63e0694b944d",
+    "renderer": "44bd8dd9340a2fdfd716906ad38358962473ba7c3e9631bc81bf9e853f25c8ab",
+    "right_episode": "7b2bae937887fde91b19abc37a97a30691bd2db5dd366ad6fabea6c05b97179b",
+    "right_trace": "631cf8d558e74e9d6a492a6afba156d210c3d4e8baebb2effc229f71e39e0588",
+    "world": "096094f939c7f61a0528202e13cd44e21aac8ec06f1e3347ec9a7bd4e0a1b0c2"
+  },
+  "outcomes": {
+    "bac_matched": "success",
+    "dwb": "aborted_6"
+  },
+  "output_sha256": {
+    "bac_vs_dwb_matched_appearing_obstacle.mp4": "6d00478a0f19f7706fa20fba780926f8735a519b60029ad757f792d9fbf2b248",
+    "bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg": "30cb13bc8c1440fc02aa6bf65bc21c134128e5cb084da05f9ff5c5d4b291a605"
+  },
+  "playback_speed": 2.0,
+  "results_root_label": "results_matched_release_25f12be",
+  "run": "run1",
+  "scenario": "appearing_obstacle",
+  "schema_version": 1,
+  "summary_annotation": "Three matched repeats: BAC 3/3 completed \u00b7 DWB 0/3 (2 aborted, 1 timeout)"
+}

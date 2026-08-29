@@ -144,37 +144,47 @@ Both datasets passed the following checks:
 
 The result roots are `results_matched_release_25f12be/` and `results_ablation_release_25f12be/`.
 
-## One-series Gazebo video
+## Video evidence
 
-[![Gazebo appearing-obstacle demo](../media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](../media/bac_gazebo_appearing_obstacle.mp4)
+### BAC-versus-DWB side-by-side replay
+
+[![Synchronized BAC-versus-DWB matched benchmark replay](../media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](../media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+
+The 25.5 s video synchronizes `appearing_obstacle/run1` from the matched dataset and plays simulation time at 2x.
+With the same world, obstacle appearance time, and initial state, BAC completed in 25.6 s and DWB eventually
+ended as `aborted_6`. The footer's BAC 3/3 versus DWB 0/3 (two aborts, one timeout) is the three-repeat aggregate,
+not a claim derived from run 1 alone. The [evidence JSON](../media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)
+stores SHA-256 hashes for the world, both traces and episodes, renderer, and outputs. This is a replay of stored
+deterministic 2D ray-cast traces, not Gazebo or physical-robot footage.
+
+### One-series Gazebo adaptive-clearance video
+
+[![Gazebo adaptive-clearance demo](../media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](../media/bac_gazebo_adaptive_clearance.mp4)
 
 A BAC-only series, independent of the numerical benchmark, was captured with Gazebo Classic 11.10.2 and ROS 2
-Humble. It uses Gazebo differential-drive, ray-sensor, odometry, body-contact, and fixed-camera plugins. The
-upstream command is a centerline follower capped at 0.35 m/s; when odometry reaches x = 1.0 m, an offset obstacle appears partially
-across that path. The Jazzy Nav2 adapter is not built in this Humble environment; the run connects
-`bac_filter_node`, which uses the same `bac_core`.
+Humble. It connects a 20 Hz ray sensor, odometry, body contact, and differential drive. An upstream centerline
+follower is capped at 0.35 m/s. An offset obstacle appears at x = 1.0 m; the continuous left-to-right take then
+shows avoidance, centerline recovery, and passage through a 1.0 m gate. The 0.50 m body plus two configured
+0.12 m margins requires 0.74 m. The Humble run excludes the Jazzy Nav2 adapter and connects `bac_filter_node`,
+which uses the same `bac_core`.
 
 | Check | Result |
 |---|---:|
-| Video | 27.1 s, 960 × 540, 12 fps, 325 frames |
-| `AVOIDING` | 143 frames |
-| `STOP` | 1 startup frame while sensor/odometry initialized |
-| Final x progress | 9.21 m |
-| Maximum lateral detour | 1.23 m |
-| Final y position | -0.30 m |
+| Video | about 33.1 s, 960 × 540, 12 fps, about 400 frames |
+| Maximum lateral detour | 0.37 m |
+| Maximum detour to `abs(y) <= 0.10 m` | about 9.6 s |
+| Maximum `abs(y)` immediately before gate | 0.07 m |
+| Maximum `abs(y)` inside gate | 0.03 m |
+| Final x progress | 11.08 m |
 | Body contacts | 0 |
 
 The video overlays time, state, pose, output command, and an explicit no-physical-validation label. It is
-accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_appearing_obstacle_telemetry.csv), a
-seven-gate [evidence JSON](../media/bac_gazebo_appearing_obstacle_evidence.json), and a
-[reproduction harness](../../examples/gazebo/README.md) containing Docker, world, URDF, recorder, and evaluator
-inputs. The JSON records the capture commit and SHA-256 hashes for the core, filter, world, robot, and settings.
+accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_adaptive_clearance_telemetry.csv), an
+eight-gate [evidence JSON](../media/bac_gazebo_adaptive_clearance_evidence.json), and a
+[reproduction harness](../../examples/gazebo/README.md). The JSON records the capture commit and SHA-256 hashes
+for the principal inputs.
 
-An immediately preceding run from the same clean commit, seed, and position trigger also passed 7/7 gates:
-331 frames, 145 `AVOIDING` frames, final x = 9.19 m, maximum lateral detour 1.229 m, and zero body contacts.
-These two repeats are a reproducibility sanity check, not independent statistical samples.
-
-This is qualitative integration evidence that the sensor-to-actuator chain worked and passed this one Gazebo
-condition without contact. The four-controller comparison above is separate data from a dedicated 2D ray-cast
-simulator; the video does not reproduce that matched comparison. It is also not an independent success-rate
-sample, physical latency/slip/outlier evidence, or safety validation.
+This is qualitative evidence that the sensor-to-actuator chain worked and combined open-space clearance with
+narrow-passage traversal in this one Gazebo condition. It uses a different simulator and dataset from the
+side-by-side replay. Neither video establishes an independent success probability, physical latency/slip/outlier
+performance, or safety validation.
