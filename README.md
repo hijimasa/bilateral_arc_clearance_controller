@@ -69,21 +69,22 @@ and design differences from existing controllers.
 
 ### Visual evidence
 
-[![BAC and DWB replayed side by side](docs/media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+![BAC and DWB replayed side by side](docs/media/bac_vs_dwb_matched_appearing_obstacle_preview.gif)
 
-[Watch the 25.5 s side-by-side MP4](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4). It synchronously
-replays run 1 of the matched `appearing_obstacle` benchmark at 2x speed: BAC completed the run, while DWB
-eventually aborted. The annotation also reports the three-repeat result (BAC 3/3, DWB 0/3). This is a replay
-of stored deterministic 2D ray-cast traces—not Gazebo footage—and its
+[Download the higher-quality 25.5 s side-by-side MP4](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4).
+The inline GIF synchronously replays run 1 of the matched `appearing_obstacle` benchmark at 2x speed: BAC
+completed the run, while DWB eventually aborted. The annotation also reports the three-repeat result (BAC 3/3,
+DWB 0/3). This is a replay of stored deterministic 2D ray-cast traces—not Gazebo footage—and its
 [input/output hashes](docs/media/bac_vs_dwb_matched_appearing_obstacle_evidence.json) accompany it.
 
-[![BAC demonstrating adaptive clearance in Gazebo](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
+![BAC demonstrating adaptive clearance in Gazebo](docs/media/bac_gazebo_adaptive_clearance_preview.gif)
 
-[Watch the 35.2 s Gazebo MP4](docs/media/bac_gazebo_adaptive_clearance.mp4). In one continuous left-to-right
-take, BAC keeps 0.31 m of physical-body clearance from a static offset obstacle while detouring by 0.80 m,
-returns to within 0.30 m of the centerline in 8.3 s, and passes through a 1.0 m gate with its center within
-0.013 m of the gate center. The 0.50 m body plus configured side margins requires 0.74 m. It reached x =
-12.03 m with no stop or body contact. The demo uses a disclosed 2.5 m local obstacle horizon. Synchronized
+[Download the higher-quality 35.2 s Gazebo MP4](docs/media/bac_gazebo_adaptive_clearance.mp4). In the continuous
+left-to-right take shown by the inline GIF, BAC keeps 0.31 m of physical-body clearance from a static offset
+obstacle while detouring by 0.80 m, returns to within 0.30 m of the centerline in 8.3 s, and passes through a
+1.0 m gate with its center within 0.013 m of the gate center. The 0.50 m body plus configured side margins
+requires 0.74 m. It reached x = 12.03 m with no stop or body contact. The demo uses a disclosed 2.5 m local
+obstacle horizon. Synchronized
 [telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv),
 [machine-readable checks and input hashes](docs/media/bac_gazebo_adaptive_clearance_evidence.json), and the
 [reproduction harness](examples/gazebo/README.md) accompany the video.

@@ -64,20 +64,20 @@ clutterの1反復では完走まで82.8 s停止しました。別のBACアブレ
 
 ### 動画evidence
 
-[![BACとDWBの左右同期replay](docs/media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+![BACとDWBの左右同期replay](docs/media/bac_vs_dwb_matched_appearing_obstacle_preview.gif)
 
-[25.5秒の左右比較MP4を見る](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)。matched
-`appearing_obstacle/run1`をsimulation時刻で同期し2倍速再生した。BACは完走し、DWBは最終的に中断した。
-画面下には3反復集計（BAC 3/3、DWB 0/3）も区別して表示する。これは保存済み2D ray-cast traceの
+[高画質な25.5秒の左右比較MP4をダウンロード](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)。上のGIFは
+matched `appearing_obstacle/run1`をsimulation時刻で同期し2倍速再生した。BACは完走し、DWBは最終的に
+中断した。画面下には3反復集計（BAC 3/3、DWB 0/3）も区別して表示する。これは保存済み2D ray-cast traceの
 replayでGazebo映像ではなく、[入出力hash](docs/media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)を
 併記している。
 
-[![Gazeboで余裕を持つ回避と狭所通過を行うBAC](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
+![Gazeboで余裕を持つ回避と狭所通過を行うBAC](docs/media/bac_gazebo_adaptive_clearance_preview.gif)
 
-[35.2秒のGazebo MP4を見る](docs/media/bac_gazebo_adaptive_clearance.mp4)。左から右への連続takeで、静的
-offset障害物から車体距離0.31 mを保ちつつ0.80 m迂回し、8.3秒で中心線から0.30 m以内へ復帰した後、
-幅1.0 mのgateを中心偏差0.013 m以内で通過した。車体0.50 mと左右marginを合わせた必要幅は0.74 mで、
-最終x=12.03 m、停止・車体接触0だった。局所障害物horizonは明記した2.5 mである。
+[高画質な35.2秒のGazebo MP4をダウンロード](docs/media/bac_gazebo_adaptive_clearance.mp4)。上のGIFに示す
+左から右への連続takeで、静的offset障害物から車体距離0.31 mを保ちつつ0.80 m迂回し、8.3秒で中心線から
+0.30 m以内へ復帰した後、幅1.0 mのgateを中心偏差0.013 m以内で通過した。車体0.50 mと左右marginを
+合わせた必要幅は0.74 mで、最終x=12.03 m、停止・車体接触0だった。局所障害物horizonは明記した2.5 mである。
 [同期telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv)、
 [9判定と入力hash](docs/media/bac_gazebo_adaptive_clearance_evidence.json)、
 [再現環境](examples/gazebo/README.md)を保存している。

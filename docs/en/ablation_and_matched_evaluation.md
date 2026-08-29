@@ -148,10 +148,11 @@ The result roots are `results_matched_release_25f12be/` and `results_ablation_re
 
 ### BAC-versus-DWB side-by-side replay
 
-[![Synchronized BAC-versus-DWB matched benchmark replay](../media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](../media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+![Synchronized BAC-versus-DWB matched benchmark replay](../media/bac_vs_dwb_matched_appearing_obstacle_preview.gif)
 
-The 25.5 s video synchronizes `appearing_obstacle/run1` from the matched dataset and plays simulation time at 2x.
-With the same world, obstacle appearance time, and initial state, BAC completed in 25.6 s and DWB eventually
+The 25.5 s GIF preview synchronizes `appearing_obstacle/run1` from the matched dataset and plays simulation time
+at 2x; a [higher-quality MP4](../media/bac_vs_dwb_matched_appearing_obstacle.mp4) is also retained. With the same
+world, obstacle appearance time, and initial state, BAC completed in 25.6 s and DWB eventually
 ended as `aborted_6`. The footer's BAC 3/3 versus DWB 0/3 (two aborts, one timeout) is the three-repeat aggregate,
 not a claim derived from run 1 alone. The [evidence JSON](../media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)
 stores SHA-256 hashes for the world, both traces and episodes, renderer, and outputs. This is a replay of stored
@@ -159,10 +160,11 @@ deterministic 2D ray-cast traces, not Gazebo or physical-robot footage.
 
 ### One-series Gazebo adaptive-clearance video
 
-[![Gazebo adaptive-clearance demo](../media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](../media/bac_gazebo_adaptive_clearance.mp4)
+![Gazebo adaptive-clearance demo](../media/bac_gazebo_adaptive_clearance_preview.gif)
 
 A BAC-only series, independent of the numerical benchmark, was captured with Gazebo Classic 11.10.2 and ROS 2
-Humble. It connects a 20 Hz ray sensor, odometry, body contact, and differential drive. An upstream centerline
+Humble. The inline GIF is accompanied by a [higher-quality MP4](../media/bac_gazebo_adaptive_clearance.mp4).
+The run connects a 20 Hz ray sensor, odometry, body contact, and differential drive. An upstream centerline
 follower is capped at 0.35 m/s. The continuous left-to-right take shows avoidance of a static offset obstacle,
 centerline recovery, and passage through a 1.0 m gate. The local-obstacle input horizon is 2.5 m, a disclosed
 finite-local-costmap-like demo condition rather than a default recommendation. The 0.50 m body plus two configured

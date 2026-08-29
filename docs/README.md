@@ -29,5 +29,7 @@
 - [BAC geometry](images/bac_geometry.svg): 候補円弧、path projection、左右クリアランス
 - [公平条件・出現障害物](images/matched_appearing_obstacle.png): BAC/DWB/MPPI/RPPの軌跡overlay
 - [極狭路offset ablation](images/ablation_extreme_offset.png): BAC 4 variantの軌跡overlay
-- [BAC対DWB左右比較動画](media/bac_vs_dwb_matched_appearing_obstacle.mp4): matched benchmark run 1の同期replay
-- [Gazebo adaptive-clearance動画](media/bac_gazebo_adaptive_clearance.mp4): 回避・復帰・1.0 mゲート通過の連続1系列
+- [BAC対DWB左右比較GIF](media/bac_vs_dwb_matched_appearing_obstacle_preview.gif)
+  ([高画質MP4](media/bac_vs_dwb_matched_appearing_obstacle.mp4)): matched benchmark run 1の同期replay
+- [Gazebo adaptive-clearance GIF](media/bac_gazebo_adaptive_clearance_preview.gif)
+  ([高画質MP4](media/bac_gazebo_adaptive_clearance.mp4)): 回避・復帰・1.0 mゲート通過の連続1系列

@@ -142,9 +142,10 @@ costmap版37.2 s / 0.118 mとなり、2反復で後退指令を選んだ。出�
 
 ### BAC対DWBの左右比較
 
-[![BAC対DWBのmatched benchmark同期replay](media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](media/bac_vs_dwb_matched_appearing_obstacle.mp4)
+![BAC対DWBのmatched benchmark同期replay](media/bac_vs_dwb_matched_appearing_obstacle_preview.gif)
 
-matched datasetの`appearing_obstacle/run1`を左右で同期し、2倍速で再生した25.5 sの動画である。同じ
+matched datasetの`appearing_obstacle/run1`を左右で同期し、2倍速で再生した25.5 sのGIF previewである。
+[高画質MP4](media/bac_vs_dwb_matched_appearing_obstacle.mp4)も保存している。同じ
 world、出現時刻、初期状態で、BACは25.6 sで完走し、DWBは最終的に`aborted_6`となった。画面下の
 「BAC 3/3、DWB 0/3（abort 2、timeout 1）」はrun 1だけでなく同条件3反復の集計である。
 [evidence JSON](media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)にworld、両trace、episode、renderer、
@@ -152,9 +153,10 @@ world、出現時刻、初期状態で、BACは25.6 sで完走し、DWBは最終
 
 ### Gazebo adaptive-clearance 1系列
 
-[![Gazebo adaptive-clearanceデモ](media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](media/bac_gazebo_adaptive_clearance.mp4)
+![Gazebo adaptive-clearanceデモ](media/bac_gazebo_adaptive_clearance_preview.gif)
 
-数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。20 Hz
+数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。上には
+GitHub上で再生できるGIF previewを掲載し、[高画質MP4](media/bac_gazebo_adaptive_clearance.mp4)も保存する。20 Hz
 ray sensor、odometry、body contact sensor、差動駆動を接続し、上流は最大0.35 m/sで中心線を追従する。
 静的offset障害物の回避・中心線復帰・幅1.0 mのgate通過を左から右への連続takeにした。局所障害物の
 入力horizonは2.5 mで、有限local costmap相当のデモ条件であり、default推奨値ではない。
