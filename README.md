@@ -79,10 +79,11 @@ of stored deterministic 2D ray-cast traces—not Gazebo footage—and its
 
 [![BAC demonstrating adaptive clearance in Gazebo](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
 
-[Watch the 33.1 s Gazebo MP4](docs/media/bac_gazebo_adaptive_clearance.mp4). In one continuous left-to-right
-take, an offset obstacle appears after motion starts, BAC detours by 0.37 m, returns to within 0.07 m of the
-centerline, and passes through a 1.0 m gate with its center within 0.03 m of the gate center. The 0.50 m body
-plus configured side margins requires 0.74 m. It reached x = 11.08 m with no body contact. Synchronized
+[Watch the 34.9 s Gazebo MP4](docs/media/bac_gazebo_adaptive_clearance.mp4). In one continuous left-to-right
+take, BAC keeps 0.31 m of physical-body clearance from a static offset obstacle while detouring by 0.80 m,
+returns to within 0.30 m of the centerline in 8.3 s, and passes through a 1.0 m gate with its center within
+0.014 m of the gate center. The 0.50 m body plus configured side margins requires 0.74 m. It reached x =
+11.91 m with no stop or body contact. The demo uses a disclosed 2.5 m local obstacle horizon. Synchronized
 [telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv),
 [machine-readable checks and input hashes](docs/media/bac_gazebo_adaptive_clearance_evidence.json), and the
 [reproduction harness](examples/gazebo/README.md) accompany the video.

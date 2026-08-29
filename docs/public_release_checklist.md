@@ -49,7 +49,7 @@ GitHub Release作成は引き続き所有者が明示的に実施する。
 比較結果には「何を同一にし、何が controller 固有で異なるか」を表で残す。3 回の deterministic run は
 独立な統計標本として扱わず、再現性確認と位置付ける。matched traceの左右比較は選択したrunのreplayで、
 集計表の代替ではない。Gazebo 1系列はsimulation-first公開のデモには使えるが、実機evidenceや安全検証の
-代替にはしない。2026-08-29のBAC 1系列は8判定を通過し、Gazebo上のsensor-to-actuator統合evidenceとして扱う。
+代替にはしない。2026-08-29のBAC 1系列は9判定を通過し、Gazebo上のsensor-to-actuator統合evidenceとして扱う。
 
 ## P2: 継続的なプロジェクト運営
 

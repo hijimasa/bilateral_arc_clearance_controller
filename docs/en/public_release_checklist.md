@@ -54,7 +54,7 @@ For every comparison, retain a table of what is matched and what necessarily dif
 deterministic repetitions demonstrate reproducibility; they are not independent statistical samples. The
 side-by-side matched-trace video replays one selected run and does not replace the aggregate table. One Gazebo
 series is suitable for a simulation-first launch demo, but is not a substitute for physical evidence or safety
-validation. The 2026-08-29 BAC-only series passed eight gates and is sensor-to-actuator Gazebo integration
+validation. The 2026-08-29 BAC-only series passed nine gates and is sensor-to-actuator Gazebo integration
 evidence; it is separate from the matched comparison.
 
 ## P2: continuing project operation

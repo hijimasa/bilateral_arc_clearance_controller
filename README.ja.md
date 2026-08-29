@@ -62,19 +62,27 @@ clutterの1反復では完走まで82.8 s停止しました。別のBACアブレ
 [公平条件比較とアブレーション](docs/ablation_and_matched_evaluation.md)および
 [手法比較](docs/method_comparison.md)を参照してください。
 
-### Gazebo evidence動画
+### 動画evidence
 
-[![Gazeboで出現した障害物を通過するBAC](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
+[![BACとDWBの左右同期replay](docs/media/bac_vs_dwb_matched_appearing_obstacle_thumbnail.jpg)](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)
 
-[27.1秒のMP4を見る](docs/media/bac_gazebo_appearing_obstacle.mp4)。別系列のGazebo Classic 11 / ROS 2
-Humble環境で、20 Hz LiDAR・odometry・上流の中心線追従指令をBAC filterへ入力した。走行開始後にoffset
-障害物を出現させ、BACは`AVOIDING`へ遷移し、車体接触なしで通過して`CLEAR`へ復帰した。最終xは
-9.21 m、最大横偏差1.23 mから終了時y = -0.30 mまで中心線へ復帰した。
-[同期telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv)、
-[機械可読な判定・入力hash](docs/media/bac_gazebo_appearing_obstacle_evidence.json)、
-[再現環境](examples/gazebo/README.md)を動画とともに保存している。
+[25.5秒の左右比較MP4を見る](docs/media/bac_vs_dwb_matched_appearing_obstacle.mp4)。matched
+`appearing_obstacle/run1`をsimulation時刻で同期し2倍速再生した。BACは完走し、DWBは最終的に中断した。
+画面下には3反復集計（BAC 3/3、DWB 0/3）も区別して表示する。これは保存済み2D ray-cast traceの
+replayでGazebo映像ではなく、[入出力hash](docs/media/bac_vs_dwb_matched_appearing_obstacle_evidence.json)を
+併記している。
 
-このBAC 1系列は定性的な統合evidenceであり、上記4 controllerの公平条件比較、独立反復、実機evidence、
+[![Gazeboで余裕を持つ回避と狭所通過を行うBAC](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
+
+[34.9秒のGazebo MP4を見る](docs/media/bac_gazebo_adaptive_clearance.mp4)。左から右への連続takeで、静的
+offset障害物から車体距離0.31 mを保ちつつ0.80 m迂回し、8.3秒で中心線から0.30 m以内へ復帰した後、
+幅1.0 mのgateを中心偏差0.014 m以内で通過した。車体0.50 mと左右marginを合わせた必要幅は0.74 mで、
+最終x=11.91 m、停止・車体接触0だった。局所障害物horizonは明記した2.5 mである。
+[同期telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv)、
+[9判定と入力hash](docs/media/bac_gazebo_adaptive_clearance_evidence.json)、
+[再現環境](examples/gazebo/README.md)を保存している。
+
+左右replayは選択runと集計の可視化、Gazebo 1系列は定性的な統合evidenceであり、独立反復、実機evidence、
 安全検証の代替ではない。
 
 ## Nav2での位置づけ

@@ -163,24 +163,28 @@ deterministic 2D ray-cast traces, not Gazebo or physical-robot footage.
 
 A BAC-only series, independent of the numerical benchmark, was captured with Gazebo Classic 11.10.2 and ROS 2
 Humble. It connects a 20 Hz ray sensor, odometry, body contact, and differential drive. An upstream centerline
-follower is capped at 0.35 m/s. An offset obstacle appears at x = 1.0 m; the continuous left-to-right take then
-shows avoidance, centerline recovery, and passage through a 1.0 m gate. The 0.50 m body plus two configured
+follower is capped at 0.35 m/s. The continuous left-to-right take shows avoidance of a static offset obstacle,
+centerline recovery, and passage through a 1.0 m gate. The local-obstacle input horizon is 2.5 m, a disclosed
+finite-local-costmap-like demo condition rather than a default recommendation. The 0.50 m body plus two configured
 0.12 m margins requires 0.74 m. The Humble run excludes the Jazzy Nav2 adapter and connects `bac_filter_node`,
 which uses the same `bac_core`.
 
 | Check | Result |
 |---|---:|
-| Video | about 33.1 s, 960 × 540, 12 fps, about 400 frames |
-| Maximum lateral detour | 0.37 m |
-| Maximum detour to `abs(y) <= 0.10 m` | about 9.6 s |
-| Maximum `abs(y)` immediately before gate | 0.07 m |
-| Maximum `abs(y)` inside gate | 0.03 m |
-| Final x progress | 11.08 m |
+| Video | 34.9 s, 960 × 540, 12 fps, 419 frames |
+| Minimum physical-body clearance from obstacle | 0.309 m (2.6x configured side safety margin) |
+| Maximum lateral detour | 0.798 m |
+| Maximum detour to `abs(y) <= 0.30 m` | 8.3 s |
+| Maximum detour to `abs(y) <= 0.10 m` | 13.1 s |
+| Maximum `abs(y)` immediately before gate | 0.042 m |
+| Maximum `abs(y)` inside gate | 0.014 m |
+| Final x progress | 11.91 m |
+| `STOP` | 0 frames |
 | Body contacts | 0 |
 
 The video overlays time, state, pose, output command, and an explicit no-physical-validation label. It is
 accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_adaptive_clearance_telemetry.csv), an
-eight-gate [evidence JSON](../media/bac_gazebo_adaptive_clearance_evidence.json), and a
+nine-gate [evidence JSON](../media/bac_gazebo_adaptive_clearance_evidence.json), and a
 [reproduction harness](../../examples/gazebo/README.md). The JSON records the capture commit and SHA-256 hashes
 for the principal inputs.
 

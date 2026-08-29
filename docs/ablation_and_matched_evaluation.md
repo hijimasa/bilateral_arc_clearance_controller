@@ -156,22 +156,26 @@ world、出現時刻、初期状態で、BACは25.6 sで完走し、DWBは最終
 
 数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。20 Hz
 ray sensor、odometry、body contact sensor、差動駆動を接続し、上流は最大0.35 m/sで中心線を追従する。
-x = 1.0 mでoffset障害物を出現させ、回避・中心線復帰・幅1.0 mのgate通過を左から右への連続takeにした。
+静的offset障害物の回避・中心線復帰・幅1.0 mのgate通過を左から右への連続takeにした。局所障害物の
+入力horizonは2.5 mで、有限local costmap相当のデモ条件であり、default推奨値ではない。
 0.50 mのbodyと左右0.12 mの設定marginを合わせた必要幅は0.74 mである。Humble環境ではJazzy Nav2
 adapterを除外し、同じ`bac_core`を使う`bac_filter_node`を接続した。
 
 | 判定量 | 結果 |
 |---|---:|
-| 動画 | 約33.1 s、960 × 540、12 fps、約400 frame |
-| 最大横偏差 | 0.37 m |
-| 最大偏差から`abs(y) <= 0.10 m`まで | 約9.6 s |
-| gate直前の最大`abs(y)` | 0.07 m |
-| gate内の最大`abs(y)` | 0.03 m |
-| 最終進行距離 x | 11.08 m |
+| 動画 | 34.9 s、960 × 540、12 fps、419 frame |
+| 障害物と物理車体の最小距離 | 0.309 m（設定side safety marginの2.6倍） |
+| 最大横偏差 | 0.798 m |
+| 最大偏差から`abs(y) <= 0.30 m`まで | 8.3 s |
+| 最大偏差から`abs(y) <= 0.10 m`まで | 13.1 s |
+| gate直前の最大`abs(y)` | 0.042 m |
+| gate内の最大`abs(y)` | 0.014 m |
+| 最終進行距離 x | 11.91 m |
+| `STOP` | 0 frame |
 | body contact | 0 |
 
 動画内に時刻、状態、pose、出力commandと「実機検証ではない」旨を重畳した。全frameと同期した
-[telemetry CSV](media/bac_gazebo_adaptive_clearance_telemetry.csv)、8判定の
+[telemetry CSV](media/bac_gazebo_adaptive_clearance_telemetry.csv)、9判定の
 [evidence JSON](media/bac_gazebo_adaptive_clearance_evidence.json)、Docker/world/URDF/収録・評価scriptを含む
 [再現手順](../examples/gazebo/README.md)を保存する。JSONは収録時commitと主要入力のSHA-256を記録する。
 

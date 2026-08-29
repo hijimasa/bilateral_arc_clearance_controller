@@ -73,8 +73,9 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
   escapeの寄与は基準BACが後退を選ばなかったため未同定。
 - 詳細: [BACアブレーションと公平条件比較](ablation_and_matched_evaluation.md)。
 - matched `appearing_obstacle/run1`のBAC/DWB左右同期replayを追加し、3反復集計とデータhashを併記した。
-- Gazebo Classic 11 / ROS 2 Humbleの回避・復帰・1.0 m gate連続1系列へ更新した。最大横偏差0.37 m、
-  gate内中心偏差0.03 m、body contact 0、最終x 11.08 m。動画・同期telemetry・8判定JSONを保存した。
+- Gazebo Classic 11 / ROS 2 Humbleの回避・復帰・1.0 m gate連続1系列へ更新した。車体最小離隔0.309 m、
+  最大横偏差0.798 m、gate内中心偏差0.014 m、body contact 0、最終x 11.91 m。動画・同期telemetry・
+  9判定JSONを保存した。
 
 ## 公開時チェック
 

@@ -81,9 +81,9 @@ the Git tree object, and `worlds_sha`. The container image is
 - Details: [BAC ablation and matched-condition evaluation](ablation_and_matched_evaluation.md).
 - Added a synchronized BAC/DWB replay of matched `appearing_obstacle/run1`, with the three-repeat aggregate and
   input/output hashes.
-- Replaced the Gazebo evidence with one continuous avoidance, recovery, and 1.0 m-gate series. Maximum lateral
-  detour was 0.37 m, in-gate center offset 0.03 m, body contacts zero, and final x 11.08 m; video, synchronized
-  telemetry, eight-gate JSON, and harness are retained.
+- Replaced the Gazebo evidence with one continuous avoidance, recovery, and 1.0 m-gate series. Minimum physical
+  body clearance was 0.309 m, maximum lateral detour 0.798 m, in-gate center offset 0.014 m, body contacts zero,
+  and final x 11.91 m; video, synchronized telemetry, nine-gate JSON, and harness are retained.
 
 ## Publication checklist
 
