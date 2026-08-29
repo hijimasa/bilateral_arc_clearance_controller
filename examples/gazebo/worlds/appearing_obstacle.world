@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="bac_appearing_obstacle">
+    <physics name="default_physics" type="ode">
+      <real_time_update_rate>1000</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- High-contrast lane markers make the detour visible in the video. -->
+    <model name="center_line">
+      <static>true</static>
+      <pose>3.5 0 0.006 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>8.5 0.04 0.01</size></box></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="left_boundary">
+      <static>true</static>
+      <pose>3.5 2.0 0.01 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>8.5 0.06 0.02</size></box></geometry>
+          <material><ambient>0.25 0.85 0.25 1</ambient><diffuse>0.25 0.85 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="right_boundary">
+      <static>true</static>
+      <pose>3.5 -2.0 0.01 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>8.5 0.06 0.02</size></box></geometry>
+          <material><ambient>0.25 0.85 0.25 1</ambient><diffuse>0.25 0.85 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- A fixed ROS camera supplies frames without requiring gzclient/X11. -->
+    <model name="overhead_camera">
+      <static>true</static>
+      <pose>3.5 0 8.5 0 1.57079632679 0</pose>
+      <link name="camera_link">
+        <sensor name="camera" type="camera">
+          <always_on>true</always_on>
+          <update_rate>12</update_rate>
+          <visualize>true</visualize>
+          <camera>
+            <horizontal_fov>1.15</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>30.0</far></clip>
+          </camera>
+          <plugin name="overhead_camera_ros" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/demo_camera</namespace>
+            </ros>
+            <camera_name>overhead</camera_name>
+            <frame_name>overhead_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <scene>
+      <ambient>0.65 0.65 0.65 1</ambient>
+      <background>0.12 0.15 0.20 1</background>
+      <shadows>false</shadows>
+    </scene>
+  </world>
+</sdf>

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="appearing_obstacle">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision"><geometry><box><size>0.65 0.55 0.80</size></box></geometry></collision>
+      <visual name="visual">
+        <geometry><box><size>0.65 0.55 0.80</size></box></geometry>
+        <material><ambient>1.0 0.20 0.03 1</ambient><diffuse>1.0 0.20 0.03 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -38,25 +38,44 @@ BACは、地図上の経路だけに障害物回避を委ねず、robot frameの
 
 ## 評価結果
 
-ROS 2 Jazzyで、同一車体・NavFn・1 Hz再計画・world・2D LiDARシミュレータを使い、正準評価として
-18シナリオ × 3 run × 4 controller = 216 episodeを実行しました。ただし純粋なcontroller algorithm
-だけの比較ではありません。BACは20 Hzのraw scanを直接使い、比較controllerは主に10 Hzのlocal
-costmapを使っており、後退許可条件も異なるため、system-level設定比較として扱います。
+ROS 2 Jazzyで、同一車体・NavFn・1 Hz再計画・world・10 Hz local costmap入力・controller候補は
+前進のみ・共通0.4 m/s上限・共通actuator加速度制限を使い、公平条件評価として18シナリオ × 3 run × 4 controller = 216 episodeを
+実行しました。controller固有の軌道生成、horizon、critic、tuningは必然的に異なります。
+共通Nav2 recovery treeの`BackUp`は有効なため、system全体を前進のみにはしていません。
 
 | controller | 成功 | 衝突 | 成功時平均 | 中央値 | 最接近の最悪値 |
 |---|---:|---:|---:|---:|---:|
-| BAC | 54/54 | 0 | 27.7 s | 28.6 s | 0.136 m |
-| DWB | 50/54 | 4 | 25.2 s | 25.4 s | 0.000 m |
-| MPPI | 51/54 | 0 | 28.6 s | 27.5 s | 0.027 m |
-| RPP | 47/54 | 0 | 24.3 s | 25.0 s | 0.010 m |
+| BAC（matched） | 54/54 | 0 | 29.7 s | 28.4 s | 0.078 m |
+| DWB | 48/54 | 2 | 24.6 s | 25.2 s | 0.000 m |
+| MPPI（matched） | 51/54 | 0 | 27.9 s | 27.3 s | 0.049 m |
+| RPP | 48/54 | 0 | 24.2 s | 24.8 s | 0.016 m |
 
-BACでは、この18シナリオ集合で0.13 m以内への接近と衝突を観測しませんでした。別の1.5 m通路・
-経路横ずれ0.10〜0.25 m sweepでは8/8成功、平均到達時間28.8 s、クリアランス0.225〜0.230 mでした。
-1 runの開口幅sweepでは1.25 mまで完走しましたが、1.15 mではBACだけがtimeoutし、他の3 controllerは
-完走しました。これは限定された決定論的シミュレーション結果で、bilateral clearance単独の因果効果を
-分離していません。一般的な成功確率や実機安全保証でもありません。条件、raw由来の表、
-既存controllerとの設計差は[手法比較](docs/method_comparison.md)を
-参照してください。
+BACはmatched評価の全episodeを完走し、他設定が完走しなかった出現障害物で3/3、1.5 m通路と
+0.25 mの合成自己位置横ずれでも3/3成功しました。一方、Z字路では明確に遅くclearanceも小さく、
+clutterの1反復では完走まで82.8 s停止しました。別のBACアブレーション216 episodeでは、左右均衡項を
+外した極狭路offsetで、平均時間29.2→42.4 s、clearance 0.227→0.174 m、平均横偏差
+0.028→0.053 mとなりました。全variantは54/54完走し、基準BACが後退を選ばなかったためescapeの
+寄与は未同定です。
+
+これは限定的な決定論的シミュレーション観測で、独立な成功確率、実機安全evidence、一般的優越の証明
+ではありません。条件、限界、従来の機能有効system-level評価、既存controllerとの差は
+[公平条件比較とアブレーション](docs/ablation_and_matched_evaluation.md)および
+[手法比較](docs/method_comparison.md)を参照してください。
+
+### Gazebo evidence動画
+
+[![Gazeboで出現した障害物を通過するBAC](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
+
+[27.4秒のMP4を見る](docs/media/bac_gazebo_appearing_obstacle.mp4)。別系列のGazebo Classic 11 / ROS 2
+Humble環境で、20 Hz LiDAR・odometry・上流の直進速度指令をBAC filterへ入力した。走行開始後にoffset
+障害物を出現させ、BACは`AVOIDING`へ遷移し、車体接触なしで通過して`CLEAR`へ復帰した。最終xは
+8.41 m、最大横偏差2.16 mから終了時y = -0.70 mまで中心線へ復帰した。
+[同期telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv)、
+[機械可読な判定・入力hash](docs/media/bac_gazebo_appearing_obstacle_evidence.json)、
+[再現環境](examples/gazebo/README.md)を動画とともに保存している。
+
+このBAC 1系列は定性的な統合evidenceであり、上記4 controllerの公平条件比較、独立反復、実機evidence、
+安全検証の代替ではない。
 
 ## Nav2での位置づけ
 
@@ -134,6 +153,8 @@ python3 test/plot_traces.py --dir traces
 - [Nav2統合ガイド](docs/nav2_integration.md)
 - [パラメータリファレンス](docs/parameters.md)
 - [既存手法との比較と評価](docs/method_comparison.md)
+- [BACアブレーションと公平条件比較](docs/ablation_and_matched_evaluation.md)
+- [再現可能なGazebo evidence](examples/gazebo/README.md)
 - [リリースレビュー履歴](docs/release_review_history.md)
 - [Public 公開準備チェックリスト](docs/public_release_checklist.md)
 

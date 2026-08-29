@@ -5,14 +5,15 @@
 ## 現在の状態
 
 - 確認日: 2026-08-29
-- 評価対象package: `1f9911e`
-- benchmark: `026a17a`
+- 評価対象package: `25f12be`（実装は`1f9911e`と同一、間は文書・公開準備のみ）
+- benchmark: `026a17a`（正準）/ `4fed3d2`（公平条件比較・ablation）
 - 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
 
 全10回のリリースレビューで確認されたCritical / High / Mediumと、第10回のLow 3件は対応済みである。
 全10回のレビュー指摘に対するrelease blockerはない。2026-08-29にROS adapter testと入力source diagnosticsを
-追加した。次cycleへ残す設計・評価項目は、角加速度過渡を積分したrollout、実機外乱評価、Collision Monitor
-併用baseline、比較条件を揃えたablation、`BacCore::process()`の責務分割である。
+追加した。2026-08-29には公平条件比較216 episodeとBAC ablation 216 episodeも追加した。次cycleへ
+残す設計・評価項目は、角加速度過渡を積分したrollout、実機外乱評価、Collision Monitor
+併用baseline、`BacCore::process()`の責務分割である。
 
 個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特に第8回の
 artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 episodeを修正後runnerで再生成した。
@@ -53,11 +54,26 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 - 90個すべてのdomain IDを再利用し、初回以降の再割当126回、保持区間overlap 0。
 - BAC 54/54成功、衝突0、最接近0.136 m。DWB 50/54（衝突4）、MPPI 51/54、RPP 47/54。
 - 同じrevisionでdrift sweep 32 episodeとgap sweep 24 episodeを再生成し、全272 episodeで欠損・破損0。
-- `release_archive_1f9911e/`にraw dataset、両source snapshot、`SHA256SUMS`を保存した。
+- `release_archive_25f12be/`に旧272 episodeと追加432 episode、両benchmark source世代、
+  BAC source snapshot、`SHA256SUMS`を保存した。
 
 3 datasetはいずれもprovenance v2で、`bench_tree_sha`、Git tree object、`worlds_sha`の3/3 digestを
 `verify_provenance.py`で再現した。container imageは
 `sha256:d58fe8c8f5790cd000cf7bdc1b46395ac2567c231cd592ae6d29426ba9eb2737`である。
+
+## 追加P1評価
+
+- BAC `25f12be`、benchmark `4fed3d2`、両worktree dirty 0。
+- 公平条件比較: 18 scenarios × 3 runs × 4 controllers = 216 episodes。BAC 54/54、DWB 48/54
+  （衝突2）、MPPI 51/54、RPP 48/54。
+- BAC ablation: 18 scenarios × 3 runs × 4 variants = 216 episodes。全variant 54/54、衝突0。
+- 両datasetとも期待216 / 観測216 / 欠損0 / 破損0 / 期待外0、domain overlap 0、provenance
+  digest 3/3再現。
+- 左右均衡項を外した狭路で中心化・clearance・到達時間が悪化。raw scanは完走に必須でなく、
+  escapeの寄与は基準BACが後退を選ばなかったため未同定。
+- 詳細: [BACアブレーションと公平条件比較](ablation_and_matched_evaluation.md)。
+- Gazebo Classic 11 / ROS 2 Humbleの出現障害物1系列を追加した。329 frame、`AVOIDING` 121 frame、
+  body contact 0、最終x 8.41 m。動画・同期telemetry・7判定JSON・再現環境を保存した。
 
 ## 公開時チェック
 

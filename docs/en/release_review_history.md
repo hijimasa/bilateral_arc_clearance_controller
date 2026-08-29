@@ -5,15 +5,15 @@ English | [日本語](../release_review_history.md)
 ## Current state
 
 - Checked: 2026-08-29
-- Evaluated package: `1f9911e`
-- Benchmark: `026a17a`
+- Evaluated package: `25f12be` (implementation identical to `1f9911e`; intervening commits are documentation and release preparation)
+- Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation)
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 
 All Critical, High, and Medium findings across ten release-review rounds, plus the three Low findings from R10,
-have been addressed. The 2026-08-29 follow-up added ROS adapter tests and input-source diagnostics. Remaining
-design and evaluation work includes rollout through angular-acceleration transients, physical disturbance
-evaluation, a Collision Monitor combined baseline, matched-condition ablation, and decomposition of
-`BacCore::process()`.
+have been addressed. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a 216-episode
+matched-condition comparison, and a 216-episode BAC ablation. Remaining work includes rollout through angular-
+acceleration transients, physical disturbance evaluation, a Collision Monitor combined baseline,
+and decomposition of `BacCore::process()`.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
 a conclusion. In particular, R09 withdrew R08's post-hoc audit based on artifact modification time, and the
@@ -59,11 +59,28 @@ The linked findings and responses are preserved in Japanese as the original audi
   collisions, MPPI 51/54, and RPP 47/54
 - The same revisions produced the 32-episode offset and 24-episode opening sweeps; all 272 episodes have zero
   missing or corrupt records
-- `release_archive_1f9911e/` contains the raw datasets, both source snapshots, and `SHA256SUMS`
+- `release_archive_25f12be/` contains the earlier 272 episodes, the additional 432 episodes, both benchmark
+  source generations, BAC source snapshots, and `SHA256SUMS`
 
 All three datasets use provenance v2. `verify_provenance.py` reproduced 3/3 recorded digests: `bench_tree_sha`,
 the Git tree object, and `worlds_sha`. The container image is
 `sha256:d58fe8c8f5790cd000cf7bdc1b46395ac2567c231cd592ae6d29426ba9eb2737`.
+
+## Additional P1 evaluation
+
+- BAC `25f12be`, benchmark `4fed3d2`, and zero dirty files in both worktrees.
+- Matched comparison: 18 scenarios × 3 runs × 4 controllers = 216 episodes. BAC 54/54, DWB 48/54 with two
+  collisions, MPPI 51/54, and RPP 48/54.
+- BAC ablation: 18 scenarios × 3 runs × 4 variants = 216 episodes. Every variant completed 54/54 without
+  collision.
+- Each dataset has 216 expected / 216 observed / zero missing, corrupt, or unexpected records, zero domain
+  overlap, and 3/3 reproduced provenance digests.
+- Removing the balance term degraded centering, clearance, or traversal time in narrow corridors. Raw scans
+  were not necessary for completion, and escape contribution remains unidentified because baseline BAC did not
+  select reverse.
+- Details: [BAC ablation and matched-condition evaluation](ablation_and_matched_evaluation.md).
+- Added one Gazebo Classic 11 / ROS 2 Humble appearing-obstacle series: 329 frames, 121 `AVOIDING` frames,
+  zero body contacts, and final x = 8.41 m, with video, synchronized telemetry, seven-gate JSON, and harness.
 
 ## Publication checklist
 

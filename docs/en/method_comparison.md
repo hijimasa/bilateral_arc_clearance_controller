@@ -76,6 +76,23 @@ novelty or performance superiority over prior research.
 
 ## Nav2 system benchmark
 
+On 2026-08-29, an additional **216-episode matched-condition comparison** used 10 Hz local-costmap input,
+disabled controller reverse candidates, a common forward-speed cap, and common simulator actuator limits. The
+shared Nav2 recovery tree retained `BackUp`. A separate **216-episode BAC ablation**
+isolated the bilateral-balance term, reverse candidates, and obstacle-input path. Conditions, complete tables,
+weaknesses, and causal limitations are in the
+[BAC ablation and matched-condition evaluation](ablation_and_matched_evaluation.md).
+
+Under the matched conditions, BAC completed 54/54, DWB 48/54 with two collisions, MPPI 51/54, and RPP 48/54.
+BAC completed the appearing-obstacle and 0.25 m offset cases consistently, but was slower with less clearance
+in zigzags and stalled for a long interval in one clutter run. The ablation supports a contribution from the
+balance term to corridor centering; escape contribution remains unidentified because baseline BAC never
+selected reverse in that dataset.
+
+The following earlier system-level dataset compares feature-enabled BAC, including raw scans and reverse
+candidates. It is retained as integration evidence for the practical configuration rather than replacing the
+matched comparison.
+
 The workspace `nav2_benchmark` used ROS 2 Jazzy with a common rectangular footprint, NavFn, 1 Hz replanning,
 worlds, and a 2D LiDAR simulator. On 2026-08-29, 18 scenarios × 3 runs × 4 controllers = 216 episodes were
 regenerated from clean BAC `1f9911e` and benchmark `026a17a` worktrees.
@@ -90,8 +107,8 @@ the following differences:
 | Controller tuning | BAC-specific limits and weights | Native DWB/MPPI/RPP settings | The result compares configured systems, not one isolated scoring term |
 
 The results below are useful integration evidence and a source of hypotheses, but they do not causally attribute
-the differences to bilateral clearance. A matched-input benchmark and BAC ablations remain P1 follow-up work;
-they do not block the initial source release.
+the differences to bilateral clearance. The matched-input benchmark and BAC ablations have since been completed
+as the separate datasets linked above.
 
 The runner prevents simultaneous episodes from sharing a `ROS_DOMAIN_ID`.
 `results_release_1f9911e/domain_manifest.csv` verifies

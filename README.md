@@ -40,26 +40,47 @@ observations, and non-guarantees.
 
 ## Evaluation results
 
-The canonical benchmark used ROS 2 Jazzy with a common robot footprint, NavFn, 1 Hz replanning, worlds, and a
-2D LiDAR simulator. It contains 18 scenarios × 3 runs × 4 controllers = 216 episodes. This is a system-level
-configuration comparison, not a controller-algorithm-only experiment: BAC consumed the 20 Hz raw scan while the
-comparison controllers primarily consumed the 10 Hz local costmap, and reversing policies also differed.
+A matched-condition benchmark used ROS 2 Jazzy with a common robot footprint, NavFn, 1 Hz replanning, worlds,
+10 Hz local-costmap input, forward-only controller candidates, a common 0.4 m/s forward cap, and common
+actuator acceleration limits. The shared Nav2 recovery tree still includes `BackUp`. It contains
+18 scenarios × 3 runs × 4 controllers = 216 episodes. Controller-specific trajectory generation, horizons,
+critics, and tuning necessarily remain different.
 
 | Controller | Successes | Collisions | Mean on successful runs | Median | Worst minimum clearance |
 |---|---:|---:|---:|---:|---:|
-| BAC | 54/54 | 0 | 27.7 s | 28.6 s | 0.136 m |
-| DWB | 50/54 | 4 | 25.2 s | 25.4 s | 0.000 m |
-| MPPI | 51/54 | 0 | 28.6 s | 27.5 s | 0.027 m |
-| RPP | 47/54 | 0 | 24.3 s | 25.0 s | 0.010 m |
+| BAC (matched) | 54/54 | 0 | 29.7 s | 28.4 s | 0.078 m |
+| DWB | 48/54 | 2 | 24.6 s | 25.2 s | 0.000 m |
+| MPPI (matched) | 51/54 | 0 | 27.9 s | 27.3 s | 0.049 m |
+| RPP | 48/54 | 0 | 24.2 s | 24.8 s | 0.016 m |
 
-Within this 18-scenario set, BAC had no collision and did not approach an obstacle closer than 0.13 m. In a
-separate 1.5 m corridor sweep with 0.10–0.25 m lateral path offset, BAC completed 8/8 episodes with a mean
-traversal time of 28.8 s and 0.225–0.230 m clearance. In a one-run opening-width sweep, it completed openings
-down to 1.25 m but timed out at 1.15 m; the other three controllers completed that trial. These are results from
-limited deterministic simulations and do not causally isolate bilateral clearance. They are not general success
-probabilities or a physical-robot safety guarantee. See
-[Method comparison and evaluation](docs/en/method_comparison.md) for conditions, raw-derived tables, and design
-differences from existing controllers.
+BAC completed all matched episodes, including 3/3 in an appearing-obstacle case where the other configurations
+did not complete, and 3/3 in a 1.5 m corridor with a synthetic 0.25 m lateral localization offset. However, BAC
+was markedly slower and had less clearance in the zigzag cases, and one clutter run stalled for 82.8 s before
+eventually completing. A separate 216-episode BAC ablation found the clearest effect from removing the bilateral
+balance term: in the extreme offset corridor, mean time changed from 29.2 to 42.4 s, clearance from 0.227 to
+0.174 m, and mean lateral error from 0.028 to 0.053 m. All ablation variants still completed 54/54, and the
+reverse-escape contribution was not identified because baseline BAC never selected reverse in that set.
+
+These are limited deterministic simulation observations, not independent success-probability estimates,
+physical-robot safety evidence, or proof of general superiority. See the
+[matched comparison and ablation report](docs/en/ablation_and_matched_evaluation.md) and
+[method comparison](docs/en/method_comparison.md) for conditions, limitations, earlier feature-enabled results,
+and design differences from existing controllers.
+
+### Gazebo evidence run
+
+[![BAC passing an obstacle spawned in Gazebo](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
+
+[Watch the 27.4 s MP4](docs/media/bac_gazebo_appearing_obstacle.mp4). A separate Gazebo Classic 11 / ROS 2
+Humble run drives the BAC filter from simulated 20 Hz LiDAR, odometry, and a straight upstream velocity command.
+An offset obstacle appears after motion starts. BAC entered `AVOIDING`, passed without a body contact, returned
+to `CLEAR`, progressed to x = 8.41 m, and returned from a 2.16 m maximum lateral detour to y = -0.70 m by the end.
+The synchronized [telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv),
+[machine-readable checks and input hashes](docs/media/bac_gazebo_appearing_obstacle_evidence.json), and
+[reproduction harness](examples/gazebo/README.md) accompany the video.
+
+This single BAC run is qualitative integration evidence, not the four-controller matched benchmark above,
+an independent trial, physical-robot evidence, or safety validation.
 
 ## Position in Nav2
 
@@ -141,6 +162,8 @@ python3 test/plot_traces.py --dir traces
 - [Nav2 integration guide](docs/en/nav2_integration.md)
 - [Parameter reference](docs/en/parameters.md)
 - [Method comparison and evaluation](docs/en/method_comparison.md)
+- [BAC ablation and matched-condition evaluation](docs/en/ablation_and_matched_evaluation.md)
+- [Reproducible Gazebo evidence](examples/gazebo/README.md)
 - [Release review history](docs/en/release_review_history.md)
 - [Public-release readiness checklist](docs/en/public_release_checklist.md)
 - [Japanese documentation / 日本語ドキュメント](docs/README.md)

@@ -23,6 +23,9 @@ set_target_properties(bac_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
+  option(BAC_BUILD_NAV2_PLUGIN
+      "Build the Nav2 controller plugin (requires the supported Nav2 API)" ON)
+
   install(DIRECTORY include/ DESTINATION include)
   install(DIRECTORY docs/ DESTINATION share/${PROJECT_NAME}/docs)
   install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
@@ -42,18 +45,10 @@ if(ament_cmake_FOUND)
   ament_export_include_directories(include)
 
   find_package(rclcpp REQUIRED)
-  find_package(rclcpp_lifecycle REQUIRED)
-  find_package(pluginlib REQUIRED)
-  find_package(nav2_core REQUIRED)
-  find_package(nav2_costmap_2d REQUIRED)
-  find_package(nav2_util REQUIRED)
   find_package(geometry_msgs REQUIRED)
-  find_package(diagnostic_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(std_msgs REQUIRED)
-  find_package(tf2 REQUIRED)
-  find_package(tf2_geometry_msgs REQUIRED)
 
   # Evaluation node: cmd_vel filter driven by a laser scan
   add_executable(bac_filter_node src/bac_filter_node.cpp)
@@ -62,20 +57,31 @@ if(ament_cmake_FOUND)
   ament_target_dependencies(bac_filter_node rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs)
   install(TARGETS bac_filter_node DESTINATION lib/${PROJECT_NAME})
 
-  # nav2 controller plugin (verified against the ROS 2 Jazzy nav2_core API)
-  add_library(bilateral_arc_clearance_controller SHARED src/bac_controller.cpp)
-  target_link_libraries(bilateral_arc_clearance_controller bac_core)
-  target_compile_options(bilateral_arc_clearance_controller PRIVATE -Wall -Wextra -Wpedantic)
-  ament_target_dependencies(bilateral_arc_clearance_controller
-      rclcpp rclcpp_lifecycle pluginlib nav2_core nav2_costmap_2d nav2_util
-      diagnostic_msgs geometry_msgs nav_msgs sensor_msgs tf2 tf2_geometry_msgs
-  )
-  install(TARGETS bilateral_arc_clearance_controller
-      ARCHIVE DESTINATION lib
-      LIBRARY DESTINATION lib
-      RUNTIME DESTINATION bin
-  )
-  pluginlib_export_plugin_description_file(nav2_core bilateral_arc_clearance_controller_plugin.xml)
+  if(BAC_BUILD_NAV2_PLUGIN)
+    find_package(rclcpp_lifecycle REQUIRED)
+    find_package(pluginlib REQUIRED)
+    find_package(nav2_core REQUIRED)
+    find_package(nav2_costmap_2d REQUIRED)
+    find_package(nav2_util REQUIRED)
+    find_package(diagnostic_msgs REQUIRED)
+    find_package(tf2 REQUIRED)
+    find_package(tf2_geometry_msgs REQUIRED)
+
+    # Nav2 controller plugin (verified against the ROS 2 Jazzy nav2_core API)
+    add_library(bilateral_arc_clearance_controller SHARED src/bac_controller.cpp)
+    target_link_libraries(bilateral_arc_clearance_controller bac_core)
+    target_compile_options(bilateral_arc_clearance_controller PRIVATE -Wall -Wextra -Wpedantic)
+    ament_target_dependencies(bilateral_arc_clearance_controller
+        rclcpp rclcpp_lifecycle pluginlib nav2_core nav2_costmap_2d nav2_util
+        diagnostic_msgs geometry_msgs nav_msgs sensor_msgs tf2 tf2_geometry_msgs
+    )
+    install(TARGETS bilateral_arc_clearance_controller
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+    )
+    pluginlib_export_plugin_description_file(nav2_core bilateral_arc_clearance_controller_plugin.xml)
+  endif()
 endif()
 
 # Closed-loop scenario harness (framework-free; also the package's test)
@@ -102,14 +108,16 @@ if(BUILD_TESTING)
   add_test(NAME BacScenarioHarness COMMAND bac_scenario_harness --strict)
 
   if(ament_cmake_FOUND)
-    add_executable(bac_ros_adapter_unit test/ros_adapter_unit.cpp)
-    target_link_libraries(bac_ros_adapter_unit bilateral_arc_clearance_controller)
-    target_compile_options(bac_ros_adapter_unit PRIVATE -Wall -Wextra -Wpedantic)
-    ament_target_dependencies(bac_ros_adapter_unit
-        rclcpp rclcpp_lifecycle nav2_core nav2_costmap_2d diagnostic_msgs
-        geometry_msgs nav_msgs sensor_msgs tf2
-    )
-    add_test(NAME BacRosAdapterUnit COMMAND bac_ros_adapter_unit)
+    if(BAC_BUILD_NAV2_PLUGIN)
+      add_executable(bac_ros_adapter_unit test/ros_adapter_unit.cpp)
+      target_link_libraries(bac_ros_adapter_unit bilateral_arc_clearance_controller)
+      target_compile_options(bac_ros_adapter_unit PRIVATE -Wall -Wextra -Wpedantic)
+      ament_target_dependencies(bac_ros_adapter_unit
+          rclcpp rclcpp_lifecycle nav2_core nav2_costmap_2d diagnostic_msgs
+          geometry_msgs nav_msgs sensor_msgs tf2
+      )
+      add_test(NAME BacRosAdapterUnit COMMAND bac_ros_adapter_unit)
+    endif()
   endif()
 endif()
 

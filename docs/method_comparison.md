@@ -70,6 +70,20 @@ BAC は DWA/DWB の一般的な置き換えというより、狭い開口、経�
 
 ## Nav2 system benchmark
 
+2026-08-29に、障害物入力を10 Hz local costmap、controllerの後退候補を無効、並進速度上限と
+simulator actuator加速度制限を共通化した
+**公平条件比較216 episode**と、左右均衡項・後退候補・入力源を分けた**BACアブレーション216
+episode**を追加した。条件、全体表、弱点、因果解釈の範囲は
+[BACアブレーションと公平条件比較](ablation_and_matched_evaluation.md)に分離している。
+
+公平条件ではBAC 54/54、DWB 48/54（衝突2）、MPPI 51/54、RPP 48/54だった。BACは出現障害物と
+0.25 m横ずれで安定して完走した一方、Z字路では遅くclearanceも小さく、clutterでは1反復で長時間
+停止した。アブレーションでは左右均衡項の狭路中心化への寄与が観測されたが、escapeの寄与は
+基準BACが後退を選ばなかったため未同定である。
+
+以下は、raw scanと後退を含む通常BACの機能有効状態を比較する従来のsystem-level datasetである。
+新しい公平条件比較で置き換えるものではなく、実用構成全体の統合evidenceとして併記する。
+
 ワークスペースの `nav2_benchmark` で、ROS 2 Jazzy、共通の矩形車体、NavFn、1 Hz 再計画、world、
 2D LiDARシミュレータを使った。2026-08-29に、BAC `1f9911e`、benchmark `026a17a` のclean
 worktreeから、同じ18シナリオ × 各3 run × 4 controller = 216 episodeを再生成した。
@@ -83,7 +97,7 @@ worktreeから、同じ18シナリオ × 各3 run × 4 controller = 216 episode�
 | tuning | BAC固有のlimitとweight | DWB/MPPI/RPP固有設定 | 単一scoreではなく設定済みsystemの比較になる |
 
 以下の結果は統合evidenceと仮説形成には使えるが、差をbilateral clearanceへ因果帰属するものではない。
-入力条件を揃えた比較とBAC ablationは、初回公開を妨げないP1の追加評価である。
+入力条件を揃えた比較とBAC ablationは上記の別データセットで実施済みである。
 このデータセットは、エピソード間の `ROS_DOMAIN_ID` 分離を保証する runner で生成されており、
 `results_release_1f9911e/domain_manifest.csv` により「同一 domain の保持区間の重なり 0」(216 episode、
 90 個すべての domain ID を再利用、初回以降の再割当 126 回)が検証済みである。生成条件は

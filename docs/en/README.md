@@ -13,6 +13,9 @@ This index separates current user documentation from pre-release review records.
 - [Parameter reference](parameters.md): all settings for the core, Nav2 plugin, and filter node
 - [Method comparison and evaluation](method_comparison.md): comparison with DWB, MPPI, RPP, VFH/ND, and
   raw-derived benchmark results
+- [BAC ablation and matched-condition evaluation](ablation_and_matched_evaluation.md): common conditions,
+  432-episode results, causal limitations, and synchronized Gazebo evidence
+- [Gazebo reproduction harness](../../examples/gazebo/README.md): Docker, world, URDF, capture, and automated checks
 
 ## Development and release documentation
 
@@ -30,3 +33,6 @@ and claims, use the root README, the user documentation above, and the latest st
 ## Figure
 
 - [BAC geometry](../images/bac_geometry.svg): candidate arc, path projection, and bilateral clearance
+- [Matched appearing-obstacle trajectories](../images/matched_appearing_obstacle.png): BAC/DWB/MPPI/RPP overlay
+- [Extreme-offset ablation trajectories](../images/ablation_extreme_offset.png): four BAC variants
+- [Gazebo appearing-obstacle video](../media/bac_gazebo_appearing_obstacle.mp4): one BAC-filter sensor-to-actuator run

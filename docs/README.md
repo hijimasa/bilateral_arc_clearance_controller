@@ -10,6 +10,9 @@
 - [Nav2統合ガイド](nav2_integration.md): Controller、Collision Monitor、costmap等との役割分担と設定
 - [パラメータリファレンス](parameters.md): core・Nav2 plugin・filter nodeの全設定
 - [既存手法との比較と評価](method_comparison.md): DWB、MPPI、RPP、VFH/NDとの比較とraw由来の結果
+- [BACアブレーションと公平条件比較](ablation_and_matched_evaluation.md): 共通条件、432 episodeの結果、
+  因果解釈の限界、Gazebo動画と同期telemetry
+- [Gazebo再現環境](../examples/gazebo/README.md): Docker、world、URDF、収録・自動判定script
 
 ## 開発・リリース向け
 
@@ -24,3 +27,6 @@
 ## 図
 
 - [BAC geometry](images/bac_geometry.svg): 候補円弧、path projection、左右クリアランス
+- [公平条件・出現障害物](images/matched_appearing_obstacle.png): BAC/DWB/MPPI/RPPの軌跡overlay
+- [極狭路offset ablation](images/ablation_extreme_offset.png): BAC 4 variantの軌跡overlay
+- [Gazebo出現障害物動画](media/bac_gazebo_appearing_obstacle.mp4): BAC filterのsensor-to-actuator統合1系列
