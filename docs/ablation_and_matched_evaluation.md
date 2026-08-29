@@ -163,14 +163,14 @@ adapterを除外し、同じ`bac_core`を使う`bac_filter_node`を接続した�
 
 | 判定量 | 結果 |
 |---|---:|
-| 動画 | 34.9 s、960 × 540、12 fps、419 frame |
+| 動画 | 35.2 s、960 × 540、12 fps、422 frame |
 | 障害物と物理車体の最小距離 | 0.309 m（設定side safety marginの2.6倍） |
 | 最大横偏差 | 0.798 m |
 | 最大偏差から`abs(y) <= 0.30 m`まで | 8.3 s |
 | 最大偏差から`abs(y) <= 0.10 m`まで | 13.1 s |
-| gate直前の最大`abs(y)` | 0.042 m |
-| gate内の最大`abs(y)` | 0.014 m |
-| 最終進行距離 x | 11.91 m |
+| gate直前の最大`abs(y)` | 0.043 m |
+| gate内の最大`abs(y)` | 0.013 m |
+| 最終進行距離 x | 12.03 m |
 | `STOP` | 0 frame |
 | body contact | 0 |
 

@@ -171,14 +171,14 @@ which uses the same `bac_core`.
 
 | Check | Result |
 |---|---:|
-| Video | 34.9 s, 960 × 540, 12 fps, 419 frames |
+| Video | 35.2 s, 960 × 540, 12 fps, 422 frames |
 | Minimum physical-body clearance from obstacle | 0.309 m (2.6x configured side safety margin) |
 | Maximum lateral detour | 0.798 m |
 | Maximum detour to `abs(y) <= 0.30 m` | 8.3 s |
 | Maximum detour to `abs(y) <= 0.10 m` | 13.1 s |
-| Maximum `abs(y)` immediately before gate | 0.042 m |
-| Maximum `abs(y)` inside gate | 0.014 m |
-| Final x progress | 11.91 m |
+| Maximum `abs(y)` immediately before gate | 0.043 m |
+| Maximum `abs(y)` inside gate | 0.013 m |
+| Final x progress | 12.03 m |
 | `STOP` | 0 frames |
 | Body contacts | 0 |
 

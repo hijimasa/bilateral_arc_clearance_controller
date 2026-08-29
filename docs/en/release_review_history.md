@@ -82,8 +82,8 @@ the Git tree object, and `worlds_sha`. The container image is
 - Added a synchronized BAC/DWB replay of matched `appearing_obstacle/run1`, with the three-repeat aggregate and
   input/output hashes.
 - Replaced the Gazebo evidence with one continuous avoidance, recovery, and 1.0 m-gate series. Minimum physical
-  body clearance was 0.309 m, maximum lateral detour 0.798 m, in-gate center offset 0.014 m, body contacts zero,
-  and final x 11.91 m; video, synchronized telemetry, nine-gate JSON, and harness are retained.
+  body clearance was 0.309 m, maximum lateral detour 0.799 m, in-gate center offset 0.013 m, body contacts zero,
+  and final x 12.03 m; video, synchronized telemetry, nine-gate JSON, and harness are retained.
 
 ## Publication checklist
 

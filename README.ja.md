@@ -74,10 +74,10 @@ replayでGazebo映像ではなく、[入出力hash](docs/media/bac_vs_dwb_matche
 
 [![Gazeboで余裕を持つ回避と狭所通過を行うBAC](docs/media/bac_gazebo_adaptive_clearance_thumbnail.jpg)](docs/media/bac_gazebo_adaptive_clearance.mp4)
 
-[34.9秒のGazebo MP4を見る](docs/media/bac_gazebo_adaptive_clearance.mp4)。左から右への連続takeで、静的
+[35.2秒のGazebo MP4を見る](docs/media/bac_gazebo_adaptive_clearance.mp4)。左から右への連続takeで、静的
 offset障害物から車体距離0.31 mを保ちつつ0.80 m迂回し、8.3秒で中心線から0.30 m以内へ復帰した後、
-幅1.0 mのgateを中心偏差0.014 m以内で通過した。車体0.50 mと左右marginを合わせた必要幅は0.74 mで、
-最終x=11.91 m、停止・車体接触0だった。局所障害物horizonは明記した2.5 mである。
+幅1.0 mのgateを中心偏差0.013 m以内で通過した。車体0.50 mと左右marginを合わせた必要幅は0.74 mで、
+最終x=12.03 m、停止・車体接触0だった。局所障害物horizonは明記した2.5 mである。
 [同期telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv)、
 [9判定と入力hash](docs/media/bac_gazebo_adaptive_clearance_evidence.json)、
 [再現環境](examples/gazebo/README.md)を保存している。
