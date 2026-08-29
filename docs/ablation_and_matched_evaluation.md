@@ -144,7 +144,8 @@ costmap版37.2 s / 0.118 mとなり、2反復で後退指令を選んだ。出�
 
 数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。Gazeboの
 差動駆動、ray sensor、odometry、body contact sensor、固定cameraを使い、上流は0.35 m/sの直進指令を
-与える。開始5秒後、進路に一部重なるoffset障害物を出現させた。BACのJazzy Nav2 adapterはこのHumble
+与える。odometryがx = 1.0 mへ到達した時点で、進路に一部重なるoffset障害物を出現させた。BACのJazzy
+Nav2 adapterはこのHumble
 環境ではビルドせず、同じ`bac_core`を使う`bac_filter_node`を接続した。
 
 | 判定量 | 結果 |

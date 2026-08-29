@@ -63,6 +63,9 @@ def main():
         "src/bac_core.cpp", "src/bac_filter_node.cpp", "examples/gazebo/bac_demo.yaml",
         "examples/gazebo/worlds/appearing_obstacle.world", "examples/gazebo/models/robot.urdf",
         "examples/gazebo/models/appearing_obstacle.sdf",
+        "examples/gazebo/Dockerfile", "examples/gazebo/run_demo.sh",
+        "examples/gazebo/scripts/demo_driver.py", "examples/gazebo/scripts/spawn_obstacle.py",
+        "examples/gazebo/scripts/record_demo.py", "examples/gazebo/scripts/evaluate_demo.py",
     ]
     result = {
         "schema_version": 1,

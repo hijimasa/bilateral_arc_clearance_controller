@@ -40,10 +40,13 @@ class DemoDriver(Node):
         command = Twist()
         if self.have_odom:
             command.linear.x = 0.35
-            # Do not counter-steer while BAC owns the local avoidance turn.
+            # Use only a small correction while BAC owns the avoidance turn.
             # Once CLEAR, the upstream follower gently returns to y=0/yaw=0.
+            correction = max(-0.65, min(0.65, -0.35 * self.y - 1.0 * self.yaw))
             if self.status == 0:
-                command.angular.z = max(-0.65, min(0.65, -0.35 * self.y - 1.0 * self.yaw))
+                command.angular.z = correction
+            elif self.status == 1:
+                command.angular.z = 0.15 * correction
         self.publisher.publish(command)
 
 

@@ -6,7 +6,7 @@ contact-sensor, and camera plugins. The BAC filter receives the simulated
 `/scan`, `/odom`, and an upstream path-following velocity command; its output
 drives the simulated robot through `/cmd_vel`.
 
-The obstacle is spawned five seconds after the run starts. This is deliberately
+The obstacle is spawned when odometry first reaches x = 1.0 m. This is deliberately
 simulation evidence, not a physical-robot validation or a full Nav2 controller
 comparison.
 
@@ -38,3 +38,5 @@ The run writes the MP4, thumbnail, synchronized telemetry, and evidence JSON to
 
 The JSON sidecar records those checks, the ROS/Gazebo versions, the source Git
 state at capture time, and SHA-256 hashes for the algorithm and scenario inputs.
+Gazebo uses seed 42, the LiDAR noise is disabled, and the spawn event is
+position-triggered so host load does not change its initial condition.

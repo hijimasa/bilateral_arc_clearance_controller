@@ -150,7 +150,7 @@ The result roots are `results_matched_release_25f12be/` and `results_ablation_re
 
 A BAC-only series, independent of the numerical benchmark, was captured with Gazebo Classic 11.10.2 and ROS 2
 Humble. It uses Gazebo differential-drive, ray-sensor, odometry, body-contact, and fixed-camera plugins. The
-upstream command is a 0.35 m/s straight path; five seconds after startup, an offset obstacle appears partially
+upstream command is a 0.35 m/s straight path; when odometry reaches x = 1.0 m, an offset obstacle appears partially
 across that path. The Jazzy Nav2 adapter is not built in this Humble environment; the run connects
 `bac_filter_node`, which uses the same `bac_core`.
 

@@ -55,6 +55,7 @@ fi
 
 ros2 launch gazebo_ros gazebo.launch.py \
   world:="${DEMO_DIR}/worlds/appearing_obstacle.world" gui:=false verbose:=false \
+  extra_gazebo_args:="--seed 42" \
   >"${CAPTURE_DIR}/gazebo.log" 2>&1 &
 PIDS+=("$!")
 
@@ -89,10 +90,10 @@ python3 "${DEMO_DIR}/scripts/record_demo.py" --ros-args -p use_sim_time:=true \
 RECORDER_PID=$!
 PIDS+=("${RECORDER_PID}")
 
-# The robot has already started moving when the obstacle appears on its path.
-sleep 5
-ros2 run gazebo_ros spawn_entity.py -entity appearing_obstacle \
-  -file "${DEMO_DIR}/models/appearing_obstacle.sdf" -x 3.4 -y 0.20 -z 0.4 \
+# Trigger on robot position rather than host time so CPU load cannot change the
+# initial condition of the appearing-obstacle event.
+python3 "${DEMO_DIR}/scripts/spawn_obstacle.py" \
+  "${DEMO_DIR}/models/appearing_obstacle.sdf" --ros-args -p use_sim_time:=true \
   >"${CAPTURE_DIR}/spawn_obstacle.log" 2>&1
 
 wait "${RECORDER_PID}"
