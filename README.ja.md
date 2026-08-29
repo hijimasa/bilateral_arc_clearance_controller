@@ -66,10 +66,10 @@ clutterの1反復では完走まで82.8 s停止しました。別のBACアブレ
 
 [![Gazeboで出現した障害物を通過するBAC](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
 
-[27.4秒のMP4を見る](docs/media/bac_gazebo_appearing_obstacle.mp4)。別系列のGazebo Classic 11 / ROS 2
-Humble環境で、20 Hz LiDAR・odometry・上流の直進速度指令をBAC filterへ入力した。走行開始後にoffset
+[27.1秒のMP4を見る](docs/media/bac_gazebo_appearing_obstacle.mp4)。別系列のGazebo Classic 11 / ROS 2
+Humble環境で、20 Hz LiDAR・odometry・上流の中心線追従指令をBAC filterへ入力した。走行開始後にoffset
 障害物を出現させ、BACは`AVOIDING`へ遷移し、車体接触なしで通過して`CLEAR`へ復帰した。最終xは
-8.41 m、最大横偏差2.16 mから終了時y = -0.70 mまで中心線へ復帰した。
+9.21 m、最大横偏差1.23 mから終了時y = -0.30 mまで中心線へ復帰した。
 [同期telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv)、
 [機械可読な判定・入力hash](docs/media/bac_gazebo_appearing_obstacle_evidence.json)、
 [再現環境](examples/gazebo/README.md)を動画とともに保存している。

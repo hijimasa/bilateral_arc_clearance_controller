@@ -48,7 +48,7 @@
     <!-- A fixed ROS camera supplies frames without requiring gzclient/X11. -->
     <model name="overhead_camera">
       <static>true</static>
-      <pose>3.5 0 8.5 0 1.57079632679 0</pose>
+      <pose>4.5 0 14.0 0 1.57079632679 0</pose>
       <link name="camera_link">
         <sensor name="camera" type="camera">
           <always_on>true</always_on>

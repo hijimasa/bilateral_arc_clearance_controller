@@ -79,8 +79,8 @@ the Git tree object, and `worlds_sha`. The container image is
   were not necessary for completion, and escape contribution remains unidentified because baseline BAC did not
   select reverse.
 - Details: [BAC ablation and matched-condition evaluation](ablation_and_matched_evaluation.md).
-- Added one Gazebo Classic 11 / ROS 2 Humble appearing-obstacle series: 329 frames, 121 `AVOIDING` frames,
-  zero body contacts, and final x = 8.41 m, with video, synchronized telemetry, seven-gate JSON, and harness.
+- Added one Gazebo Classic 11 / ROS 2 Humble appearing-obstacle series: 325 frames, 143 `AVOIDING` frames,
+  zero body contacts, and final x = 9.21 m, with video, synchronized telemetry, seven-gate JSON, and harness.
 
 ## Publication checklist
 

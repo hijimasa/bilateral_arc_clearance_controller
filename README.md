@@ -71,10 +71,10 @@ and design differences from existing controllers.
 
 [![BAC passing an obstacle spawned in Gazebo](docs/media/bac_gazebo_appearing_obstacle_thumbnail.jpg)](docs/media/bac_gazebo_appearing_obstacle.mp4)
 
-[Watch the 27.4 s MP4](docs/media/bac_gazebo_appearing_obstacle.mp4). A separate Gazebo Classic 11 / ROS 2
-Humble run drives the BAC filter from simulated 20 Hz LiDAR, odometry, and a straight upstream velocity command.
+[Watch the 27.1 s MP4](docs/media/bac_gazebo_appearing_obstacle.mp4). A separate Gazebo Classic 11 / ROS 2
+Humble run drives the BAC filter from simulated 20 Hz LiDAR, odometry, and an upstream centerline follower.
 An offset obstacle appears after motion starts. BAC entered `AVOIDING`, passed without a body contact, returned
-to `CLEAR`, progressed to x = 8.41 m, and returned from a 2.16 m maximum lateral detour to y = -0.70 m by the end.
+to `CLEAR`, progressed to x = 9.21 m, and returned from a 1.23 m maximum lateral detour to y = -0.30 m by the end.
 The synchronized [telemetry](docs/media/bac_gazebo_appearing_obstacle_telemetry.csv),
 [machine-readable checks and input hashes](docs/media/bac_gazebo_appearing_obstacle_evidence.json), and
 [reproduction harness](examples/gazebo/README.md) accompany the video.

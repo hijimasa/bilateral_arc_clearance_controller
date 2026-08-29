@@ -150,18 +150,18 @@ The result roots are `results_matched_release_25f12be/` and `results_ablation_re
 
 A BAC-only series, independent of the numerical benchmark, was captured with Gazebo Classic 11.10.2 and ROS 2
 Humble. It uses Gazebo differential-drive, ray-sensor, odometry, body-contact, and fixed-camera plugins. The
-upstream command is a 0.35 m/s straight path; when odometry reaches x = 1.0 m, an offset obstacle appears partially
+upstream command is a centerline follower capped at 0.35 m/s; when odometry reaches x = 1.0 m, an offset obstacle appears partially
 across that path. The Jazzy Nav2 adapter is not built in this Humble environment; the run connects
 `bac_filter_node`, which uses the same `bac_core`.
 
 | Check | Result |
 |---|---:|
-| Video | 27.4 s, 960 × 540, 12 fps, 329 frames |
-| `AVOIDING` | 121 frames |
-| `STOP` | 0 frames |
-| Final x progress | 8.41 m |
-| Maximum lateral detour | 2.16 m |
-| Final y position | -0.70 m |
+| Video | 27.1 s, 960 × 540, 12 fps, 325 frames |
+| `AVOIDING` | 143 frames |
+| `STOP` | 1 startup frame while sensor/odometry initialized |
+| Final x progress | 9.21 m |
+| Maximum lateral detour | 1.23 m |
+| Final y position | -0.30 m |
 | Body contacts | 0 |
 
 The video overlays time, state, pose, output command, and an explicit no-physical-validation label. It is
@@ -169,6 +169,10 @@ accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_appearing_
 seven-gate [evidence JSON](../media/bac_gazebo_appearing_obstacle_evidence.json), and a
 [reproduction harness](../../examples/gazebo/README.md) containing Docker, world, URDF, recorder, and evaluator
 inputs. The JSON records the capture commit and SHA-256 hashes for the core, filter, world, robot, and settings.
+
+An immediately preceding run from the same clean commit, seed, and position trigger also passed 7/7 gates:
+331 frames, 145 `AVOIDING` frames, final x = 9.19 m, maximum lateral detour 1.229 m, and zero body contacts.
+These two repeats are a reproducibility sanity check, not independent statistical samples.
 
 This is qualitative integration evidence that the sensor-to-actuator chain worked and passed this one Gazebo
 condition without contact. The four-controller comparison above is separate data from a dedicated 2D ray-cast
