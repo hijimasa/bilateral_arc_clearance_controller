@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <sdf version="1.6">
-  <model name="appearing_obstacle">
+  <model name="open_space_obstacle">
     <static>true</static>
     <link name="link">
       <collision name="collision"><geometry><box><size>0.65 0.55 0.80</size></box></geometry></collision>

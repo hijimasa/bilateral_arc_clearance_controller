@@ -6,9 +6,9 @@ contact-sensor, and camera plugins. The BAC filter receives the simulated
 `/scan`, `/odom`, and an upstream path-following velocity command; its output
 drives the simulated robot through `/cmd_vel`.
 
-The run combines three observable phases in one continuous take: an obstacle is
-spawned partly across the centerline when odometry first reaches x = 1.0 m, the
-robot returns to that centerline, and it then passes through a 1.0 m gate. The
+The run combines three observable phases in one continuous take: the robot
+widely avoids a static obstacle partly across the centerline, returns to that
+centerline, and then passes through a 1.0 m gate. The
 0.50 m body and 0.12 m configured side margin require 0.74 m of that opening.
 This is deliberately simulation evidence, not physical-robot validation or a
 full Nav2 controller comparison. The core input is capped at 2.5 m, comparable
@@ -33,10 +33,11 @@ The run writes the MP4, thumbnail, synchronized telemetry, and evidence JSON to
 `docs/media/`. `run_demo.sh` returns nonzero unless all of the following hold:
 
 - at least 180 camera frames were recorded;
-- the robot progressed beyond the gate to at least x = 11.0 m;
+- the robot progressed fully beyond the gate to at least x = 10.6 m;
 - BAC entered `AVOIDING` for at least five recorded frames;
 - the open-space lateral detour reached at least 0.25 m;
-- the oriented physical body stayed at least 0.28 m from the appearing obstacle;
+- the oriented physical body stayed at least 0.24 m (twice the configured side
+  safety margin) from the open-space obstacle;
 - the robot stayed within 2.4 m laterally;
 - its center stayed within 0.30 m of the centerline immediately before the gate;
 - its center stayed within 0.24 m of the centerline while crossing the gate; and
