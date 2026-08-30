@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <vector>
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "sim_world.hpp"
@@ -36,6 +37,9 @@ struct SimConfig
   float acc_w           = 2.5f;  // actuator tracking accel limit [rad/s^2]
   int   lidar_beams     = 720;
   float lidar_max_range = 10.0f;
+  bool  has_goal        = false;  // optional fixed world-frame marker for traces
+  float goal_x          = 0.0f;
+  float goal_y          = 0.0f;
 };
 
 struct TraceRow
@@ -49,6 +53,8 @@ struct TraceRow
   float   clearance;
   float   speed_fraction;     // admissible candidate fraction (debug)
   float   command_clearance;  // bilateral clearance of the selected arc (debug)
+  float   goal_x;              // fixed world-frame evaluation goal, NaN if unspecified
+  float   goal_y;
 };
 
 /// Local path source: (pose, time) -> path in the ROBOT frame, near-to-far.
@@ -113,6 +119,8 @@ runClosedLoop(bac::BacCore &core, const World &world, const Pose &start,
                              ? static_cast<float>(avoid.admissible_count) / avoid.candidate_count
                              : 1.0f;
     row.command_clearance = avoid.best_clearance;
+    row.goal_x = config.has_goal ? config.goal_x : std::numeric_limits<float>::quiet_NaN();
+    row.goal_y = config.has_goal ? config.goal_y : std::numeric_limits<float>::quiet_NaN();
     result.trace.push_back(row);
 
     if (clearance <= 0.0f)

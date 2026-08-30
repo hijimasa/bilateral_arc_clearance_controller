@@ -138,12 +138,35 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-13本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を含みます。
+17本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を含みます。
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces
 python3 test/plot_traces.py --dir traces
 ```
+
+### 側方・後方ゴールの回帰テスト
+
+ゴール方向のカバレッジとして、遠方側方、近傍側方、真後ろ、側方障害物によりその場旋回できない
+真後ろの4ケースを検証します。
+
+```bash
+ctest --test-dir build -R BacGoalDirectionRegression --output-on-failure
+
+./build/bac_scenario_harness --strict --csv-dir traces --filter goal_lateral_near
+./build/bac_scenario_harness --strict --csv-dir traces --filter goal_behind
+python3 test/plot_traces.py --dir traces goal_lateral_near goal_behind
+```
+
+現在の決定論的シミュレーションでは、後退を無効にした前方センサ構成でも0.5 m左のゴールへ8.250秒、
+4.0 m真後ろのゴールへその場旋回後18.700秒、4.0 m左の正常対照へ13.050秒で到達します。
+その場旋回の掃引範囲内に側方障害物があるケースでは、
+後退下限`-0.1 m/s`を使って52 tick後退した後に姿勢を整え、21.150秒で後方ゴールへ到達します。
+60秒の評価中に衝突と連続静止はありません。
+
+候補は衝突可否だけでなく、順序付き経路上の符号付き進捗と経路接線の相対方位で評価します。近距離側方または
+ほぼ真後ろではヒステリシス付き姿勢整合モードを優先し、その場旋回が安全でなければ後退へフォールバックします。
+全4ケースのPASSと上記CTestの終了コード0が回帰条件です。
 
 ## 制約
 

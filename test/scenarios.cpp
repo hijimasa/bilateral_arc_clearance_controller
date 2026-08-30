@@ -102,13 +102,13 @@ writeTraceCsv(const std::string &dir, const std::string &name, const SimResult &
     std::cerr << "writeTraceCsv: cannot open " << dir << "/" << name << ".csv\n";
     return;
   }
-  trace_file << "t,x,y,th,cmd_v,cmd_w,out_v,out_w,act_v,act_w,status,clearance,speed_fraction,cmd_clearance\n";
+  trace_file << "t,x,y,th,cmd_v,cmd_w,out_v,out_w,act_v,act_w,status,clearance,speed_fraction,cmd_clearance,goal_x,goal_y\n";
   for (const TraceRow &row : result.trace)
   {
     trace_file << row.t << ',' << row.pose.x << ',' << row.pose.y << ',' << row.pose.th << ',' << row.command.v << ','
                << row.command.w << ',' << row.output.v << ',' << row.output.w << ',' << row.actual.v << ','
                << row.actual.w << ',' << row.status << ',' << row.clearance << ',' << row.speed_fraction << ','
-               << row.command_clearance << '\n';
+               << row.command_clearance << ',' << row.goal_x << ',' << row.goal_y << '\n';
   }
   trace_file.close();
   if (!trace_file)
@@ -169,6 +169,175 @@ scenarioOpenPassthrough(const std::string &csv_dir)
   result.checks.push_back({ "no stop ticks", m.stop_ticks == 0, std::to_string(m.stop_ticks) + " stop ticks" });
   result.checks.push_back({ "travelled straight", m.final_x > 2.7f && std::fabs(m.final_y) < 0.01f,
                             "final (" + fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });
+  return result;
+}
+
+// Open-space control case: a sufficiently distant lateral goal should remain
+// reachable with a forward arc rather than unnecessarily entering alignment.
+ScenarioResult
+scenarioGoalLateralOpen(const std::string &csv_dir)
+{
+  ScenarioResult result{ "goal_lateral_open", Tier::REGRESSION, {}, {} };
+
+  World world;
+  bac::BacCore core = makeCore(0.3f);
+  SimConfig config;
+  config.sim_time = 45.0f;
+
+  constexpr float goal_x = 0.0f;
+  constexpr float goal_y = 4.0f;
+  config.has_goal = true;
+  config.goal_x = goal_x;
+  config.goal_y = goal_y;
+  SimResult sim = runClosedLoop(
+      core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(goal_x, goal_y), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = goal_x;
+  options.goal_y         = goal_y;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "reaches lateral goal", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" :
+                                                    "not reached" });
+  result.checks.push_back({ "does not remain stationary", m.max_stationary_ticks < 20,
+                            "longest stationary run " +
+                                fmt(m.max_stationary_ticks * config.dt) + "s" });
+  return result;
+}
+
+// Regression guard: a nearby goal exactly beside the robot requires a compact
+// reorientation instead of a tight forward orbit around the goal.
+ScenarioResult
+scenarioGoalLateralNear(const std::string &csv_dir)
+{
+  ScenarioResult result{ "goal_lateral_near", Tier::REGRESSION, {}, {} };
+
+  World world;
+  bac::BacCore core = makeCore(0.3f);
+  bac::Params params = core.params();
+  params.limits.v_min = 0.0f;  // front-only configuration: compact rotation must solve it
+  core.setParams(params);
+  SimConfig config;
+  config.sim_time = 30.0f;
+
+  constexpr float goal_x = 0.0f;
+  constexpr float goal_y = 0.5f;
+  constexpr float goal_tolerance = 0.15f;
+  config.has_goal = true;
+  config.goal_x = goal_x;
+  config.goal_y = goal_y;
+  SimResult sim = runClosedLoop(
+      core, world, { 0.0f, 0.0f, 0.0f },
+      gotoPointPath(goal_x, goal_y, goal_tolerance), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = goal_x;
+  options.goal_y         = goal_y;
+  options.goal_tolerance = goal_tolerance;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "reaches nearby lateral goal", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" :
+                                "not reached; closest " + fmt(m.min_goal_distance) + "m" });
+  result.checks.push_back({ "does not orbit repeatedly", m.total_abs_heading_change < 6.3f,
+                            "accumulated heading change " +
+                                fmt(m.total_abs_heading_change) + "rad" });
+  return result;
+}
+
+// Regression guard: the goal starts directly behind the robot. Turning around
+// or reversing is valid; selecting straight forward motion is not.
+ScenarioResult
+scenarioGoalBehind(const std::string &csv_dir)
+{
+  ScenarioResult result{ "goal_behind", Tier::REGRESSION, {}, {} };
+
+  World world;
+  bac::BacCore core = makeCore(0.3f);
+  bac::Params params = core.params();
+  params.limits.v_min = 0.0f;  // open rear goal must work without rear sensing/reverse
+  core.setParams(params);
+  SimConfig config;
+  config.sim_time = 50.0f;
+
+  constexpr float goal_x = -4.0f;
+  constexpr float goal_y = 0.0f;
+  config.has_goal = true;
+  config.goal_x = goal_x;
+  config.goal_y = goal_y;
+  SimResult sim = runClosedLoop(
+      core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(goal_x, goal_y), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = goal_x;
+  options.goal_y         = goal_y;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "reaches rear goal", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" :
+                                "not reached; closest " + fmt(m.min_goal_distance) + "m" });
+  result.checks.push_back({ "makes progress toward rear goal", m.min_goal_distance < 3.5f,
+                            "closest " + fmt(m.min_goal_distance) + "m, final (" +
+                                fmt(m.final_x) + ", " + fmt(m.final_y) + ")" });
+  result.checks.push_back({ "turns or reverses", m.in_place_turn_ticks > 0 || m.reverse_ticks > 0,
+                            std::to_string(m.in_place_turn_ticks) + " turn ticks, " +
+                                std::to_string(m.reverse_ticks) + " reverse ticks" });
+  return result;
+}
+
+// Rotation-blocked fallback: a close point beside the body lies outside the
+// standstill emergency margin but inside the full swept-rotation disk. With a
+// rear path and explicit rear sensing, the controller must start a safe
+// reverse instead of attempting the inadmissible in-place rotation.
+ScenarioResult
+scenarioGoalBehindRotationBlocked(const std::string &csv_dir)
+{
+  ScenarioResult result{ "goal_behind_rotation_blocked", Tier::REGRESSION, {}, {} };
+
+  World world;
+  world.addBox(0.0f, 0.68f, 0.02f, 0.02f);
+  bac::BacCore core = makeCore(0.3f);
+  bac::Params params = core.params();
+  params.limits.v_min = -0.1f;
+  core.setParams(params);
+  SimConfig config;
+  config.sim_time = 60.0f;
+
+  constexpr float goal_x = -4.0f;
+  constexpr float goal_y = 0.0f;
+  config.has_goal = true;
+  config.goal_x = goal_x;
+  config.goal_y = goal_y;
+  SimResult sim = runClosedLoop(
+      core, world, { 0.0f, 0.0f, 0.0f }, gotoPointPath(goal_x, goal_y), config);
+  writeTraceCsv(csv_dir, result.name, sim, world);
+
+  MetricsOptions options;
+  options.goal_x         = goal_x;
+  options.goal_y         = goal_y;
+  options.goal_tolerance = 0.5f;
+  result.metrics         = computeMetrics(sim, options);
+  const Metrics &m       = result.metrics;
+
+  result.checks.push_back({ "no collision", !m.collided,
+                            "min clearance " + fmt(m.min_clearance) });
+  result.checks.push_back({ "uses reverse fallback", m.reverse_ticks > 0,
+                            std::to_string(m.reverse_ticks) + " reverse ticks" });
+  result.checks.push_back({ "reaches rear goal after escape", m.time_to_goal >= 0.0f,
+                            m.time_to_goal >= 0.0f ? "t=" + fmt(m.time_to_goal) + "s" :
+                                                    "not reached" });
+  result.checks.push_back({ "does not remain stationary", m.max_stationary_ticks < 40,
+                            "longest stationary run " +
+                                fmt(m.max_stationary_ticks * config.dt) + "s" });
   return result;
 }
 
@@ -666,22 +835,39 @@ main(int argc, char *argv[])
   }
 
   using ScenarioFunc = ScenarioResult (*)(const std::string &);
-  const ScenarioFunc scenarios[] = {
-    scenarioOpenPassthrough, scenarioSafetyStop,           scenarioAvoidSingleObstacle,
-    scenarioCorridorWide,    scenarioCorridorNarrowAligned, scenarioCorridorNarrowOffset,
-    scenarioCorridorNarrowWalled, scenarioCorridorExtreme, scenarioCorridorLshape,
-    scenarioCorridorZigzag,
-    scenarioPathOffsetNarrow, scenarioBlockedPathObstacle, scenarioClutterField,
+  struct ScenarioEntry
+  {
+    const char  *name;
+    ScenarioFunc run;
+  };
+  const ScenarioEntry scenarios[] = {
+    { "open_passthrough", scenarioOpenPassthrough },
+    { "goal_lateral_open", scenarioGoalLateralOpen },
+    { "goal_lateral_near", scenarioGoalLateralNear },
+    { "goal_behind", scenarioGoalBehind },
+    { "goal_behind_rotation_blocked", scenarioGoalBehindRotationBlocked },
+    { "safety_stop", scenarioSafetyStop },
+    { "avoid_single_obstacle", scenarioAvoidSingleObstacle },
+    { "corridor_wide", scenarioCorridorWide },
+    { "corridor_narrow_aligned", scenarioCorridorNarrowAligned },
+    { "corridor_narrow_offset", scenarioCorridorNarrowOffset },
+    { "corridor_narrow_walled", scenarioCorridorNarrowWalled },
+    { "corridor_extreme", scenarioCorridorExtreme },
+    { "corridor_lshape", scenarioCorridorLshape },
+    { "corridor_zigzag", scenarioCorridorZigzag },
+    { "path_offset_narrow", scenarioPathOffsetNarrow },
+    { "blocked_path_obstacle", scenarioBlockedPathObstacle },
+    { "clutter_field", scenarioClutterField },
   };
 
   std::vector<ScenarioResult> results;
-  for (ScenarioFunc scenario : scenarios)
+  for (const ScenarioEntry &scenario : scenarios)
   {
-    ScenarioResult result = scenario(csv_dir);
-    if (!filter.empty() && result.name.find(filter) == std::string::npos)
+    if (!filter.empty() && std::string(scenario.name).find(filter) == std::string::npos)
     {
       continue;
     }
+    ScenarioResult result = scenario.run(csv_dir);
     results.push_back(std::move(result));
   }
 

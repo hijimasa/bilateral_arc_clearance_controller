@@ -106,6 +106,13 @@ if(BUILD_TESTING)
   target_link_libraries(bac_scenario_harness bac_core)
   target_compile_options(bac_scenario_harness PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacScenarioHarness COMMAND bac_scenario_harness --strict)
+  add_test(
+      NAME BacGoalDirectionRegression
+      COMMAND bac_scenario_harness --strict --filter goal_
+  )
+  set_tests_properties(BacGoalDirectionRegression PROPERTIES
+      LABELS "regression;goal_direction"
+  )
 
   if(ament_cmake_FOUND)
     if(BAC_BUILD_NAV2_PLUGIN)

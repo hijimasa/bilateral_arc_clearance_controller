@@ -332,6 +332,26 @@ testFaceAwayRecovery()
   expect(stop_ticks < 200, "faces-away recovery keeps moving (no freeze)");
 }
 
+void
+testEmergencyEscapePreemptsAlignment()
+{
+  // The rearward path requests alignment, but this point is already inside
+  // the standstill emergency margin. Escape translation must take precedence;
+  // otherwise alignment removes translation while escape removes rotation and
+  // only the permanent-stop candidate remains.
+  bac::Params params;
+  params.limits.v_min = -0.1f;
+  bac::BacCore core(params);
+  const std::vector<bac::Point2D> points{ { 0.58f, 0.53f } };
+  const std::vector<bac::Point2D> rear_path{ { -0.1f, 0.0f }, { -4.0f, 0.0f } };
+
+  const bac::Result result = core.process(points, rear_path, {});
+  expect(result.output.v < -1e-3f,
+         "emergency escape preempts rear-path alignment and reverses away");
+  expect(std::fabs(result.output.w) < 1e-3f,
+         "emergency escape does not rotate inside the emergency margin");
+}
+
 }  // namespace
 
 int
@@ -345,6 +365,7 @@ main()
   testReverseRightTurnCounterexample();
   testSweptFootprintProperty();
   testFaceAwayRecovery();
+  testEmergencyEscapePreemptsAlignment();
 
   if (failures != 0)
   {

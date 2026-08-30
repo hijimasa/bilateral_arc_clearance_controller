@@ -360,6 +360,7 @@ BacCore::BacCore(const Params &params)
   , avoiding_counter_(0)
   , prev_selected_w_(0.0f)
   , cap_ema_(-1.0f)
+  , alignment_mode_(false)
 {
 }
 
@@ -394,6 +395,7 @@ BacCore::reset()
   avoiding_counter_ = 0;
   prev_selected_w_  = 0.0f;
   cap_ema_          = -1.0f;
+  alignment_mode_   = false;
 }
 
 ArcEvaluation
@@ -621,6 +623,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // pass-through arbitration still works while idling.
   if (path.empty())
   {
+    alignment_mode_ = false;
     result.output   = Twist2D(0.0f, 0.0f);
     current_status_ =
         (proximity.distance > params_.influence_range) ? Status::CLEAR : Status::AVOIDING;
@@ -748,7 +751,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // Returns the goal COST (remaining station + weighted lateral offset; full
   // Euclidean distance once past the path end) and the reference bearing
   // (path tangent, or the direction to the final point at the terminal).
-  auto station_goal_cost = [&](float px, float py, float &bearing_out, float &heading_scale) {
+  // progress_out is signed progress from the robot's current projection;
+  // it prevents collision-free motion AWAY from the ordered path from being
+  // mistaken for a useful candidate.
+  const float local_goal_distance = std::hypot(path.back().x, path.back().y);
+  auto station_goal_cost = [&](float px, float py, float &bearing_out, float &heading_scale,
+                               float &progress_out) {
     heading_scale = 1.0f;
     if (station_degenerate)
     {
@@ -756,6 +764,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       const float d  = std::sqrt(dx * dx + dy * dy);
       bearing_out    = (d > 1e-3f) ? std::atan2(dy, dx) : 0.0f;
       heading_scale  = std::min(1.0f, d / 0.5f);
+      progress_out   = local_goal_distance - d;
       return d;
     }
     float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
@@ -790,6 +799,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
     }
     const float d = std::sqrt(best_d2);
+    progress_out = s_best - station_s0;
     if (clamped && d > 1e-3f)
     {
       bearing_out = std::atan2(best_qy - py, best_qx - px);
@@ -810,6 +820,23 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     const float lateral = blocked ? 0.0f : params_.station_lateral_weight * d;
     return (station_total - s_best) + lateral;
   };
+
+  // Alignment follows the ordered path TANGENT, not the bearing to its first
+  // emitted point. A replanned/decimated path commonly starts 0.1 m ahead;
+  // using that point bearing would rotate towards a harmless lateral path
+  // offset near the goal and fight BAC's geometric centering.
+  float relative_path_heading;
+  if (station_degenerate)
+  {
+    relative_path_heading = std::atan2(path.back().y, path.back().x);
+  }
+  else
+  {
+    const Point2D &a = station_pts[station_i0];
+    const Point2D &b = station_pts[station_i0 + 1];
+    relative_path_heading = std::atan2(b.y - a.y, b.x - a.x);
+  }
+  relative_path_heading = wrapAngle(relative_path_heading);
 
   // Proximity speed governor: cap the sampled speed in front of points the
   // current motion would actually run into (slab test in evaluateProximity -
@@ -911,8 +938,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       v_values.push_back(v);
     }
   }
-  // Escape reverse: offered only when reverse is accel-reachable (near
-  // standstill), so it never competes with normal forward driving.
+  // Reverse is offered only when accel-reachable (near standstill). It is
+  // retained below only when no safe forward candidate advances the ordered
+  // path, so normal forward tracking still wins categorically.
   float v_rev = std::max(params_.limits.v_min, current.v - window_dv);
   if (v_rev < -1e-3f)
   {
@@ -947,6 +975,42 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     }
   }
 
+  // A geometric path alone does not say that any collision-free forward
+  // motion is useful. When the ordered path initially points almost behind
+  // the body, or a nearby goal requires a compact side-step, first align the
+  // body with the local path tangent. Hysteretic enter/exit thresholds avoid
+  // alternating between rotate and translate at the boundary. If rotation is
+  // obstructed, leave this mode and let a goal-progressing reverse candidate
+  // (when configured and rear-observed) compete below.
+  constexpr float kAlignExitAngle      = 0.25f;
+  constexpr float kAlignNearEnterAngle = 0.70f;
+  constexpr float kAlignRearEnterAngle = 2.60f;
+  constexpr float kAlignNearDistance   = 1.00f;
+  const float abs_path_heading = std::fabs(relative_path_heading);
+  // Emergency escape has absolute priority: alignment removes every
+  // translational candidate, while escape_only intentionally permits only a
+  // translation away from the offending point. Combining the two would leave
+  // the stop candidate as the sole survivor and latch forever.
+  if (escape_only)
+  {
+    alignment_mode_ = false;
+  }
+  else if (alignment_mode_)
+  {
+    if (abs_path_heading < kAlignExitAngle || !rotation_admissible)
+    {
+      alignment_mode_ = false;
+    }
+  }
+  else if (rotation_admissible &&
+           ((local_goal_distance < kAlignNearDistance &&
+             abs_path_heading > kAlignNearEnterAngle) ||
+            abs_path_heading > kAlignRearEnterAngle))
+  {
+    alignment_mode_ = true;
+  }
+  const bool alignment_required = alignment_mode_ && rotation_admissible;
+
   // Reusable buffer for turn-then-go evaluation of the v=0 row
   std::vector<Point2D> rotated_points;
 
@@ -964,13 +1028,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   Twist2D best_cmd(0.0f, 0.0f);
   float best_clearance = 0.0f, best_path_cost = 0.0f;
   int   admissible_count = 0, candidate_count = 0;
-  int   forward_admissible = 0;  // gates the escape-reverse row
+  int   forward_progressing = 0;  // gates reverse only when forward advances the ordered path
 
   auto evaluate_candidate = [&](float v, float w) {
       candidate_count++;
-      if (v < -1e-3f && forward_admissible > 0)
+      if (alignment_required && std::fabs(v) > 1e-3f)
       {
-        return;  // reverse is an escape move: only when forward is hopeless
+        return;  // explicit rotate-before-translate mode
       }
       if (escape_only)
       {
@@ -998,16 +1062,24 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         end_x_pre    = radius * std::sin(end_th_pre);
         end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
       }
-      float gd_pre, bearing_pre, heading_scale_pre;
-      gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre);
+      float gd_pre, bearing_pre, heading_scale_pre, candidate_progress;
+      gd_pre = station_goal_cost(
+          end_x_pre, end_y_pre, bearing_pre, heading_scale_pre, candidate_progress);
+      // Collision-free forward motion that does not advance the ordered path
+      // is not a navigation solution. In particular, this rejects the open-
+      // space straight-ahead candidate when the complete path is behind.
+      if (v > 1e-3f && candidate_progress <= 1e-4f && !escape_only)
+      {
+        return;
+      }
       float fixed_penalties = params_.weights.path_dist * gd_pre +
                               params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
       // (Pruning waits until one admissible forward candidate is on record:
-      // the escape-reverse gate depends on that count, and admissibility is
+      // the reverse gate depends on GOAL PROGRESS, and admissibility is
       // only known after evaluation. The v=0 row is exempt - its goal
       // distance improves after evaluation via the turn-then-go advance, so
       // the pre-evaluation bound would not be an upper bound.)
-      if (std::fabs(v) > 1e-3f && forward_admissible > 0 &&
+      if (v > 1e-3f && forward_progressing > 0 &&
           params_.weights.clearance * cap_eff - fixed_penalties <= best_score)
       {
         return;
@@ -1051,14 +1123,17 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         // space away from the goal freezes: the phantom clearance of the run
         // it never makes rewards holding still, and the heading reward for
         // turning back is smaller than the hysteresis of starting to turn.
-        float advance = v_ref * params_.sim_time;
+        float advance = std::min(v_ref * params_.sim_time, local_goal_distance);
         if (eval.blocking_s < FLT_MAX)
         {
           advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_margin));
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
-        gd_pre = station_goal_cost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre) + advance;
+        gd_pre = station_goal_cost(
+                     end_x_pre, end_y_pre, bearing_pre, heading_scale_pre,
+                     candidate_progress) +
+                 advance;
       }
       else
       {
@@ -1098,10 +1173,17 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         clear_left       = eval.far_left;
         clear_right      = eval.far_right;
       }
-      admissible_count++;
-      if (v > 1e-3f)
+      // Reverse candidates are evaluated through geometry/admissibility even
+      // in ordinary tracking, but remain an escape alternative when a safe
+      // forward candidate actually advances the ordered path.
+      if (v < -1e-3f && forward_progressing > 0 && !escape_only)
       {
-        forward_admissible++;
+        return;
+      }
+      admissible_count++;
+      if (v > 1e-3f && candidate_progress > 1e-4f)
+      {
+        forward_progressing++;
       }
 
       // Bilateral balance over the FORWARD part of the arc (capped so wide
@@ -1119,14 +1201,29 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // Rollout endpoint after sim_time (precomputed above)
       float end_th      = end_th_pre;
       float path_cost   = gd_pre;
-      float heading_err = wrapAngle(bearing_pre - end_th);
+      const float motion_heading = end_th + (v < -1e-3f ? kPi : 0.0f);
+      float heading_err = wrapAngle(bearing_pre - motion_heading);
 
-      float score = params_.weights.clearance * std::min(clearance, cap_eff) -
-                    params_.weights.balance * tightness * balance -
-                    params_.weights.path_dist * path_cost -
-                    params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
-                    params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
-                    params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
+      float score;
+      if (alignment_required)
+      {
+        // While braking translational motion, do not start sweeping the body.
+        // Once nearly stationary, choose the sampled in-place rotation that
+        // most reduces the relative path heading over the rollout horizon.
+        const float alignment_error = (std::fabs(current.v) > 0.05f)
+                                          ? std::fabs(w)
+                                          : std::fabs(wrapAngle(relative_path_heading - end_th));
+        score = -alignment_error - 0.05f * std::fabs(w - prev_selected_w_);
+      }
+      else
+      {
+        score = params_.weights.clearance * std::min(clearance, cap_eff) -
+                params_.weights.balance * tightness * balance -
+                params_.weights.path_dist * path_cost -
+                params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
+                params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
+                params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
+      }
 #ifdef BAC_DEBUG_CANDIDATES
       std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
                   std::min(clearance, clearance_cap), path_cost, heading_err, lateral_fraction, score);

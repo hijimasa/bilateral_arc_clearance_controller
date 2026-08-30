@@ -32,13 +32,22 @@ struct MetricsOptions
 
 struct Metrics
 {
-  bool  collided       = false;
-  float min_clearance  = 1e9f;
-  float time_to_goal   = -1.0f;  // <0: goal not reached
-  float final_x        = 0.0f;
-  float final_y        = 0.0f;
+  bool  collided                = false;
+  float min_clearance           = 1e9f;
+  float time_to_goal            = -1.0f;  // <0: goal not reached
+  float min_goal_distance       = 1e9f;
+  float final_x                 = 0.0f;
+  float final_y                 = 0.0f;
+  float final_heading           = 0.0f;
+  float total_abs_heading_change = 0.0f;
 
   int stop_ticks   = 0;  // actual speed ~0 while a nonzero command was given
+  /// No measured translation OR rotation while navigation intent exists.
+  /// Unlike stop_ticks, an intentional in-place turn is not a stall.
+  int stationary_ticks     = 0;
+  int max_stationary_ticks = 0;
+  int reverse_ticks        = 0;
+  int in_place_turn_ticks  = 0;
   int status_stop  = 0;  // ticks with AVOID_STATUS_STOP
   int status_avoid = 0;  // ticks with AVOID_STATUS_AVOIDING
   int total_ticks  = 0;
@@ -58,15 +67,25 @@ computeMetrics(const SimResult &result, const MetricsOptions &options)
   m.collided    = result.collided;
   m.total_ticks = static_cast<int>(result.trace.size());
 
-  float prev_w      = 0.0f;
-  int   prev_w_sign = 0;
-  float lateral_sum = 0.0f;
+  float prev_w            = 0.0f;
+  int   prev_w_sign       = 0;
+  int   stationary_run    = 0;
+  float prev_heading      = 0.0f;
+  bool  have_prev_heading = false;
+  float lateral_sum       = 0.0f;
 
   for (const TraceRow &row : result.trace)
   {
     m.min_clearance = std::min(m.min_clearance, row.clearance);
     m.final_x       = row.pose.x;
     m.final_y       = row.pose.y;
+    m.final_heading = row.pose.th;
+    if (have_prev_heading)
+    {
+      m.total_abs_heading_change += std::fabs(row.pose.th - prev_heading);
+    }
+    prev_heading = row.pose.th;
+    have_prev_heading = true;
 
     if (row.status == static_cast<int>(Status::STOP))
     {
@@ -82,6 +101,30 @@ computeMetrics(const SimResult &result, const MetricsOptions &options)
       m.stop_ticks++;
     }
 
+    const bool has_intent = std::fabs(row.command.v) > 0.05f ||
+                            std::fabs(row.command.w) > kAngvelMin;
+    const bool stationary = std::fabs(row.actual.v) < 0.01f &&
+                            std::fabs(row.actual.w) < kAngvelMin;
+    if (has_intent && stationary)
+    {
+      ++m.stationary_ticks;
+      ++stationary_run;
+      m.max_stationary_ticks = std::max(m.max_stationary_ticks, stationary_run);
+    }
+    else
+    {
+      stationary_run = 0;
+    }
+    if (has_intent && row.actual.v < -0.01f)
+    {
+      ++m.reverse_ticks;
+    }
+    if (has_intent && std::fabs(row.actual.v) < 0.01f &&
+        std::fabs(row.actual.w) >= kAngvelMin)
+    {
+      ++m.in_place_turn_ticks;
+    }
+
     m.max_dw = std::max(m.max_dw, std::fabs(row.output.w - prev_w));
     prev_w   = row.output.w;
 
@@ -95,11 +138,13 @@ computeMetrics(const SimResult &result, const MetricsOptions &options)
       prev_w_sign = w_sign;
     }
 
-    if (options.goal_tolerance > 0.0f && m.time_to_goal < 0.0f)
+    if (options.goal_tolerance > 0.0f)
     {
       float dx = options.goal_x - row.pose.x;
       float dy = options.goal_y - row.pose.y;
-      if (std::sqrt(dx * dx + dy * dy) < options.goal_tolerance)
+      const float goal_distance = std::sqrt(dx * dx + dy * dy);
+      m.min_goal_distance = std::min(m.min_goal_distance, goal_distance);
+      if (m.time_to_goal < 0.0f && goal_distance < options.goal_tolerance)
       {
         m.time_to_goal = row.t;
       }

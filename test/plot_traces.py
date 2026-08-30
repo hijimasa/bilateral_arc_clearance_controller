@@ -65,6 +65,23 @@ def plot_scenario(trace_path: Path):
     ys = [r["y"] for r in trace]
     colors = [STATUS_COLORS[int(r["status"])] for r in trace]
     ax_map.scatter(xs, ys, c=colors, s=4, zorder=3)
+    has_goal = (
+        trace
+        and math.isfinite(trace[0].get("goal_x", math.nan))
+        and math.isfinite(trace[0].get("goal_y", math.nan))
+    )
+    if has_goal:
+        ax_map.scatter(
+            [trace[0]["goal_x"]],
+            [trace[0]["goal_y"]],
+            marker="*",
+            s=180,
+            color="#d62728",
+            edgecolor="black",
+            linewidth=0.6,
+            label="goal",
+            zorder=5,
+        )
 
     # robot footprint every ~2.5s
     step = max(1, int(2.5 / (trace[1]["t"] - trace[0]["t"]))) if len(trace) > 1 else 1
@@ -72,7 +89,13 @@ def plot_scenario(trace_path: Path):
         ox, oy = robot_outline(r["x"], r["y"], r["th"])
         ax_map.plot(ox, oy, color="#1f77b4", lw=0.6, alpha=0.5)
 
-    handles = [plt.Line2D([], [], marker="o", ls="", color=c, label=STATUS_NAMES[k]) for k, c in STATUS_COLORS.items()]
+    handles = [
+        plt.Line2D([], [], marker="o", ls="", color=c, label=STATUS_NAMES[k])
+        for k, c in STATUS_COLORS.items()
+    ]
+    goal_handle = [plt.Line2D([], [], marker="*", ls="", color="#d62728", label="goal")]
+    if has_goal:
+        handles += goal_handle
     ax_map.legend(handles=handles, loc="best", fontsize=8)
     ax_map.set_aspect("equal")
     ax_map.grid(alpha=0.3)

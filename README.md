@@ -145,13 +145,38 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The 13 closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator, and unicycle
+The 17 closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator, and unicycle
 kinematics.
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces
 python3 test/plot_traces.py --dir traces
 ```
+
+### Lateral/rear-goal regression tests
+
+Goal-direction coverage includes a distant lateral control, a nearby lateral goal, a goal directly behind, and
+a rear goal with an obstacle that makes in-place rotation inadmissible.
+
+```bash
+ctest --test-dir build -R BacGoalDirectionRegression --output-on-failure
+
+./build/bac_scenario_harness --strict --csv-dir traces --filter goal_lateral_near
+./build/bac_scenario_harness --strict --csv-dir traces --filter goal_behind
+python3 test/plot_traces.py --dir traces goal_lateral_near goal_behind
+```
+
+In the current deterministic simulation, with reverse disabled for the front-sensor cases, the controller
+reaches the goal 0.5 m to the left in 8.250 seconds, the goal 4.0 m directly behind in 18.700 seconds after an
+in-place turn, and the 4.0 m lateral control in 13.050 seconds. When a side obstacle blocks the in-place sweep,
+the explicitly enabled -0.1 m/s reverse floor
+produces 52 reverse ticks before alignment and reaches the rear goal in 21.150 seconds. The 60-second check has
+no collision or continuous stationary run.
+
+Candidate selection uses signed progress on the ordered path and the path tangent relative to the body, not
+collision admissibility alone. A hysteretic alignment mode handles nearby lateral and nearly rearward paths;
+when rotation is unsafe, a goal-progressing reverse candidate is the fallback. All four scenarios and the CTest
+command above must pass as regression acceptance criteria.
 
 ## Limitations
 

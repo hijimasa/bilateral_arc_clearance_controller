@@ -361,6 +361,7 @@ private:
   int    avoiding_counter_;  // AVOIDING latch countdown
   float  prev_selected_w_;   // previously selected steering rate (hysteresis)
   float  cap_ema_;           // density-adapted clearance reference (-1 = uninitialized)
+  bool   alignment_mode_;    // reduce a large local-path tangent error before translating
 };
 
 }  // namespace bac
