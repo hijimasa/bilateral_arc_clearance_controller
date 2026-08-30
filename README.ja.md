@@ -168,6 +168,85 @@ python3 test/plot_traces.py --dir traces goal_lateral_near goal_behind
 ほぼ真後ろではヒステリシス付き姿勢整合モードを優先し、その場旋回が安全でなければ後退へフォールバックします。
 全4ケースのPASSと上記CTestの終了コード0が回帰条件です。
 
+## 統合時の落とし穴
+
+4台の深度カメラを積んだ差動駆動の屋外ロボットにBACを導入した際に、実際に時間を
+取られた点。いずれもエラーメッセージは出ず、コントローラの挙動がおかしいという形で
+現れる。
+
+### コントローラに本物の現在速度を渡す
+
+BACは、Nav2が `computeVelocityCommands` に渡す速度を中心とした加速度制限ウィンドウ
+（`current.v ± acc_v * window_time`）から前進速度をサンプリングする。
+`controller_server` はその速度を自身のオドメトリスムーザから取り、その
+`odom_topic` パラメータの**既定値は `odom`** である。そのトピックを誰も publish して
+いないとスムーザは毎周期ゼロを報告し、BACは `acc_v * window_time` を超える候補を
+出せない。`acc_v: 0.4` と既定の `window_time: 0.25` なら 0.1 m/s である。しかも
+停止していると伝えられ続けるため、二度と上がらない。
+
+症状は「計画も操舵も回避も正しいのに、`limits.v_max` の一定割合でしか走らない」。
+ログには何も出ない。設定先は `controller_server` 自身であること。`bt_navigator` に
+書いても別の購読者である。
+
+```yaml
+controller_server:
+  ros__parameters:
+    odom_topic: /odometry/filtered   # 実際に nav_msgs/Odometry を出しているトピック
+```
+
+### `control_period` を実際の制御周期に合わせる
+
+`control_period` は `acc_v` / `acc_w` を1周期あたりの変化量に変換する値であり、円弧の
+ロールアウトもその間隔で指令が更新される前提に立つ。`controller_frequency: 20.0` と
+宣言しながら実測6 Hzしか出ていない構成（深度カメラ数台がボクセルレイヤに流し込めば
+容易に起こる）では、判断と判断の間に3倍の距離を進むことになり、公称周期で調整した
+マージンは楽観的すぎる。Nav2は次のように報告する。
+
+```text
+Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
+```
+
+周期を改善するか、実際に出る周期に合わせて `limits.v_max` を下げること。
+
+### `avoid_margin.side` は希望値、`safety_margin.side` が制約
+
+歩行者への配慮で `avoid_margin.side` を広げても狭所が通れなくなるわけではない。
+希望値は周囲が実際に許すクリアランスに適応するため、希望値より狭い通路も中央を
+保って通過する。ただし巡航速度には効く。同じtightness指標が速度上限を
+`tight_cruise_fraction`（下限は `creep_fraction`）に向けて抑制するため、
+狭い環境で希望値を広く取ることは設計上そのまま「遅くする」ことを意味する。
+硬い制約は `safety_margin.side` であり、コース最狭部と突き合わせるべきはこちら。
+
+### 後退は脱出手段であって走行モードではない
+
+後退候補には `limits.v_min < 0` が必要で、1加速ステップで到達できるとき（つまり
+ほぼ停止時）にのみ提示され、さらに「経路を前進させる安全な前進候補が存在しない」
+場合にのみ残る。本当に詰まったときに出るものと考えること。開けた場所で数メートル
+後退する経路は、この機構が提供するものではない。
+
+### 推測の前に診断を読む
+
+`diagnostics_publish_period` を正にすると、BACは `obstacle_source`、`scan_state`、
+`bac_status`、`candidate_count`、`admissible_count`、`best_clearance_m`、
+`nearest_distance_m`、`best_path_cost_m` を `/diagnostics` に publish する。
+外から見ると同じに見える状態を切り分けられる。
+
+- `candidate_count` と `admissible_count` がともに0: BACには打つ手が一つもない。
+  たいていロボットが既に自身のマージンの内側に入っている。
+- `admissible_count` は十分あるのに指令がゼロのまま: スコアリングが停止か旋回を
+  選んでいる。前進していた候補があるかは `best_path_cost_m` で分かる。
+- `obstacle_source` は生スキャンとコストマップのどちらを見ているかを示す。
+  コントローラを疑う前に、何を見せていたのかを確認する価値がある。
+
+### ロボット自身の構造を障害物入力から除く
+
+デッキに載せたカメラは、全フレームの下端に自機のシャシーを写す。その点は距離ゼロの
+障害物としてロボットと一緒に動き回り、クリアランス項は永久に前進を許さなくなる。
+コストマップやスキャンがBACに届く前に、画像の帯をクロップし、自機の体積を点群から
+差し引くこと（`base_link` での負の `CropBox`）。そのボックスはシャシーに密着させる。
+削った領域はコントローラから見えないので、広すぎるボックスはバンパー直前の本物の
+障害物を静かに消してしまう。
+
 ## 制約
 
 - 2Dの差動二輪と定曲率円弧を前提とし、holonomic / Ackermann motion modelは持ちません。

@@ -178,6 +178,93 @@ collision admissibility alone. A hysteretic alignment mode handles nearby latera
 when rotation is unsafe, a goal-progressing reverse candidate is the fallback. All four scenarios and the CTest
 command above must pass as regression acceptance criteria.
 
+## Integration pitfalls
+
+Collected while adopting BAC on a differential-drive outdoor robot with four
+depth cameras. None of these produce an error message; each presents as the
+controller behaving oddly.
+
+### Hand the controller a real current velocity
+
+BAC samples forward speeds in an acceleration-limited window around the velocity
+Nav2 passes to `computeVelocityCommands`, that is `current.v ± acc_v *
+window_time`. `controller_server` takes that velocity from its odometry
+smoother, whose `odom_topic` parameter **defaults to `odom`**. If nothing
+publishes that topic the smoother reports zero every cycle, so BAC can never
+offer more than `acc_v * window_time` — 0.1 m/s with `acc_v: 0.4` and the
+default `window_time: 0.25` — and, still being told it is stationary, never can
+again.
+
+The symptom is a robot that plans, steers and avoids correctly while driving at
+a fixed fraction of `limits.v_max`, with nothing logged anywhere. Set the
+parameter on `controller_server` itself; setting it on `bt_navigator` is a
+different subscriber.
+
+```yaml
+controller_server:
+  ros__parameters:
+    odom_topic: /odometry/filtered   # whatever actually publishes nav_msgs/Odometry
+```
+
+### Make `control_period` match the rate the controller really achieves
+
+`control_period` converts `acc_v` and `acc_w` into a per-cycle step, and the arc
+rollouts assume commands are reissued that often. A stack declaring
+`controller_frequency: 20.0` that achieves 6 Hz — easily done with several depth
+cameras feeding a voxel layer — travels three times further between decisions
+than the parameters imply, and margins tuned at the nominal rate are optimistic.
+Nav2 reports it:
+
+```text
+Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
+```
+
+Fix the rate, or lower `limits.v_max` to match the rate you actually get.
+
+### `avoid_margin.side` is an aspiration; `safety_margin.side` is the limit
+
+Widening `avoid_margin.side` for comfort around pedestrians does not close
+narrow passages: the aspiration adapts to the clearance the surroundings
+actually afford, so a corridor narrower than the aspiration is still traversed,
+centred. It does affect cruising speed, because the same tightness measure
+moderates the speed cap toward `tight_cruise_fraction` (floored at
+`creep_fraction`) — a wide aspiration in a consistently tight environment is a
+slower one by design. `safety_margin.side` is the hard constraint, and it is the
+one to check against the narrowest gap on the course.
+
+### Reverse is an escape move, not a driving mode
+
+Reverse candidates require `limits.v_min < 0`, are offered only when reverse is
+reachable within one acceleration step (so, near standstill), and are kept only
+when no safe forward candidate advances the ordered path. Expect them when the
+robot is genuinely stuck. A route that needs several metres of reversing in the
+open is not what this provides.
+
+### Read the diagnostics before theorising
+
+With `diagnostics_publish_period` above zero, BAC publishes `obstacle_source`,
+`scan_state`, `bac_status`, `candidate_count`, `admissible_count`,
+`best_clearance_m`, `nearest_distance_m` and `best_path_cost_m` on
+`/diagnostics`. They separate cases that look identical from outside:
+
+- `candidate_count` and `admissible_count` both zero: BAC has no move at all,
+  usually because the robot is already inside its own margins.
+- `admissible_count` healthy while the command stays zero: the scoring chose to
+  stop or rotate. `best_path_cost_m` shows whether any candidate was making
+  progress.
+- `obstacle_source` says whether the raw scan or the costmap fallback is in use,
+  which is worth checking before blaming the controller for what it was shown.
+
+### Keep the robot's own structure out of the obstacle input
+
+Cameras mounted on the deck see the chassis along the bottom of every frame.
+Those returns become obstacles at zero range that travel with the robot, and the
+clearance terms then never let it move. Crop the image band and subtract the
+robot's own volume from the cloud — a negative `CropBox` in `base_link` — before
+the costmap or scan reaches BAC. Keep that box tight to the chassis: whatever it
+removes is invisible to the controller, so an over-wide box quietly deletes real
+obstacles just in front of the bumper.
+
 ## Limitations
 
 - BAC assumes a 2D differential-drive robot and constant-curvature arcs; it has no holonomic or Ackermann model.
