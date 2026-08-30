@@ -194,6 +194,13 @@ controller_server:
     odom_topic: /odometry/filtered   # 実際に nav_msgs/Odometry を出しているトピック
 ```
 
+存在するトピック名を指すだけでは足りない。`OdomSmoother` が読むのは `twist.twist`
+だけで `pose` は一切見ない。位置だけ埋めて twist をゼロのままにしている publisher は
+珍しくないが、その場合は購読が成立したまま、警告も出ないまま、まったく同じ症状に
+なる。差動駆動なら `twist.twist.linear.x` と `twist.twist.angular.z` に実際の機体速度が
+入っている必要がある（メッセージ規約どおり `child_frame_id` 系）。走行中に
+`ros2 topic echo` で覗けばそれで確認できる。
+
 ### `control_period` を実際の制御周期に合わせる
 
 `control_period` は `acc_v` / `acc_w` を1周期あたりの変化量に変換する値であり、円弧の

@@ -206,6 +206,14 @@ controller_server:
     odom_topic: /odometry/filtered   # whatever actually publishes nav_msgs/Odometry
 ```
 
+Naming a topic that exists is only half of it. `OdomSmoother` reads
+`twist.twist` and ignores `pose` entirely, so a publisher that fills in the pose
+and leaves the twist at zero — not unusual — produces exactly the same failure
+with the subscription connected and no warning to show for it. For a
+differential-drive robot `twist.twist.linear.x` and `twist.twist.angular.z` have
+to carry the real body velocity, in `child_frame_id` as the message specifies.
+`ros2 topic echo` on the topic while the robot drives is the whole check.
+
 ### Make `control_period` match the rate the controller really achieves
 
 `control_period` converts `acc_v` and `acc_w` into a per-cycle step, and the arc
