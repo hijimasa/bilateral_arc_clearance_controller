@@ -201,6 +201,15 @@ controller_server:
 入っている必要がある（メッセージ規約どおり `child_frame_id` 系）。走行中に
 `ros2 topic echo` で覗けばそれで確認できる。
 
+通常の `ros2_control` 構成では、中身は問題にならない。`diff_drive_controller` も
+`robot_localization` の `ekf_node` も twist を正しく埋めて publish する。問題になるのは
+**名前**のほう。`diff_drive_controller` の publish 先は `~/odom`、つまりその名前の
+コントローラなら `/diff_drive_controller/odom` であり、Nav2 の既定は `odom` である。
+`odom_topic` に実際の名前を設定するか、コントローラの出力を `/odom` に remap するか、
+どちらかを行うこと。どちらもしていない構成が、黙って失敗する構成である。車輪と
+Nav2 の間にフィルタを挟む場合は、フィルタ後の推定値を Nav2 に渡す。計画に使う速度と
+自己位置に使う `odom -> base_link` が同じ出所になるようにするため。
+
 ### `control_period` を実際の制御周期に合わせる
 
 `control_period` は `acc_v` / `acc_w` を1周期あたりの変化量に変換する値であり、円弧の

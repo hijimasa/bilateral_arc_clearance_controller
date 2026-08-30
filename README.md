@@ -214,6 +214,16 @@ differential-drive robot `twist.twist.linear.x` and `twist.twist.angular.z` have
 to carry the real body velocity, in `child_frame_id` as the message specifies.
 `ros2 topic echo` on the topic while the robot drives is the whole check.
 
+With the usual `ros2_control` stack the content is not the problem: both
+`diff_drive_controller` and `robot_localization`'s `ekf_node` publish a properly
+filled twist. The *name* is. `diff_drive_controller` publishes on `~/odom`,
+which is `/diff_drive_controller/odom` for a controller of that name, and Nav2
+defaults to `odom`. Either point `odom_topic` at the real name or remap the
+controller's output to `/odom`; a configuration that does neither is the one
+that fails silently. Where a filter sits between the wheels and Nav2, give Nav2
+the filtered estimate, so that the velocity it plans against and the
+`odom -> base_link` transform it localizes against come from the same source.
+
 ### Make `control_period` match the rate the controller really achieves
 
 `control_period` converts `acc_v` and `acc_w` into a per-cycle step, and the arc
