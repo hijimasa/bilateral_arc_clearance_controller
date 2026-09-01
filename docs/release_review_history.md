@@ -19,7 +19,8 @@
 ablation 216 episodeを追加した。2026-09-01にはAckermann motion modelを追加し、第11回レビューで
 `setParams`の例外安全（High 1件）を修正した。次cycleへ残す設計・評価項目は、角加速度過渡を積分した
 rollout、実機外乱評価、Collision Monitor併用baseline、`BacCore::process()`の責務分割、
-Ackermannシナリオの拡充（R11 L5）、およびfilter node仮想pathの旋回円clamp（R12 L5）である。Ackermannの検証は決定論的な単体検査と閉ループ回帰のみで、
+およびfilter node仮想pathの旋回円clamp（R12 L5）である。Ackermannシナリオの拡充（R11 L5）は
+2026-09-01に完了し、安全停止（前進のみ／後退退避）、狭路centering、clutter走破を追加した。Ackermannの検証は決定論的な単体検査と閉ループ回帰のみで、
 実車evidenceは無い。
 
 個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特に第8回の
@@ -50,7 +51,9 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
   両者は同一tickの表と裏を検査するため、`motion_model.type`の誤解決は必ずどちらかが検出する。
   Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
   実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
-- core unit / property testと17 closed-loop scenarios、Ackermann 6 closed-loop scenarios。
+- core unit / property testと17 closed-loop scenarios、Ackermann 10 closed-loop scenarios。Ackermann側は
+  同梱設定例そのものを走らせる試験を含み、狭路centeringとclutterでは横偏差・曲率符号反転・1周期あたり
+  曲率変化・停止tickを閾値検査する。閾値は正常時と破壊時の実測値を分離するように決めている。
 - 差動二輪とAckermannのmotion model単体試験。Ackermann側は候補格子、旋回半径拘束、refinement、
   clearance probe、deadband、実行時のmodel切替、却下設定後の可用性を検査する。
 - scan投影・plan変換/pruneの単体試験、およびplugin lifecycle、TF error、scan fallback、speed limit、

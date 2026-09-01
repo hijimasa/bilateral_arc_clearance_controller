@@ -163,9 +163,10 @@ ctest --test-dir build --output-on-failure
 ```
 
 The 17 differential-drive closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator,
-and unicycle kinematics. A separate Ackermann regression drives a plant whose speed is acceleration-limited and
-whose curvature slews at a bounded rate, so the commands are checked against a vehicle that cannot change its
-steering instantly.
+and unicycle kinematics. A separate 10-scenario Ackermann regression drives a plant whose speed is
+acceleration-limited and whose curvature slews at a bounded rate, so the commands are checked against a vehicle
+that cannot change its steering instantly. It includes the shipped example configuration, so the file users copy
+is the file the suite defends.
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces

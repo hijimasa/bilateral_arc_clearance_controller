@@ -19,8 +19,9 @@ configuration failed the package's own Ackermann regression suite - R11 L4 had b
 216-episode matched-condition comparison, and a 216-episode BAC ablation. On 2026-09-01 the Ackermann motion
 model was added, and R11 fixed the exception safety of `setParams` (one High finding). Remaining work includes
 rollout through angular-acceleration transients, physical disturbance evaluation, a Collision Monitor combined
-baseline, decomposition of `BacCore::process()`, a broader Ackermann scenario suite (R11 L5), and clamping the
-filter node's virtual path to the turning circle (R12 L5). Ackermann
+baseline, decomposition of `BacCore::process()`, and clamping the filter node's virtual path to the turning
+circle (R12 L5). The broader Ackermann scenario suite (R11 L5) was completed on 2026-09-01, adding safety stop
+(forward-only and reverse escape), narrow-corridor centering, and a clutter field. Ackermann
 coverage consists of deterministic unit checks and closed-loop regressions only; there is no vehicle evidence.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
@@ -55,7 +56,10 @@ The linked findings and responses are preserved in Japanese as the original audi
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Core unit/property tests, 17 closed-loop scenarios, and 6 Ackermann closed-loop scenarios
+- Core unit/property tests, 17 closed-loop scenarios, and 10 Ackermann closed-loop scenarios. The Ackermann set
+  includes a run of the shipped example configuration, and its narrow-corridor and clutter scenarios bound
+  lateral error, curvature sign changes, per-cycle curvature change and stop ticks. The thresholds were chosen
+  to separate the measured correct behaviour from the measured broken behaviour
 - Motion-model unit tests for differential drive and Ackermann; the Ackermann set covers the candidate lattice,
   the turning-radius bound, refinement, clearance probes, the deadband, a runtime model switch, and that the core
   stays usable after a rejected configuration

@@ -45,6 +45,16 @@ struct AckermannPlant
   float curvature_rate = 1.0f;  // [1/(m*s)] steering slew at the body level
 };
 
+/// Optional corridor-centering window: lateral error is aggregated only while
+/// the vehicle is between x_from and x_to, i.e. inside the corridor proper.
+struct LateralWindow
+{
+  bool enabled = false;
+  float center_y = 0.0f;
+  float x_from = 0.0f;
+  float x_to = 0.0f;
+};
+
 struct AckermannRun
 {
   bac_sim::Pose final_pose;
@@ -59,13 +69,18 @@ struct AckermannRun
   float min_goal_distance = 1e9f;
   float travelled_distance = 0.0f;   // path length actually driven
   float max_curvature_step = 0.0f;   // largest per-tick commanded curvature jump
+  int stop_ticks = 0;                // commanded standstill while a path existed
+  int curvature_sign_changes = 0;    // steering oscillation
+  float mean_abs_lateral = 0.0f;     // vs the corridor centerline, in-window
+  float max_abs_lateral = 0.0f;
 };
 
 AckermannRun
 runAckermann(bac::BacCore &core, const bac_sim::World &world,
              const bac_sim::Pose &start, const bac_sim::PathSource &path_source,
              float goal_x, float goal_y, float simulation_time,
-             const AckermannPlant &plant = AckermannPlant{})
+             const AckermannPlant &plant = AckermannPlant{},
+             const LateralWindow &window = LateralWindow{})
 {
   constexpr float dt = 0.05f;
   AckermannRun run;
@@ -75,6 +90,9 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
   float yaw_rate = 0.0f;
   float previous_curvature = 0.0f;
   bool had_previous_curvature = false;
+  float previous_sign = 0.0f;
+  double lateral_sum = 0.0;
+  int lateral_samples = 0;
   const bac::Params &params = core.params();
   const float curvature_max = 1.0f / params.turn_radius_min;
 
@@ -97,6 +115,10 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
     {
       run.commanded_reverse = true;
     }
+    if (!path.empty() && std::fabs(command.v) <= 1e-4f)
+    {
+      ++run.stop_ticks;
+    }
 
     float commanded_curvature = 0.0f;
     if (std::fabs(command.v) > 1e-4f)
@@ -106,6 +128,17 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
       {
         run.max_curvature_step = std::max(
             run.max_curvature_step, std::fabs(commanded_curvature - previous_curvature));
+      }
+      const float sign = commanded_curvature > 1e-3f
+                             ? 1.0f
+                             : (commanded_curvature < -1e-3f ? -1.0f : 0.0f);
+      if (sign != 0.0f)
+      {
+        if (previous_sign != 0.0f && sign != previous_sign)
+        {
+          ++run.curvature_sign_changes;
+        }
+        previous_sign = sign;
       }
       previous_curvature = commanded_curvature;
       had_previous_curvature = true;
@@ -148,6 +181,18 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
       run.reached_goal = true;
     }
     run.stopped_at_end = std::fabs(speed) < 0.02f;
+
+    if (window.enabled && pose.x >= window.x_from && pose.x <= window.x_to)
+    {
+      const float lateral = std::fabs(pose.y - window.center_y);
+      lateral_sum += lateral;
+      ++lateral_samples;
+      run.max_abs_lateral = std::max(run.max_abs_lateral, lateral);
+    }
+  }
+  if (lateral_samples > 0)
+  {
+    run.mean_abs_lateral = static_cast<float>(lateral_sum / lateral_samples);
   }
   run.final_pose = pose;
   return run;
@@ -338,6 +383,142 @@ testRearGoal()
              std::to_string(reverse_run.max_abs_curvature) + ")");
 }
 
+/// An obstacle inside the safety polygon. A forward-only Ackermann vehicle has
+/// no escape - it cannot reverse and cannot turn on the spot - so the only
+/// correct behaviour is to hold position. The differential-drive counterpart
+/// (scenarios.cpp, safety_stop) backs off instead.
+void
+testSafetyStopHoldsPosition()
+{
+  bac_sim::World world;
+  world.addWall(0.65f, -1.0f, 0.65f, 1.0f);  // inside the 0.7 m front safety edge
+  bac::BacCore core = makeAckermannCore();
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(10.0f, 0.0f),
+      10.0f, 0.0f, 8.0f);
+
+  expect(!run.collided,
+         "forward-only Ackermann does not touch a wall inside the safety polygon "
+         "(min clearance " + std::to_string(run.min_clearance) + " m)");
+  expect(run.final_pose.x < 0.01f,
+         "forward-only Ackermann never advances towards the wall (final x " +
+             std::to_string(run.final_pose.x) + ")");
+  expect(run.travelled_distance < 0.05f,
+         "forward-only Ackermann holds position (travelled " +
+             std::to_string(run.travelled_distance) + " m)");
+  expect(run.stop_ticks > 0, "the safety stop actually commands a standstill");
+  expect(!run.offered_in_place_rotation, "the safety stop never turns on the spot");
+  expect(!run.commanded_reverse, "the safety stop respects limits.v_min = 0");
+}
+
+/// The same wall with reverse enabled. The vehicle must back off, and it must
+/// do so smoothly: a hysteresis term measured in the wrong quantity shows up
+/// here as steering chatter rather than as a wrong position.
+void
+testSafetyStopReverseEscape()
+{
+  bac_sim::World world;
+  world.addWall(0.65f, -1.0f, 0.65f, 1.0f);
+  bac::Params params = ackermannParams();
+  params.limits.v_min = -0.15f;
+  bac::BacCore core(params);
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(10.0f, 0.0f),
+      10.0f, 0.0f, 8.0f);
+
+  expect(!run.collided,
+         "the reverse escape does not touch the wall (min clearance " +
+             std::to_string(run.min_clearance) + " m)");
+  expect(run.final_pose.x < 0.01f,
+         "the reverse escape never advances towards the wall (final x " +
+             std::to_string(run.final_pose.x) + ")");
+  expect(run.commanded_reverse, "the reverse escape actually reverses");
+  expect(!run.offered_in_place_rotation, "the reverse escape never turns on the spot");
+  expect(!run.violated_turning_radius,
+         "the reverse escape respects minimum turning radius (max curvature " +
+             std::to_string(run.max_abs_curvature) + ")");
+  expect(run.curvature_sign_changes <= 15,
+         "the reverse escape does not chatter the steering (" +
+             std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
+}
+
+/// Offset entry into a long narrow corridor. This is where steering quality is
+/// measurable: the vehicle must converge onto the centerline and hold it
+/// without stopping, which coarse-only candidate generation cannot do.
+void
+testNarrowCorridorCentering()
+{
+  bac_sim::World world;
+  world.addCorridorX(3.0f, 11.0f, 0.0f, 1.8f);
+  bac::BacCore core = makeAckermannCore();
+  LateralWindow window;
+  window.enabled = true;
+  window.center_y = 0.0f;
+  window.x_from = 4.0f;
+  window.x_to = 10.5f;
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.4f, 0.0f }, bac_sim::gotoPointPath(12.0f, 0.0f),
+      12.0f, 0.0f, 120.0f, AckermannPlant{}, window);
+
+  expect(!run.collided, "narrow corridor traverse has no body contact");
+  expect(run.final_pose.x > 11.0f,
+         "the Ackermann vehicle traverses the narrow corridor (final x " +
+             std::to_string(run.final_pose.x) + ")");
+  expect(run.min_clearance > 0.25f,
+         "narrow corridor traverse keeps physical clearance (" +
+             std::to_string(run.min_clearance) + " m)");
+  expect(run.stop_ticks == 0,
+         "the Ackermann vehicle never stops inside the corridor (" +
+             std::to_string(run.stop_ticks) + " stop ticks)");
+  expect(run.mean_abs_lateral < 0.04f,
+         "the Ackermann vehicle converges onto the corridor centerline (mean |y| " +
+             std::to_string(run.mean_abs_lateral) + ", max " +
+             std::to_string(run.max_abs_lateral) + ")");
+  expect(run.max_abs_lateral < 0.15f,
+         "the Ackermann vehicle holds the centerline (max |y| " +
+             std::to_string(run.max_abs_lateral) + ")");
+  expect(run.curvature_sign_changes <= 12,
+         "narrow corridor traverse does not oscillate (" +
+             std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
+}
+
+/// Scattered obstacles that force repeated re-steering, including at the
+/// turning-radius bound. Exercises the speed governor and steering continuity
+/// together over a long run.
+void
+testClutterField()
+{
+  bac_sim::World world;
+  world.addBox(2.5f, 0.0f, 0.3f, 0.3f);
+  world.addBox(4.5f, 1.0f, 0.3f, 0.3f);
+  world.addBox(4.5f, -1.2f, 0.3f, 0.3f);
+  world.addBox(6.5f, 0.4f, 0.3f, 0.3f);
+  world.addBox(8.0f, -0.9f, 0.3f, 0.3f);
+  bac::BacCore core = makeAckermannCore();
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(10.0f, 0.0f),
+      10.0f, 0.0f, 120.0f);
+
+  expect(!run.collided, "clutter traverse has no body contact");
+  expect(run.reached_goal,
+         "the Ackermann vehicle weaves through clutter to its goal (closest " +
+             std::to_string(run.min_goal_distance) + " m, final x " +
+             std::to_string(run.final_pose.x) + ")");
+  expect(run.min_clearance > 0.15f,
+         "clutter traverse keeps physical clearance (" +
+             std::to_string(run.min_clearance) + " m)");
+  expect(run.stop_ticks < 20,
+         "the speed governor slows for clutter without stalling (" +
+             std::to_string(run.stop_ticks) + " stop ticks)");
+  expect(!run.offered_in_place_rotation, "clutter traverse never turns on the spot");
+  expect(!run.violated_turning_radius,
+         "clutter traverse respects minimum turning radius (max curvature " +
+             std::to_string(run.max_abs_curvature) + ")");
+  expect(run.max_curvature_step < 0.45f,
+         "clutter traverse steers continuously (" +
+             std::to_string(run.max_curvature_step) + " 1/m per tick)");
+}
+
 /// The configuration users copy must be the configuration the suite defends.
 /// Mirrors config/bac_controller_ackermann.yaml; keep the two in step.
 bac::Params shippedExampleParams()
@@ -443,6 +624,10 @@ main()
   testRearGoal();
   testTurningRadiusBinds();
   testShippedExampleConfiguration();
+  testSafetyStopHoldsPosition();
+  testSafetyStopReverseEscape();
+  testNarrowCorridorCentering();
+  testClutterField();
 
   if (failures != 0)
   {
