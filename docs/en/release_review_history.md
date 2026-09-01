@@ -4,16 +4,19 @@ English | [日本語](../release_review_history.md)
 
 ## Current state
 
-- Checked: 2026-08-29
-- Evaluated package: `25f12be` (implementation identical to `1f9911e`; intervening commits are documentation and release preparation)
-- Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation)
+- Checked: 2026-09-01
+- Evaluated package: `2939c1b` plus an uncommitted working tree (addition of the Ackermann motion model)
+- Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); R11 did not re-run the benchmark
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 
-All Critical, High, and Medium findings across ten release-review rounds, plus the three Low findings from R10,
-have been addressed. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a 216-episode
-matched-condition comparison, and a 216-episode BAC ablation. Remaining work includes rollout through angular-
-acceleration transients, physical disturbance evaluation, a Collision Monitor combined baseline,
-and decomposition of `BacCore::process()`.
+All Critical, High, and Medium findings across eleven release-review rounds have been addressed, as have the
+three Low findings from R10 and the four from R11 (R11 L1 was closed by documentation, with no behaviour change).
+No release blocker remains. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
+216-episode matched-condition comparison, and a 216-episode BAC ablation. On 2026-09-01 the Ackermann motion
+model was added, and R11 fixed the exception safety of `setParams` (one High finding). Remaining work includes
+rollout through angular-acceleration transients, physical disturbance evaluation, a Collision Monitor combined
+baseline, decomposition of `BacCore::process()`, and a broader Ackermann scenario suite (R11 L5). Ackermann
+coverage consists of deterministic unit checks and closed-loop regressions only; there is no vehicle evidence.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
 a conclusion. In particular, R09 withdrew R08's post-hoc audit based on artifact modification time, and the
@@ -36,11 +39,18 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R08 | Reuse of active ROS domains, leading zeroes, trace schema, runner tests | PID/domain free-list, decimal normalization, trace semantics, shell integration test | [Findings, ja](../reviews/r08-2026-08-28-findings.md) / [Response, ja](../reviews/r08-2026-08-28-response.md) |
 | R09 | Insufficient proof in the legacy-data audit, launch status, fail-open pool | Audit withdrawal, canonical regeneration, parent manifest, status propagation, fail-closed pool | [Findings, ja](../reviews/r09-2026-08-28-findings.md) / [Response, ja](../reviews/r09-2026-08-28-response.md) |
 | R10 | Reproducible tree hash, manifest identity, reuse terminology, raw archive | Tracked-source hash, set/schema checks, terminology separation, archive tool | [Findings, ja](../reviews/r10-2026-08-28-findings.md) / [Response, ja](../reviews/r10-2026-08-28-response.md) |
+| R11 | Ackermann support: half-applied rejected configuration, documentation diverged from code, vacuous test assertions | Validate-before-commit `setParams`, corrected the abandoned-design documentation, assertions that kill nine mutants | [Findings, ja](../reviews/r11-2026-09-01-findings.md) / [Response, ja](../reviews/r11-2026-09-01-response.md) |
 
 ## Current validation contract
 
-- Plain CMake Release build and three CTest entries; four CTest entries in ROS 2 Jazzy/Nav2 with the adapter test
-- Core unit/property tests and 13 closed-loop scenarios
+- Plain CMake Release build and seven CTest entries; eight CTest entries in ROS 2 Jazzy/Nav2 with the adapter
+  test. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
+  installed Ackermann configuration selects the model, and that a running node rejects an unsupported
+  `motion_model.type` and a non-positive `turn_radius_min`
+- Core unit/property tests, 17 closed-loop scenarios, and 6 Ackermann closed-loop scenarios
+- Motion-model unit tests for differential drive and Ackermann; the Ackermann set covers the candidate lattice,
+  the turning-radius bound, refinement, clearance probes, the deadband, a runtime model switch, and that the core
+  stays usable after a rejected configuration
 - Unit tests for scan projection and plan transform/pruning, plus integration checks for plugin lifecycle, TF
   errors, scan fallback, speed limits, and diagnostics
 - 31 tests for the benchmark completeness checker

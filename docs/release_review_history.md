@@ -4,16 +4,19 @@
 
 ## 現在の状態
 
-- 確認日: 2026-08-29
-- 評価対象package: `25f12be`（実装は`1f9911e`と同一、間は文書・公開準備のみ）
-- benchmark: `026a17a`（正準）/ `4fed3d2`（公平条件比較・ablation）
+- 確認日: 2026-09-01
+- 評価対象package: `2939c1b` + 未コミット作業ツリー（Ackermann motion model の追加）
+- benchmark: `026a17a`（正準）/ `4fed3d2`（公平条件比較・ablation）。R11ではbenchmarkを再実行していない
 - 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
 
-全10回のリリースレビューで確認されたCritical / High / Mediumと、第10回のLow 3件は対応済みである。
-全10回のレビュー指摘に対するrelease blockerはない。2026-08-29にROS adapter testと入力source diagnosticsを
-追加した。2026-08-29には公平条件比較216 episodeとBAC ablation 216 episodeも追加した。次cycleへ
-残す設計・評価項目は、角加速度過渡を積分したrollout、実機外乱評価、Collision Monitor
-併用baseline、`BacCore::process()`の責務分割である。
+全11回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、および
+第11回のLow 4件（L1は挙動変更を伴わない文書化で完了）も対応済みで、release blockerはない。
+2026-08-29にROS adapter testと入力source diagnosticsを追加し、同日に公平条件比較216 episodeとBAC
+ablation 216 episodeを追加した。2026-09-01にはAckermann motion modelを追加し、第11回レビューで
+`setParams`の例外安全（High 1件）を修正した。次cycleへ残す設計・評価項目は、角加速度過渡を積分した
+rollout、実機外乱評価、Collision Monitor併用baseline、`BacCore::process()`の責務分割、および
+Ackermannシナリオの拡充（R11 L5）である。Ackermannの検証は決定論的な単体検査と閉ループ回帰のみで、
+実車evidenceは無い。
 
 個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特に第8回の
 artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 episodeを修正後runnerで再生成した。
@@ -33,11 +36,16 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 | R08 | 使用中ROS domain再利用、先頭0、trace schema、runner test | PID-domain free-list、10進正規化、trace意味論、shell integration test | [指摘](reviews/r08-2026-08-28-findings.md) / [対応](reviews/r08-2026-08-28-response.md) |
 | R09 | 旧dataset監査の証明不足、launch status、pool fail-open | 監査撤回、正準再生成、parent manifest、status伝播、fail-closed | [指摘](reviews/r09-2026-08-28-findings.md) / [対応](reviews/r09-2026-08-28-response.md) |
 | R10 | tree hash再現性、manifest同一性、reuse用語、raw archive | tracked source hash、集合/schema検査、用語分離、archive tool | [指摘](reviews/r10-2026-08-28-findings.md) / [対応](reviews/r10-2026-08-28-response.md) |
+| R11 | Ackermann対応: 却下設定の半適用、文書と実装の乖離、テストの空振り | 検証先行によるsetParams例外安全、廃案設計記述の訂正、ミューテーション9件を殺すテスト追加 | [指摘](reviews/r11-2026-09-01-findings.md) / [対応](reviews/r11-2026-09-01-response.md) |
 
 ## 現在の検証contract
 
-- plain CMake Release buildとCTest 3件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 4件。
-- core unit / property testと13 closed-loop scenarios。
+- plain CMake Release buildとCTest 7件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 8件。
+  Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
+  実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
+- core unit / property testと17 closed-loop scenarios、Ackermann 6 closed-loop scenarios。
+- 差動二輪とAckermannのmotion model単体試験。Ackermann側は候補格子、旋回半径拘束、refinement、
+  clearance probe、deadband、実行時のmodel切替、却下設定後の可用性を検査する。
 - scan投影・plan変換/pruneの単体試験、およびplugin lifecycle、TF error、scan fallback、speed limit、
   diagnosticsの結合試験。
 - benchmark完全性checker 31 tests。
