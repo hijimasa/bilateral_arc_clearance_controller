@@ -14,6 +14,7 @@
  */
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "shipped_config.hpp"
 #include "sim_runner.hpp"
 #include "sim_world.hpp"
 
@@ -704,107 +705,14 @@ testClearanceProbeReach()
              std::to_string(open_result.output.v) + " m/s)");
 }
 
-/// The configuration users copy must be the configuration the suite defends,
-/// so this READS config/bac_controller_ackermann.yaml rather than mirroring it.
-/// A hand-copied duplicate would let a yaml edit ship a configuration that
-/// fails this very suite while every test stays green.
-///
-/// The guard is bound to the FILE, not to a list of key names (R14 H1): every
-/// entry the file contains must be either consumed by this scenario or named
-/// in kAllowedUnconsumedKeys below, keys may not repeat, and the values this
-/// scenario uses must live in the FollowPath block. A key the guard neither
-/// reads nor allows - and a second block that re-declares the same leaves
-/// further down the file - is a failure, not a silent pass.
-///
-/// Deliberately a minimal `key: value` reader, not a YAML library: the file is
-/// a flat parameter block, and the point is to have no build dependency
-/// between the regression suite and the configuration it defends.
-struct ConfigEntry
-{
-  std::string value;
-  std::string section;  // the block header this entry appeared under
-  int line = 0;
-};
-
-struct ConfigFile
-{
-  bool readable = false;
-  std::map<std::string, ConfigEntry> entries;  // `key: value` lines
-  std::vector<std::string> sections;           // `key:` lines (block headers)
-  std::vector<std::string> duplicates;         // any key that appears twice
-};
-
-ConfigFile
-readConfigFile(const std::string &path)
-{
-  ConfigFile config;
-  std::ifstream file(path);
-  if (!file)
-  {
-    return config;
-  }
-  config.readable = true;
-
-  const auto trim = [](std::string &text) {
-    const std::size_t first = text.find_first_not_of(" \t\r\n");
-    const std::size_t last = text.find_last_not_of(" \t\r\n");
-    text = (first == std::string::npos) ? std::string{} : text.substr(first, last - first + 1);
-  };
-
-  std::set<std::string> seen;
-  std::string section;
-  std::string line;
-  int line_number = 0;
-  while (std::getline(file, line))
-  {
-    ++line_number;
-    const std::size_t comment = line.find('#');
-    if (comment != std::string::npos)
-    {
-      line.erase(comment);
-    }
-    const std::size_t colon = line.find(':');
-    if (colon == std::string::npos)
-    {
-      continue;
-    }
-    std::string key = line.substr(0, colon);
-    std::string value = line.substr(colon + 1);
-    trim(key);
-    trim(value);
-    if (key.empty())
-    {
-      continue;
-    }
-    if (!seen.insert(key).second)
-    {
-      // Last-wins would let a healthy duplicate block mask a broken one.
-      config.duplicates.push_back(key + " (line " + std::to_string(line_number) + ")");
-      continue;
-    }
-    if (value.empty())
-    {
-      config.sections.push_back(key);
-      section = key;
-      continue;
-    }
-    ConfigEntry entry;
-    entry.value = value;
-    entry.section = section;
-    entry.line = line_number;
-    config.entries.emplace(key, entry);
-  }
-  return config;
-}
-
-/// Keys the file may carry without this scenario consuming them. Deliberately
-/// small and deliberately explicit: three block headers plus the Nav2- and
-/// adapter-level settings that have no effect on the closed-loop geometry
-/// measured here. Everything else in the file must be read by
-/// shippedExampleParams(), so a new parameter cannot enter the shipped
-/// configuration without either being exercised by this suite or being added
-/// to this list on purpose.
-const char *const kAllowedUnconsumedKeys[] = {
+/// Keys config/bac_controller_ackermann.yaml may carry without this scenario
+/// consuming them. Deliberately small and deliberately explicit: three block
+/// headers plus the Nav2- and adapter-level settings that have no effect on the
+/// closed-loop geometry measured here. Everything else in the file must be read
+/// by shippedExampleParams(), so a new parameter cannot enter the shipped
+/// configuration without either being exercised by this suite or being added to
+/// this list on purpose. See shipped_config.hpp for what the guard enforces.
+const std::vector<std::string> kAllowedUnconsumedKeys = {
     "controller_server",           // block header
     "ros__parameters",             // block header
     "FollowPath",                  // block header: the plugin block itself
@@ -819,25 +727,12 @@ const char *const kAllowedUnconsumedKeys[] = {
     "diagnostics_publish_period",  // diagnostics only
 };
 
-bool
-isAllowedUnconsumed(const std::string &key)
-{
-  for (const char *allowed : kAllowedUnconsumedKeys)
-  {
-    if (key == allowed)
-    {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool g_shipped_config_loaded = false;
 
 bac::Params
 shippedExampleParams()
 {
-  const ConfigFile config = readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
+  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
   bac::Params params;
   if (!config.readable || config.entries.empty())
   {
@@ -932,7 +827,7 @@ shippedExampleParams()
   }
   for (const std::string &section : config.sections)
   {
-    expect(isAllowedUnconsumed(section),
+    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
            "the shipped configuration block '" + section +
                "' is one this suite knows about");
   }
@@ -947,7 +842,7 @@ shippedExampleParams()
                  std::to_string(entry.second.line) + ")");
       continue;
     }
-    expect(isAllowedUnconsumed(entry.first),
+    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
            "the shipped configuration key " + entry.first + " (line " +
                std::to_string(entry.second.line) +
                ") is exercised by this suite or listed in "

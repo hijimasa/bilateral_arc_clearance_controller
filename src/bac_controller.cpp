@@ -384,7 +384,8 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
     points = collectObstaclePoints(pose);
   }
   std::vector<Point2D> path = transformPlan(pose);
-  Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z));
+  Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z),
+                  static_cast<float>(velocity.linear.y));
 
   Result result = core_.process(points, path, current);
   publishDiagnostics(result, using_scan);
@@ -392,6 +393,7 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
   geometry_msgs::msg::TwistStamped cmd;
   cmd.header.frame_id = pose.header.frame_id;
   cmd.twist.linear.x  = result.output.v;
+  cmd.twist.linear.y  = result.output.vy;  // zero for every non-holonomic model
   cmd.twist.angular.z = result.output.w;
   return cmd;
 }

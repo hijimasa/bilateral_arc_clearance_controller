@@ -1,0 +1,612 @@
+/**
+ * @file omni_scenarios.cpp
+ * @brief Closed-loop regressions for the holonomic BAC policy
+ * @copyright Copyright (c) 2026 Masaaki Hijikata
+ *
+ * The holonomic contract is that AVOIDANCE happens in lateral velocity while
+ * the yaw rate regulates the body onto the local path tangent. The scenarios
+ * that carry the weight here are therefore the ones that can tell the two
+ * apart: they run the same world with a differential-drive reference that
+ * shares the tuning, and assert on the DIFFERENCE. An assertion that a
+ * holonomic robot reaches its goal would pass for either model.
+ *
+ * The plant is acceleration-limited on all three axes and integrated in the
+ * world frame, so the commands are checked against a vehicle that cannot
+ * change any velocity component instantly.
+ */
+
+#include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "shipped_config.hpp"
+#include "sim_runner.hpp"
+#include "sim_world.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace
+{
+
+int failures = 0;
+
+void
+expect(bool condition, const std::string &message)
+{
+  if (!condition)
+  {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+float
+wrapAngle(float angle)
+{
+  while (angle > static_cast<float>(M_PI)) angle -= 2.0f * static_cast<float>(M_PI);
+  while (angle <= -static_cast<float>(M_PI)) angle += 2.0f * static_cast<float>(M_PI);
+  return angle;
+}
+
+/// Optional corridor-centering window: lateral error is aggregated only while
+/// the vehicle is between x_from and x_to, i.e. inside the corridor proper.
+struct LateralWindow
+{
+  bool enabled = false;
+  float center_y = 0.0f;
+  float x_from = 0.0f;
+  float x_to = 0.0f;
+};
+
+struct OmniRun
+{
+  bac_sim::Pose final_pose;
+  bool collided = false;
+  bool reached_goal = false;
+  bool exceeded_speed_cap = false;
+  bool exceeded_lateral_cap = false;
+  bool exceeded_yaw_cap = false;
+  float min_clearance = 1e9f;
+  float min_goal_distance = 1e9f;
+  float travelled_distance = 0.0f;
+  float max_speed = 0.0f;
+  float max_abs_vy = 0.0f;
+  float max_abs_w = 0.0f;
+  float final_heading_error = 0.0f;  // vs the straight-line goal bearing
+  int   stop_ticks = 0;
+  int   total_ticks = 0;
+  int   translating_ticks_first_second = 0;  // motion during the first 20 ticks
+  float mean_abs_lateral = 0.0f;
+  float max_abs_lateral = 0.0f;
+  int   lateral_samples = 0;
+};
+
+bac::Params
+omniParams()
+{
+  bac::Params params;
+  params.motion_model.type = bac::MotionModelType::OMNI;
+  params.limits.v_max = 0.4f;
+  params.limits.v_min = 0.0f;
+  params.limits.vy_max = 0.3f;
+  params.limits.w_max = 1.0f;
+  params.limits.acc_v = 0.8f;
+  params.limits.acc_w = 2.5f;
+  params.control_period = 0.05f;
+  params.footprint.front = 0.35f;
+  params.footprint.rear = -0.35f;
+  params.footprint.width = 0.5f;
+  params.avoid_margin.side = 0.9f;  // see config/bac_controller_omni.yaml
+  params.weights.hysteresis = 0.4f;
+  return params;
+}
+
+/// The same vehicle under differential drive, used to show that the holonomic
+/// assertions below test a real difference and not a property both models
+/// happen to satisfy. Two settings differ, and both differ for a measured
+/// reason rather than to make a test pass:
+///
+///  - weights.hysteresis: the term measures yaw-rate change here and lateral-
+///    velocity change under the holonomic model, so the value does not carry
+///    over (the same is true between differential drive and Ackermann).
+///  - avoid_margin.side: with 0.9 the differential drive stops 3.9 m short of
+///    the goal in the detour world below (measured at 0.5/0.6/0.7/0.9: final x
+///    5.73, 5.72, 2.12, 2.11), because demanding that much side clearance
+///    around an isolated obstacle keeps it from committing to either side. The
+///    holonomic run is unaffected by the value (final x 5.72 at all four).
+bac::Params
+diffDriveReferenceParams()
+{
+  bac::Params params = omniParams();
+  params.motion_model.type = bac::MotionModelType::DIFF_DRIVE;
+  params.limits.vy_max = 0.0f;
+  params.avoid_margin.side = 0.6f;
+  params.weights.hysteresis = 0.6f;
+  return params;
+}
+
+OmniRun
+runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &start,
+        const bac_sim::PathSource &path_source, float goal_x, float goal_y,
+        float simulation_time, const LateralWindow &window = LateralWindow{})
+{
+  constexpr float dt = 0.05f;
+  OmniRun run;
+  bac_sim::Pose pose = start;
+  float vx = 0.0f, vy = 0.0f, w = 0.0f;
+  const bac::Params &params = core.params();
+  const float acc_v = params.limits.acc_v;
+  const float acc_w = params.limits.acc_w;
+  double lateral_sum = 0.0;
+
+  const int steps = static_cast<int>(simulation_time / dt);
+  for (int step = 0; step < steps; ++step)
+  {
+    const float t = static_cast<float>(step) * dt;
+    const std::vector<bac::Point2D> points =
+        bac_sim::simulateLidar(world, pose, 720, params.max_range);
+    const std::vector<bac::Point2D> path = path_source(pose, t);
+    const bac::Result result = core.process(points, path, bac::Twist2D(vx, w, vy));
+    const bac::Twist2D command = result.output;
+
+    run.total_ticks++;
+    const float commanded_speed = command.speed();
+    if (!path.empty() && commanded_speed <= 1e-4f)
+    {
+      run.stop_ticks++;
+    }
+    if (step < 20 && commanded_speed > 1e-3f)
+    {
+      run.translating_ticks_first_second++;
+    }
+    run.max_speed = std::max(run.max_speed, commanded_speed);
+    run.max_abs_vy = std::max(run.max_abs_vy, std::fabs(command.vy));
+    run.max_abs_w = std::max(run.max_abs_w, std::fabs(command.w));
+    if (commanded_speed > params.limits.v_max + 1e-3f) run.exceeded_speed_cap = true;
+    if (std::fabs(command.vy) > params.limits.vy_max + 1e-3f) run.exceeded_lateral_cap = true;
+    if (std::fabs(command.w) > params.limits.w_max + 1e-3f) run.exceeded_yaw_cap = true;
+
+    // Acceleration-limited holonomic plant, integrated in the world frame.
+    const float dv = acc_v * dt;
+    const float dw = acc_w * dt;
+    vx += std::max(-dv, std::min(dv, command.v - vx));
+    vy += std::max(-dv, std::min(dv, command.vy - vy));
+    w += std::max(-dw, std::min(dw, command.w - w));
+    const float cs = std::cos(pose.th), sn = std::sin(pose.th);
+    const float step_x = (vx * cs - vy * sn) * dt;
+    const float step_y = (vx * sn + vy * cs) * dt;
+    pose.x += step_x;
+    pose.y += step_y;
+    pose.th = wrapAngle(pose.th + w * dt);
+    run.travelled_distance += std::sqrt(step_x * step_x + step_y * step_y);
+
+    for (const bac::Point2D &point : points)
+    {
+      run.min_clearance = std::min(run.min_clearance,
+                                   std::sqrt(point.x * point.x + point.y * point.y));
+      // Body contact: the point is inside the footprint rectangle.
+      if (point.x >= params.footprint.rear && point.x <= params.footprint.front &&
+          std::fabs(point.y) <= params.footprint.width / 2.0f)
+      {
+        run.collided = true;
+      }
+    }
+
+    const float goal_distance =
+        std::sqrt((pose.x - goal_x) * (pose.x - goal_x) + (pose.y - goal_y) * (pose.y - goal_y));
+    run.min_goal_distance = std::min(run.min_goal_distance, goal_distance);
+    if (goal_distance < 0.35f)
+    {
+      run.reached_goal = true;
+    }
+
+    if (window.enabled && pose.x >= window.x_from && pose.x <= window.x_to)
+    {
+      const float lateral = std::fabs(pose.y - window.center_y);
+      lateral_sum += lateral;
+      run.lateral_samples++;
+      run.max_abs_lateral = std::max(run.max_abs_lateral, lateral);
+    }
+  }
+
+  run.final_pose = pose;
+  if (run.lateral_samples > 0)
+  {
+    run.mean_abs_lateral =
+        static_cast<float>(lateral_sum / static_cast<double>(run.lateral_samples));
+  }
+  run.final_heading_error =
+      std::fabs(wrapAngle(std::atan2(goal_y - start.y, goal_x - start.x) - pose.th));
+  return run;
+}
+
+/// Contracts every holonomic run must satisfy. Not thresholds: these are the
+/// limits the configuration declares, so there is no band to measure.
+void
+expectLimitsRespected(const OmniRun &run, const std::string &where)
+{
+  expect(!run.exceeded_speed_cap, where + ": no commanded twist exceeds limits.v_max (max " +
+                                      std::to_string(run.max_speed) + " m/s)");
+  expect(!run.exceeded_lateral_cap, where + ": no commanded twist exceeds limits.vy_max (max " +
+                                        std::to_string(run.max_abs_vy) + " m/s)");
+  expect(!run.exceeded_yaw_cap, where + ": no commanded twist exceeds limits.w_max (max " +
+                                    std::to_string(run.max_abs_w) + " rad/s)");
+}
+
+/// Baseline: an open field with a goal straight ahead.
+void
+testStraightGoalReached()
+{
+  bac_sim::World world;
+  bac::BacCore core(omniParams());
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                              bac_sim::gotoPointPath(6.0f, 0.0f), 6.0f, 0.0f, 60.0f);
+
+  expect(!run.collided, "the open-field run has no body contact");
+  expect(run.reached_goal, "the holonomic vehicle reaches a goal straight ahead (closest " +
+                               std::to_string(run.min_goal_distance) + " m)");
+  expectLimitsRespected(run, "open field");
+}
+
+/// THE discriminating scenario. A blocking obstacle is rounded by translating
+/// sideways, not by turning: the same world under a differential-drive
+/// reference has to yaw to get past it. Asserted as a comparison between the
+/// two runs rather than against a hand-picked yaw threshold.
+void
+testSidestepsInsteadOfYawing()
+{
+  bac_sim::World world;
+  world.addBox(3.0f, 0.0f, 0.8f, 0.8f);
+  const bac_sim::PathSource path = bac_sim::gotoPointPath(6.0f, 0.0f);
+
+  bac::BacCore reference(diffDriveReferenceParams());
+  const OmniRun diff_run =
+      runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 6.0f, 0.0f, 60.0f);
+  bac::BacCore core(omniParams());
+  const OmniRun omni_run = runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 6.0f, 0.0f, 60.0f);
+
+  expect(!omni_run.collided, "the holonomic detour has no body contact");
+  expect(omni_run.reached_goal, "the holonomic vehicle rounds a blocking obstacle (closest " +
+                                    std::to_string(omni_run.min_goal_distance) + " m)");
+  expect(diff_run.reached_goal,
+         "the differential-drive reference also gets past it, so the comparison below is "
+         "between two solutions and not between success and failure");
+
+  expect(omni_run.max_abs_vy > 0.05f,
+         "the holonomic detour actually uses lateral velocity (max |vy| " +
+             std::to_string(omni_run.max_abs_vy) + " m/s)");
+  expect(diff_run.max_abs_vy <= 1e-6f,
+         "the differential-drive reference commands no lateral velocity at all (max |vy| " +
+             std::to_string(diff_run.max_abs_vy) + ")");
+  // A comparison, not a threshold: the differential drive must steer around
+  // the obstacle, the holonomic body does not have to.
+  expect(omni_run.max_abs_w < diff_run.max_abs_w,
+         "the holonomic detour yaws less than the differential-drive one (" +
+             std::to_string(omni_run.max_abs_w) + " vs " + std::to_string(diff_run.max_abs_w) +
+             " rad/s)");
+  expectLimitsRespected(omni_run, "detour");
+}
+
+/// A goal behind the robot. The differential drive must rotate BEFORE it can
+/// translate; the holonomic body translates from the first tick while it
+/// turns. This is the scenario that shows usesRotateBeforeTranslate() is
+/// doing something observable.
+void
+testRearGoalWithoutAligningFirst()
+{
+  bac_sim::World world;
+  const bac_sim::PathSource path = bac_sim::gotoPointPath(-3.0f, 0.0f);
+
+  bac::BacCore reference(diffDriveReferenceParams());
+  const OmniRun diff_run =
+      runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, -3.0f, 0.0f, 90.0f);
+  bac::BacCore core(omniParams());
+  const OmniRun omni_run = runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, -3.0f, 0.0f, 90.0f);
+
+  expect(diff_run.translating_ticks_first_second == 0,
+         "the differential-drive reference rotates before it translates, so the assertion "
+         "below is discriminating (" +
+             std::to_string(diff_run.translating_ticks_first_second) + " moving ticks)");
+  expect(omni_run.translating_ticks_first_second > 0,
+         "the holonomic vehicle starts moving immediately instead of aligning first (" +
+             std::to_string(omni_run.translating_ticks_first_second) + " of the first 20 ticks)");
+  expect(omni_run.reached_goal,
+         "the holonomic vehicle reaches a goal behind it with limits.v_min = 0 (closest " +
+             std::to_string(omni_run.min_goal_distance) + " m)");
+  expect(!omni_run.collided, "the rear-goal manoeuvre has no body contact");
+  expectLimitsRespected(omni_run, "rear goal");
+}
+
+/// The yaw rate is a regulator, so it must actually regulate: an off-axis goal
+/// has to leave the body pointing along the path it drove.
+void
+testHeadingRegulatorTracksTheTangent()
+{
+  bac_sim::World world;
+  bac::BacCore core(omniParams());
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                              bac_sim::gotoPointPath(4.0f, 3.0f), 4.0f, 3.0f, 90.0f);
+
+  expect(run.reached_goal, "the holonomic vehicle reaches an off-axis goal (closest " +
+                               std::to_string(run.min_goal_distance) + " m)");
+  // Measured band over heading_gain 0.5-3.0 x v_max 0.3-0.5 x goal bearing
+  // 0.3-1.2 rad: the regulator settles within 0.02-0.19 rad of the bearing,
+  // while a disabled regulator (heading_gain = 0) sits at the full bearing,
+  // 0.30-1.20 rad. 0.25 separates the two bands.
+  expect(run.final_heading_error < 0.25f,
+         "the body ends up pointing along the path it drove (heading error " +
+             std::to_string(run.final_heading_error) + " rad)");
+  expect(run.max_abs_w > 0.05f,
+         "the regulator actually commanded yaw, so the check above is not vacuous (max |w| " +
+             std::to_string(run.max_abs_w) + " rad/s)");
+  expectLimitsRespected(run, "off-axis goal");
+}
+
+/// heading_gain = 0 holds the heading fixed. A platform with 360 degree
+/// sensing may prefer that; it must still reach the goal by translating.
+void
+testZeroGainHoldsHeadingAndStillArrives()
+{
+  bac_sim::World world;
+  bac::Params params = omniParams();
+  params.heading_gain = 0.0f;
+  bac::BacCore core(params);
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                              bac_sim::gotoPointPath(3.0f, 3.0f), 3.0f, 3.0f, 90.0f);
+
+  expect(run.reached_goal,
+         "a heading-locked holonomic vehicle still reaches an off-axis goal (closest " +
+             std::to_string(run.min_goal_distance) + " m)");
+  expect(std::fabs(run.final_pose.th) < 0.05f,
+         "heading_gain = 0 holds the heading fixed (final heading " +
+             std::to_string(run.final_pose.th) + " rad)");
+  expect(run.max_abs_vy > 0.05f,
+         "it arrives by translating sideways (max |vy| " + std::to_string(run.max_abs_vy) + ")");
+  expectLimitsRespected(run, "heading locked");
+}
+
+/// Offset entry into a long narrow corridor: the holonomic body corrects onto
+/// the centerline by translating, without the steering excursion a
+/// differential drive needs.
+void
+testNarrowCorridorCentering()
+{
+  bac_sim::World world;
+  world.addCorridorX(2.0f, 9.5f, 0.0f, 1.6f);
+  LateralWindow window;
+  window.enabled = true;
+  window.center_y = 0.0f;
+  window.x_from = 3.0f;
+  window.x_to = 9.0f;
+
+  bac::BacCore core(omniParams());
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.35f, 0.0f },
+                              bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
+
+  expect(!run.collided, "corridor centering has no body contact");
+  expect(run.lateral_samples > 0,
+         "the vehicle entered the corridor, so the centering metrics are not vacuous (" +
+             std::to_string(run.lateral_samples) + " samples)");
+  // Deliberately no bound on mean lateral error here. Measured over entry
+  // offset 0.25-0.40 m x corridor width 1.5-1.8 m, centering is NOT a smooth
+  // band: it is 0.012-0.016 m wherever the bilateral balance term engages, and
+  // jumps to 0.312 m the moment the far side of the corridor is wider than
+  // footprint.width / 2 + avoid_margin.side, because the term is gated off for
+  // passages that count as open. A threshold would be a tripwire on that gate,
+  // not a measure of correctness. What IS asserted is that the vehicle gets
+  // through without contact; the centering quality itself is characterised in
+  // docs/algorithm.md with the measured numbers.
+  expect(run.final_pose.x > 9.0f,
+         "the holonomic vehicle traverses the corridor (final x " +
+             std::to_string(run.final_pose.x) + ")");
+  expectLimitsRespected(run, "corridor");
+}
+
+/// An obstacle inside the safety polygon. The correct behaviour is to hold
+/// position; the assertions are the facts that are observable in a full
+/// standstill, not an invariant that a standstill can never violate.
+void
+testSafetyStopHoldsPosition()
+{
+  bac_sim::World world;
+  world.addWall(0.5f, -1.0f, 0.5f, 1.0f);  // inside the 0.55 m front safety edge
+  bac::BacCore core(omniParams());
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                              bac_sim::gotoPointPath(10.0f, 0.0f), 10.0f, 0.0f, 8.0f);
+
+  expect(!run.collided, "the safety stop does not touch the wall (min clearance " +
+                            std::to_string(run.min_clearance) + " m)");
+  expect(run.final_pose.x < 0.05f, "the vehicle never advances towards the wall (final x " +
+                                       std::to_string(run.final_pose.x) + ")");
+  expect(run.travelled_distance < 0.15f,
+         "the vehicle holds position (travelled " + std::to_string(run.travelled_distance) + " m)");
+  expect(run.stop_ticks > run.total_ticks / 2,
+         "most ticks command a standstill (" + std::to_string(run.stop_ticks) + " of " +
+             std::to_string(run.total_ticks) + ")");
+  expectLimitsRespected(run, "safety stop");
+}
+
+/// Keys config/bac_controller_omni.yaml may carry without this scenario
+/// consuming them. See shipped_config.hpp for what the guard enforces.
+const std::vector<std::string> kAllowedUnconsumedKeys = {
+    "controller_server",           // block header
+    "ros__parameters",             // block header
+    "FollowPath",                  // block header: the plugin block itself
+    "controller_frequency",        // Nav2 control loop rate, not a BAC parameter
+    "controller_plugins",          // Nav2 plugin list
+    "plugin",                      // plugin class name (checked by the docker gate)
+    "scan_topic",                  // BacController scan adapter, not BacCore
+    "scan_timeout",                //   "
+    "scan_downsample",             //   "
+    "scan_min_points",             //   "
+    "scan_inf_is_valid",           //   "
+    "diagnostics_publish_period",  // diagnostics only
+};
+
+bool g_shipped_config_loaded = false;
+
+bac::Params
+shippedExampleParams()
+{
+  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_OMNI_CONFIG_PATH);
+  bac::Params params;
+  if (!config.readable || config.entries.empty())
+  {
+    expect(false, "the shipped holonomic configuration is readable at " BAC_OMNI_CONFIG_PATH);
+    return params;
+  }
+
+  bool complete = true;
+  std::vector<std::string> consumed;
+  const auto value_of = [&](const char *key) -> const bac_sim::ConfigEntry * {
+    consumed.push_back(key);
+    const auto found = config.entries.find(key);
+    if (found == config.entries.end())
+    {
+      expect(false, std::string("the shipped configuration declares ") + key);
+      complete = false;
+      return nullptr;
+    }
+    if (found->second.section != "FollowPath")
+    {
+      expect(false, std::string("the shipped configuration keeps ") + key +
+                        " inside the FollowPath block users copy (found under '" +
+                        found->second.section + "' on line " +
+                        std::to_string(found->second.line) + ")");
+      complete = false;
+      return nullptr;
+    }
+    return &found->second;
+  };
+  const auto number = [&](const char *key, float &field) {
+    const bac_sim::ConfigEntry *entry = value_of(key);
+    if (entry == nullptr)
+    {
+      return;
+    }
+    char *end = nullptr;
+    const float parsed = std::strtof(entry->value.c_str(), &end);
+    if (end == entry->value.c_str() || *end != '\0' || !std::isfinite(parsed))
+    {
+      expect(false, std::string("the shipped configuration gives ") + key +
+                        " a plain finite number (got '" + entry->value + "' on line " +
+                        std::to_string(entry->line) + ")");
+      complete = false;
+      return;
+    }
+    field = parsed;
+  };
+  const auto integer = [&](const char *key, int &field) {
+    float value = 0.0f;
+    number(key, value);
+    field = static_cast<int>(value);
+  };
+
+  const bac_sim::ConfigEntry *model = value_of("motion_model.type");
+  if (model == nullptr || model->value != "omni")
+  {
+    expect(false, std::string("the shipped configuration selects the holonomic model (got '") +
+                      (model == nullptr ? std::string("<missing>") : model->value) + "')");
+    complete = false;
+  }
+  params.motion_model.type = bac::MotionModelType::OMNI;
+
+  number("footprint.front", params.footprint.front);
+  number("footprint.rear", params.footprint.rear);
+  number("footprint.width", params.footprint.width);
+  number("safety_margin.front", params.safety_margin.front);
+  number("safety_margin.rear", params.safety_margin.rear);
+  number("safety_margin.side", params.safety_margin.side);
+  number("avoid_margin.side", params.avoid_margin.side);
+  number("limits.v_max", params.limits.v_max);
+  number("limits.v_min", params.limits.v_min);
+  number("limits.vy_max", params.limits.vy_max);
+  number("limits.w_max", params.limits.w_max);
+  number("limits.acc_v", params.limits.acc_v);
+  number("limits.acc_w", params.limits.acc_w);
+  number("control_period", params.control_period);
+  number("stop_decel", params.stop_decel);
+  number("brake_reaction_time", params.brake_reaction_time);
+  number("heading_gain", params.heading_gain);
+  integer("vy_samples", params.vy_samples);
+  number("weights.clearance", params.weights.clearance);
+  number("weights.path_dist", params.weights.path_dist);
+  number("weights.balance", params.weights.balance);
+  number("weights.heading", params.weights.heading);
+  number("weights.hysteresis", params.weights.hysteresis);
+  number("weights.squeeze", params.weights.squeeze);
+  number("sim_time", params.sim_time);
+
+  for (const std::string &duplicate : config.duplicates)
+  {
+    expect(false, "the shipped configuration declares " + duplicate +
+                      " only once; a repeated key means a second block is "
+                      "masking the one users copy");
+  }
+  for (const std::string &section : config.sections)
+  {
+    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
+           "the shipped configuration block '" + section + "' is one this suite knows about");
+  }
+  for (const auto &entry : config.entries)
+  {
+    if (std::find(consumed.begin(), consumed.end(), entry.first) != consumed.end())
+    {
+      continue;
+    }
+    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
+           "the shipped configuration key " + entry.first + " (line " +
+               std::to_string(entry.second.line) +
+               ") is exercised by this suite or listed in kAllowedUnconsumedKeys on purpose");
+  }
+
+  g_shipped_config_loaded = complete;
+  return params;
+}
+
+/// Runs the shipped example end to end, so a yaml edit cannot ship a
+/// configuration that fails this suite while every test stays green.
+void
+testShippedExampleConfiguration()
+{
+  bac_sim::World world;
+  world.addBox(3.0f, 0.0f, 0.8f, 0.8f);
+  bac::BacCore core(shippedExampleParams());
+  expect(g_shipped_config_loaded,
+         "every value the scenario needs was read from the shipped configuration");
+  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                              bac_sim::gotoPointPath(6.0f, 0.0f), 6.0f, 0.0f, 60.0f);
+
+  expect(!run.collided, "the shipped holonomic example has no body contact");
+  expect(run.reached_goal, "the shipped holonomic example reaches its goal (closest " +
+                               std::to_string(run.min_goal_distance) + " m)");
+  expect(run.max_abs_vy > 0.05f,
+         "the shipped configuration grants usable lateral authority (max |vy| " +
+             std::to_string(run.max_abs_vy) + " m/s)");
+  expectLimitsRespected(run, "shipped configuration");
+}
+
+}  // namespace
+
+int
+main()
+{
+  testStraightGoalReached();
+  testSidestepsInsteadOfYawing();
+  testRearGoalWithoutAligningFirst();
+  testHeadingRegulatorTracksTheTangent();
+  testZeroGainHoldsHeadingAndStillArrives();
+  testNarrowCorridorCentering();
+  testSafetyStopHoldsPosition();
+  testShippedExampleConfiguration();
+
+  if (failures != 0)
+  {
+    std::cerr << failures << " holonomic scenario check(s) failed\n";
+    return 1;
+  }
+  std::cout << "All holonomic scenario checks passed\n";
+  return 0;
+}

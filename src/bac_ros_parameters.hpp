@@ -11,6 +11,7 @@
 #include <string>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "motion_model.hpp"
 
 namespace bac
 {
@@ -69,6 +70,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.limits.w_max = declare_float("limits.w_max", params.limits.w_max);
   params.limits.acc_v = declare_float("limits.acc_v", params.limits.acc_v);
   params.limits.acc_w = declare_float("limits.acc_w", params.limits.acc_w);
+  params.limits.vy_max = declare_float("limits.vy_max", params.limits.vy_max);
 
   const std::string motion_model_type = declare_string("motion_model.type", "diff_drive");
   if (motion_model_type == "diff_drive")
@@ -79,10 +81,14 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   {
     params.motion_model.type = MotionModelType::ACKERMANN;
   }
+  else if (motion_model_type == "omni")
+  {
+    params.motion_model.type = MotionModelType::OMNI;
+  }
   else
   {
     throw std::invalid_argument(
-        "bac: motion_model.type must be 'diff_drive' or 'ackermann'");
+        "bac: motion_model.type must be 'diff_drive', 'ackermann' or 'omni'");
   }
   params.weights.clearance  = declare_float("weights.clearance", params.weights.clearance);
   params.weights.path_dist  = declare_float("weights.path_dist", params.weights.path_dist);
@@ -97,17 +103,14 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.cap_adapt_rate      = declare_float("cap_adapt_rate", params.cap_adapt_rate);
   params.min_eval_distance   = declare_float("min_eval_distance", params.min_eval_distance);
   params.turn_radius_min     = declare_float("turn_radius_min", params.turn_radius_min);
-  if (params.motion_model.type == MotionModelType::ACKERMANN &&
-      !(params.turn_radius_min > 0.0f))
-  {
-    throw std::invalid_argument("bac: Ackermann turn_radius_min must be positive");
-  }
+  params.heading_gain        = declare_float("heading_gain", params.heading_gain);
   params.eval_lateral_max    = declare_float("eval_lateral_max", params.eval_lateral_max);
   params.margin_scale_floor  = declare_float("margin_scale_floor", params.margin_scale_floor);
   params.margin_scale_speed  = declare_float("margin_scale_speed", params.margin_scale_speed);
   params.window_time         = declare_float("window_time", params.window_time);
   params.v_samples           = declare_int("v_samples", params.v_samples);
   params.w_samples           = declare_int("w_samples", params.w_samples);
+  params.vy_samples          = declare_int("vy_samples", params.vy_samples);
   params.w_refine_steps      = declare_int("w_refine_steps", params.w_refine_steps);
   params.stop_decel          = declare_float("stop_decel", params.stop_decel);
   params.brake_reaction_time = declare_float("brake_reaction_time", params.brake_reaction_time);
@@ -122,6 +125,11 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
       declare_float("side_envelope_lookahead", params.side_envelope_lookahead);
   params.influence_range      = declare_float("influence_range", params.influence_range);
   params.avoiding_latch_ticks = declare_int("avoiding_latch_ticks", params.avoiding_latch_ticks);
+
+  // One validator, not a second opinion. The declare-time check used to test a
+  // strict subset of what the core tests, so a configuration could pass here
+  // and throw later from a different layer with a different message.
+  detail::validateMotionModelParams(params);
 
   return params;
 }

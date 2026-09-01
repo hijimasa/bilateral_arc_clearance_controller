@@ -114,12 +114,30 @@ if(BUILD_TESTING)
   target_compile_options(bac_diff_drive_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacDiffDriveMotionModelUnit COMMAND bac_diff_drive_motion_model_unit)
 
+  add_executable(bac_omni_motion_model_unit test/omni_motion_model_unit.cpp)
+  target_include_directories(bac_omni_motion_model_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bac_omni_motion_model_unit bac_core)
+  target_compile_options(bac_omni_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacOmniMotionModelUnit COMMAND bac_omni_motion_model_unit)
+  set_tests_properties(BacOmniMotionModelUnit PROPERTIES LABELS "omni")
+
   add_executable(bac_ackermann_motion_model_unit test/ackermann_motion_model_unit.cpp)
   target_include_directories(bac_ackermann_motion_model_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(bac_ackermann_motion_model_unit bac_core)
   target_compile_options(bac_ackermann_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacAckermannMotionModelUnit COMMAND bac_ackermann_motion_model_unit)
   set_tests_properties(BacAckermannMotionModelUnit PROPERTIES LABELS "ackermann")
+
+  add_executable(bac_omni_scenarios test/omni_scenarios.cpp)
+  target_include_directories(bac_omni_scenarios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  # The suite runs the shipped example configuration itself, so a yaml edit
+  # cannot ship a configuration that fails this suite.
+  target_compile_definitions(bac_omni_scenarios PRIVATE
+      BAC_OMNI_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/bac_controller_omni.yaml")
+  target_link_libraries(bac_omni_scenarios bac_core)
+  target_compile_options(bac_omni_scenarios PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacOmniScenarios COMMAND bac_omni_scenarios)
+  set_tests_properties(BacOmniScenarios PROPERTIES LABELS "regression;omni")
 
   add_executable(bac_ackermann_scenarios test/ackermann_scenarios.cpp)
   target_include_directories(bac_ackermann_scenarios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)

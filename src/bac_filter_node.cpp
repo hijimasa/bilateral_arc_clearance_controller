@@ -61,7 +61,9 @@ public:
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
         "cmd_vel_in", 10, [this](geometry_msgs::msg::Twist::SharedPtr msg) {
           std::lock_guard<std::mutex> lock(mutex_);
-          command_ = bac::Twist2D(static_cast<float>(msg->linear.x), static_cast<float>(msg->angular.z));
+          command_ = bac::Twist2D(static_cast<float>(msg->linear.x),
+                                  static_cast<float>(msg->angular.z),
+                                  static_cast<float>(msg->linear.y));
           last_cmd_time_ = now();
         });
 
@@ -69,7 +71,8 @@ public:
         "odom", 10, [this](nav_msgs::msg::Odometry::SharedPtr msg) {
           std::lock_guard<std::mutex> lock(mutex_);
           current_ = bac::Twist2D(static_cast<float>(msg->twist.twist.linear.x),
-                                        static_cast<float>(msg->twist.twist.angular.z));
+                                        static_cast<float>(msg->twist.twist.angular.z),
+                                        static_cast<float>(msg->twist.twist.linear.y));
           last_odom_time_ = now();
         });
 
@@ -181,6 +184,7 @@ private:
         applied = core_.limitReachableCommand(current, command);
       }
       out.linear.x  = applied.v;
+      out.linear.y  = applied.vy;  // zero for every non-holonomic model
       out.angular.z = applied.w;
       status.data   = static_cast<int8_t>(result.status);
     }
