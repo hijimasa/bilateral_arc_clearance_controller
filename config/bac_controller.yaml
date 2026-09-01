@@ -7,6 +7,7 @@ controller_server:
 
     FollowPath:
       plugin: "bac::BacController"
+      motion_model.type: diff_drive
       scan_topic: /scan
       scan_timeout: 0.5
       scan_downsample: 1

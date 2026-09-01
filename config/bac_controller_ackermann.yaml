@@ -1,0 +1,56 @@
+# Merge this section into the Nav2 parameter file for an Ackermann vehicle.
+# Geometry and limits are examples and must be measured on the target robot.
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    controller_plugins: ["FollowPath"]
+
+    FollowPath:
+      plugin: "bac::BacController"
+      motion_model.type: ackermann
+      # The whole vehicle model, at the granularity of the Nav2 MPPI
+      # AckermannConstraints. Every command satisfies
+      #   |angular.z| <= min(limits.w_max, |linear.x| / turn_radius_min).
+      # Measure the real turning circle including downstream steering tracking
+      # error, not the geometric minimum alone. Wheelbase, road-wheel angle,
+      # and steering rate belong to the downstream vehicle controller, which
+      # must convert this body twist, e.g. delta = atan(L * angular.z / linear.x).
+      # Must be positive; configuration fails otherwise.
+      turn_radius_min: 1.0
+
+      scan_topic: /scan
+      scan_timeout: 0.5
+      scan_downsample: 1
+      scan_min_points: 10
+      scan_inf_is_valid: true
+      diagnostics_publish_period: 1.0
+
+      footprint.front: 0.7
+      footprint.rear: -0.3
+      footprint.width: 0.6
+      safety_margin.front: 0.2
+      safety_margin.rear: 0.2
+      safety_margin.side: 0.2
+      avoid_margin.side: 0.6
+
+      limits.v_max: 0.5
+      # Reverse requires both rear sensing and a downstream controller that
+      # preserves the steering/yaw-rate convention while reversing. Forward-only
+      # (0.0) cannot reach a goal behind the vehicle: BAC brakes rather than
+      # fabricating a spin, so keep a Nav2 recovery such as BackUp configured.
+      limits.v_min: 0.0
+      limits.w_max: 0.8
+      limits.acc_v: 0.8
+      # Body yaw-rate acceleration; this is not a road-wheel steering-rate limit.
+      limits.acc_w: 2.5
+      control_period: 0.05
+      stop_decel: 0.8
+      brake_reaction_time: 0.1
+
+      weights.clearance: 2.0
+      weights.path_dist: 1.0
+      weights.balance: 4.0
+      weights.heading: 0.15
+      weights.hysteresis: 0.6
+      weights.squeeze: 0.5
+      sim_time: 2.5

@@ -31,8 +31,8 @@ DiffDriveMotionModel::sampleCandidates(const Twist2D &current, float linear_spee
   std::vector<float> linear_velocities;
   std::vector<float> angular_velocities;
   CandidateBatch batch;
-  batch.angular_min = -params_.limits.w_max;
-  batch.angular_max = params_.limits.w_max;
+  const float angular_min = -params_.limits.w_max;
+  const float angular_max = params_.limits.w_max;
 
   linear_velocities.push_back(0.0f);  // rotation / stop row
   const int v_samples = std::max(2, params_.v_samples);
@@ -59,15 +59,13 @@ DiffDriveMotionModel::sampleCandidates(const Twist2D &current, float linear_spee
   for (int i = 0; i < w_samples; ++i)
   {
     angular_velocities.push_back(
-        batch.angular_min + (batch.angular_max - batch.angular_min) * static_cast<float>(i) /
+        angular_min + (angular_max - angular_min) * static_cast<float>(i) /
                                 static_cast<float>(w_samples - 1));
   }
-  if (batch.angular_min < 0.0f && batch.angular_max > 0.0f)
+  if (angular_min < 0.0f && angular_max > 0.0f)
   {
     angular_velocities.push_back(0.0f);  // always offer the straight arc
   }
-  batch.coarse_angular_step =
-      (batch.angular_max - batch.angular_min) / static_cast<float>(std::max(w_samples - 1, 1));
 
   batch.commands.reserve(linear_velocities.size() * angular_velocities.size());
   for (float v : linear_velocities)
@@ -78,6 +76,42 @@ DiffDriveMotionModel::sampleCandidates(const Twist2D &current, float linear_spee
     }
   }
   return batch;
+}
+
+std::vector<Twist2D>
+DiffDriveMotionModel::refinementCandidates(const Twist2D &coarse_best) const
+{
+  std::vector<Twist2D> commands;
+  if (params_.w_refine_steps <= 0 || std::fabs(coarse_best.v) <= 1e-3f)
+  {
+    return commands;
+  }
+
+  const float angular_min = -params_.limits.w_max;
+  const float angular_max = params_.limits.w_max;
+  const int w_samples = std::max(3, params_.w_samples);
+  const float coarse_step =
+      (angular_max - angular_min) / static_cast<float>(std::max(w_samples - 1, 1));
+  commands.reserve(static_cast<std::size_t>(2 * params_.w_refine_steps));
+  for (int i = 1; i <= params_.w_refine_steps; ++i)
+  {
+    const float dw = coarse_step * static_cast<float>(i) /
+                     static_cast<float>(params_.w_refine_steps + 1);
+    for (float w : { coarse_best.w - dw, coarse_best.w + dw })
+    {
+      if (w >= angular_min && w <= angular_max)
+      {
+        commands.emplace_back(coarse_best.v, w);
+      }
+    }
+  }
+  return commands;
+}
+
+std::vector<Twist2D>
+DiffDriveMotionModel::clearanceProbeCommands(float linear_speed) const
+{
+  return { { linear_speed, -0.4f }, { linear_speed, 0.0f }, { linear_speed, 0.4f } };
 }
 
 ProjectedPose2D
@@ -97,6 +131,19 @@ DiffDriveMotionModel::projectConstantCommand(const Twist2D &command, float durat
 }
 
 bool
+DiffDriveMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
+{
+  return std::fabs(command.v) <= 1e-3f || std::fabs(command.w) <= 1e-4f ||
+         std::fabs(command.v) / std::fabs(command.w) >= params_.turn_radius_min;
+}
+
+bool
+DiffDriveMotionModel::supportsInPlaceRotation() const
+{
+  return true;
+}
+
+bool
 DiffDriveMotionModel::isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const
 {
   // A full in-place rotation sweeps the disk of the circumscribed radius.
@@ -113,6 +160,53 @@ DiffDriveMotionModel::isInPlaceRotationAdmissible(const std::vector<Point2D> &po
     }
   }
   return true;
+}
+
+float
+DiffDriveMotionModel::commandChange(const Twist2D &command, const Twist2D &previous) const
+{
+  return std::fabs(command.w - previous.w);
+}
+
+Twist2D
+DiffDriveMotionModel::limitReachableCommand(const Twist2D &current,
+                                            const Twist2D &desired) const
+{
+  Twist2D limited = desired;
+  if (params_.limits.acc_w > 1e-3f && params_.control_period > 1e-4f)
+  {
+    const float dw = params_.limits.acc_w * params_.control_period;
+    limited.w = std::min(std::max(desired.w, current.w - dw), current.w + dw);
+  }
+  return limited;
+}
+
+Twist2D
+DiffDriveMotionModel::withLinearSpeed(const Twist2D &command, float linear_speed) const
+{
+  if (std::fabs(command.v) <= 1e-3f || std::fabs(linear_speed) <= 1e-3f)
+  {
+    return { linear_speed, 0.0f };
+  }
+  // Preserve the curvature of the reachable arc that was checked for
+  // contact. Keeping w fixed here would tighten w/v as speed is reduced and
+  // silently replace the selected geometric path.
+  return { linear_speed, command.w * linear_speed / command.v };
+}
+
+Twist2D
+DiffDriveMotionModel::applyCommandDeadband(const Twist2D &command) const
+{
+  Twist2D result = command;
+  if (std::fabs(result.v) < params_.velocity_min)
+  {
+    result.v = 0.0f;
+  }
+  if (std::fabs(result.w) < params_.angvel_min)
+  {
+    result.w = 0.0f;
+  }
+  return result;
 }
 
 }  // namespace bac::detail

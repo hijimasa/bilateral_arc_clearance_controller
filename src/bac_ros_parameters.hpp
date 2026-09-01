@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
@@ -42,6 +43,14 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
     }
     return static_cast<int>(node.get_parameter(full_name).as_int());
   };
+  auto declare_string = [&](const std::string &name, const std::string &default_value) {
+    const std::string full_name = prefix + name;
+    if (!node.has_parameter(full_name))
+    {
+      node.template declare_parameter<std::string>(full_name, default_value);
+    }
+    return node.get_parameter(full_name).as_string();
+  };
 
   Params params;
   params.footprint.front     = declare_float("footprint.front", params.footprint.front);
@@ -61,6 +70,20 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.limits.acc_v = declare_float("limits.acc_v", params.limits.acc_v);
   params.limits.acc_w = declare_float("limits.acc_w", params.limits.acc_w);
 
+  const std::string motion_model_type = declare_string("motion_model.type", "diff_drive");
+  if (motion_model_type == "diff_drive")
+  {
+    params.motion_model.type = MotionModelType::DIFF_DRIVE;
+  }
+  else if (motion_model_type == "ackermann")
+  {
+    params.motion_model.type = MotionModelType::ACKERMANN;
+  }
+  else
+  {
+    throw std::invalid_argument(
+        "bac: motion_model.type must be 'diff_drive' or 'ackermann'");
+  }
   params.weights.clearance  = declare_float("weights.clearance", params.weights.clearance);
   params.weights.path_dist  = declare_float("weights.path_dist", params.weights.path_dist);
   params.weights.balance    = declare_float("weights.balance", params.weights.balance);
@@ -74,6 +97,11 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.cap_adapt_rate      = declare_float("cap_adapt_rate", params.cap_adapt_rate);
   params.min_eval_distance   = declare_float("min_eval_distance", params.min_eval_distance);
   params.turn_radius_min     = declare_float("turn_radius_min", params.turn_radius_min);
+  if (params.motion_model.type == MotionModelType::ACKERMANN &&
+      !(params.turn_radius_min > 0.0f))
+  {
+    throw std::invalid_argument("bac: Ackermann turn_radius_min must be positive");
+  }
   params.eval_lateral_max    = declare_float("eval_lateral_max", params.eval_lateral_max);
   params.margin_scale_floor  = declare_float("margin_scale_floor", params.margin_scale_floor);
   params.margin_scale_speed  = declare_float("margin_scale_speed", params.margin_scale_speed);

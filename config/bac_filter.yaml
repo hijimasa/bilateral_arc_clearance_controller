@@ -1,5 +1,7 @@
 bac_filter:
   ros__parameters:
+    motion_model.type: diff_drive
+
     # Example robot geometry. Measure these values on the target robot.
     footprint.front: 0.5
     footprint.rear: -0.5

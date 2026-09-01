@@ -16,8 +16,9 @@ namespace bac::detail
 /**
  * Evaluates one constant-curvature trajectory independently from candidate
  * generation and scoring. The implementation is the extracted BacCore arc
- * geometry; keeping it separate allows Ackermann to reuse it while an
- * omnidirectional model can provide a different swept-trajectory evaluator.
+ * geometry; keeping it separate lets the differential-drive and Ackermann
+ * policies share it, while an omnidirectional model could provide a different
+ * swept-trajectory evaluator.
  */
 class ArcTrajectoryEvaluator
 {

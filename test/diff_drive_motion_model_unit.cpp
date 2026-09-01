@@ -45,10 +45,16 @@ testCandidateOrderingAndReachability()
          "stop/rotation row remains first");
   expect(near(moving.commands.back().v, 0.4f) && near(moving.commands.back().w, 0.0f),
          "dynamic-window cap and explicit straight command remain last");
-  expect(near(moving.angular_min, -1.0f) && near(moving.angular_max, 1.0f),
-         "angular bounds follow limits");
-  expect(near(moving.coarse_angular_step, 2.0f / 24.0f),
-         "refinement step matches the former in-core grid");
+  const std::vector<bac::Twist2D> refined =
+      model.refinementCandidates(bac::Twist2D(0.2f, 0.0f));
+  expect(refined.size() == 6U, "three refinement steps remain on each side");
+  expect(near(refined.front().w, -(2.0f / 24.0f) / 4.0f),
+         "refinement pitch matches the former in-core grid");
+
+  const std::vector<bac::Twist2D> probes = model.clearanceProbeCommands(0.3f);
+  expect(probes.size() == 3U && near(probes[0].w, -0.4f) &&
+             near(probes[1].w, 0.0f) && near(probes[2].w, 0.4f),
+         "tightness probes preserve their former order and yaw rates");
 
   const bac::detail::CandidateBatch standstill =
       model.sampleCandidates(bac::Twist2D(), 0.4f);
@@ -87,6 +93,17 @@ testInPlaceRotationSweep()
          "far obstacle permits in-place rotation");
   expect(!model.isInPlaceRotationAdmissible({ { 0.55f, 0.0f } }),
          "point inside circumscribed sweep blocks in-place rotation");
+  expect(model.supportsInPlaceRotation(), "differential drive supports in-place rotation");
+
+  const bac::Twist2D limited = model.limitReachableCommand(
+      bac::Twist2D(0.2f, 0.1f), bac::Twist2D(0.2f, 0.8f));
+  expect(near(limited.w, 0.225f), "angular output reachability remains acceleration limited");
+  const bac::Twist2D slowed = model.withLinearSpeed(limited, 0.1f);
+  expect(near(slowed.v, 0.1f) && near(slowed.w, limited.w / 2.0f),
+         "post-selection speed limit preserves differential-drive curvature");
+  const bac::Twist2D stopped = model.withLinearSpeed(limited, 0.0f);
+  expect(near(stopped.v, 0.0f) && near(stopped.w, 0.0f),
+         "curvature-preserving stop does not create an in-place command");
 }
 
 }  // namespace

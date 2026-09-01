@@ -175,13 +175,10 @@ private:
       // Arbitration: transparent while CLEAR - except the angular rate
       // limit, which is part of the reachability contract and therefore
       // applies to the passed-through command as well.
-      bac::Twist2D applied = (result.status == bac::Status::CLEAR) ? command : result.output;
-      const bac::Params &p = core_.params();
-      if (result.status == bac::Status::CLEAR && p.limits.acc_w > 1e-3f &&
-          p.control_period > 1e-4f)
+      bac::Twist2D applied = result.output;
+      if (result.status == bac::Status::CLEAR)
       {
-        const float dw = p.limits.acc_w * p.control_period;
-        applied.w = std::min(std::max(applied.w, current.w - dw), current.w + dw);
+        applied = core_.limitReachableCommand(current, command);
       }
       out.linear.x  = applied.v;
       out.angular.z = applied.w;

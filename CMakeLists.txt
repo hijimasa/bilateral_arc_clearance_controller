@@ -14,10 +14,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Framework-free algorithm core
 add_library(bac_core STATIC
+    src/ackermann_motion_model.cpp
     src/adapter_utils.cpp
     src/arc_trajectory_evaluator.cpp
     src/bac_core.cpp
     src/diff_drive_motion_model.cpp
+    src/motion_model.cpp
 )
 target_include_directories(bac_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -102,6 +104,20 @@ if(BUILD_TESTING)
   target_link_libraries(bac_diff_drive_motion_model_unit bac_core)
   target_compile_options(bac_diff_drive_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacDiffDriveMotionModelUnit COMMAND bac_diff_drive_motion_model_unit)
+
+  add_executable(bac_ackermann_motion_model_unit test/ackermann_motion_model_unit.cpp)
+  target_include_directories(bac_ackermann_motion_model_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bac_ackermann_motion_model_unit bac_core)
+  target_compile_options(bac_ackermann_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacAckermannMotionModelUnit COMMAND bac_ackermann_motion_model_unit)
+  set_tests_properties(BacAckermannMotionModelUnit PROPERTIES LABELS "ackermann")
+
+  add_executable(bac_ackermann_scenarios test/ackermann_scenarios.cpp)
+  target_include_directories(bac_ackermann_scenarios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  target_link_libraries(bac_ackermann_scenarios bac_core)
+  target_compile_options(bac_ackermann_scenarios PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacAckermannScenarios COMMAND bac_ackermann_scenarios)
+  set_tests_properties(BacAckermannScenarios PROPERTIES LABELS "regression;ackermann")
 
   add_executable(bac_adapter_utils_unit test/adapter_utils_unit.cpp)
   target_link_libraries(bac_adapter_utils_unit bac_core)

@@ -1,7 +1,7 @@
 /**
  * @file bac_controller.cpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief nav2 controller plugin wrapping bac_core (DWA-based local planner)
+ * @brief Nav2 controller plugin wrapping the BAC core
  * @date 2026-08-27
  * @copyright Copyright (c) 2026 Masaaki Hijikata
  */

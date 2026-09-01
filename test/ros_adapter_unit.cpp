@@ -75,6 +75,22 @@ nav_msgs::msg::Path straightPlan(const std::string &frame)
   return path;
 }
 
+nav_msgs::msg::Path rearPlan(const std::string &frame)
+{
+  nav_msgs::msg::Path path;
+  path.header.frame_id = frame;
+  for (int i = 0; i <= 10; ++i)
+  {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = frame;
+    pose.pose.position.x = -0.2 * static_cast<double>(i);
+    pose.pose.orientation.w = 1.0;
+    path.poses.push_back(pose);
+  }
+  return path;
+}
+
+
 void testControllerAdapter()
 {
   rclcpp::NodeOptions options;
@@ -83,7 +99,9 @@ void testControllerAdapter()
     rclcpp::Parameter("FollowPath.scan_timeout", 0.5),
     rclcpp::Parameter("FollowPath.scan_min_points", 3),
     rclcpp::Parameter("FollowPath.diagnostics_publish_period", 0.001),
-    rclcpp::Parameter("FollowPath.limits.v_min", 0.0)
+    rclcpp::Parameter("FollowPath.limits.v_min", 0.0),
+    rclcpp::Parameter("FollowPath.motion_model.type", "ackermann"),
+    rclcpp::Parameter("FollowPath.turn_radius_min", 0.8)
   });
   auto parent = std::make_shared<rclcpp_lifecycle::LifecycleNode>("bac_adapter_test", options);
   rclcpp::NodeOptions costmap_options;
@@ -164,6 +182,30 @@ void testControllerAdapter()
          "fresh scan is OK-level");
   expect(diagnosticValue(last_diagnostic, "obstacle_source") == "raw_scan",
          "diagnostics expose raw scan use");
+
+  // The configured Ackermann policy must reach the plugin boundary and must
+  // not turn in place even when the complete path lies behind the vehicle.
+  controller.setPlan(rearPlan(base_frame));
+  const geometry_msgs::msg::TwistStamped rear_command =
+      controller.computeVelocityCommands(robot_pose, velocity, nullptr);
+  expect(!(std::fabs(rear_command.twist.linear.x) <= 1e-4 &&
+           std::fabs(rear_command.twist.angular.z) > 1e-4),
+         "Ackermann Nav2 configuration never emits an in-place yaw command");
+
+  // This tick is what proves the Ackermann parameters actually reach BacCore:
+  // the same rear plan under a diff_drive configuration yields an in-place yaw
+  // command, while Ackermann brakes to (0, 0).
+  //
+  // Deliberately NOT asserted here: the minimum turning radius. In this
+  // fixture the vehicle is at standstill and the selected arc is always
+  // straight, so a radius assertion would be unreachable code that reads like
+  // coverage it does not provide. The turning-radius bound - including the
+  // binding case, the reverse case and the reachability-clamp interaction - is
+  // covered by bac_ackermann_motion_model_unit and bac_ackermann_scenarios.
+  expect(std::fabs(rear_command.twist.linear.x) <= 1e-4 &&
+             std::fabs(rear_command.twist.angular.z) <= 1e-4,
+         "forward-only Ackermann brakes for a rear plan instead of yawing");
+  controller.setPlan(straightPlan(base_frame));
 
   // Nav2 speed limiting must cap the output selected from an otherwise clear scan.
   controller.setSpeedLimit(0.05, false);

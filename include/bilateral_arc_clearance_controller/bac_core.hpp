@@ -1,7 +1,7 @@
 /**
  * @file bac_core.hpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief Framework-free core of the arc-clearance local planner (DWA-based)
+ * @brief Framework-free core of the arc-clearance local planner
  * @date 2026-08-26
  * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
@@ -9,11 +9,11 @@
  * Inputs are obstacle points and a LOCAL PATH, both in the robot frame, plus
  * the current velocity; output is the next (v, w) command.
  *
- * The method is a Dynamic Window Approach whose traversability evaluation is
- * replaced by the bilateral arc clearance measure: candidate velocities are
+ * The differential-drive policy derives from Dynamic Window Approach candidate
+ * sampling, while the Ackermann policy samples road-wheel angle. In both cases,
+ * traversability evaluation uses the bilateral arc clearance measure: candidate velocities are
  * sampled from an acceleration-limited translational window and the configured
- * angular range, rolled out as constant-curvature
- * arcs, and scored by
+ * steering range, rolled out as constant-curvature arcs, and scored by
  *   saturated bilateral clearance + local-goal following (distance / heading)
  *   - hysteresis - lateral squeeze,
  * with DWA admissibility (can the robot stop before the first body hit on the
@@ -33,10 +33,16 @@
 #ifndef BILATERAL_ARC_CLEARANCE_CONTROLLER__BAC_CORE_HPP_
 #define BILATERAL_ARC_CLEARANCE_CONTROLLER__BAC_CORE_HPP_
 
+#include <memory>
 #include <vector>
 
 namespace bac
 {
+
+namespace detail
+{
+class MotionModel;
+}
 
 struct Point2D
 {
@@ -62,6 +68,18 @@ struct Twist2D
     , w(w_val)
   {
   }
+};
+
+enum class MotionModelType : int
+{
+  DIFF_DRIVE = 0,
+  ACKERMANN  = 1
+};
+
+/// Vehicle-kinematic policy. Every model consumes and produces body Twist.
+struct MotionModelParameters
+{
+  MotionModelType type = MotionModelType::DIFF_DRIVE;
 };
 
 enum class Status : int
@@ -110,11 +128,10 @@ struct Limits
   float v_min = -0.1f;  // [m/s]
   float w_max = 1.0f;  // [rad/s]
   float acc_v = 0.8f;  // [m/s^2]
-  /// Angular acceleration the plant can actually deliver. Candidate w stays
-  /// uniformly sampled by design (corrective arcs must always be on the
-  /// table), but the OUTPUT is rate-limited to what is reachable from the
-  /// measured angular velocity within one control period, and the clamped
-  /// arc is re-checked for stopping admissibility. 0 disables.
+  /// Body yaw acceleration the plant can actually deliver. Candidate steering
+  /// remains fully sampled so corrective arcs stay available, but the output
+  /// is limited from the measured yaw rate and re-checked. This is not an
+  /// Ackermann road-wheel steering-rate guarantee. 0 disables.
   float acc_w = 2.5f;  // [rad/s^2]
 };
 
@@ -139,7 +156,7 @@ struct Weights
   /// grid-quantized, replanned global path) can itself sit off-center.
   float balance    = 4.0f;  // [score per m]
   float heading    = 0.15f; // [score per rad] endpoint heading vs local-goal bearing
-  float hysteresis = 0.6f;  // [score per rad/s] change from the previous w
+  float hysteresis = 0.6f;  // change in yaw rate (diff) or curvature (Ackermann)
   float squeeze    = 0.5f;  // [score per m/s] v scaled by (1 - lateral_fraction)
 };
 
@@ -151,6 +168,7 @@ struct Params
   IgnoreBox ignore_box{};
   Limits    limits{};
   Weights   weights{};
+  MotionModelParameters motion_model{};
 
   float sim_time    = 2.5f;   // [s] candidate arc rollout horizon
   /// Path following scores candidates by arc-length PROGRESS along the local
@@ -175,9 +193,12 @@ struct Params
   /// myopic at low speed: obstacles drop out of range as the robot slows, and
   /// it creeps into them until the emergency stop).
   float min_eval_distance = 1.6f;  // [m]
-  /// Forward candidates with a turn radius below this are excluded: near-spin
-  /// arcs degenerate the clearance measure (every point is "far" from a
-  /// tiny circle). Sharp turning is covered by the v=0 turn-then-go row.
+  /// Differential drive: translating candidates (forward or reverse) with a
+  /// turn radius below this are excluded, because near-spin arcs degenerate
+  /// the clearance measure (every point is "far" from a tiny circle). Sharp
+  /// turning is covered by the v=0 turn-then-go row.
+  /// Ackermann: the kinematic minimum turning radius, which bounds candidate
+  /// curvature itself. Must be positive.
   float turn_radius_min = 0.25f;  // [m]
   /// Curved candidates are never evaluated beyond this arc angle: the planner
   /// re-decides every tick, so extrapolating a turn much past ~60 degrees
@@ -203,12 +224,12 @@ struct Params
   float margin_scale_speed = 0.3f;  // [m/s]
   float window_time = 0.25f;  // [s] accel authority defining the dynamic window
   int   v_samples   = 5;      // forward-speed samples in the window (v=0 row is added)
-  /// w candidates are sampled UNIFORMLY over [-w_max, w_max] (not an
-  /// accel-window around the current w): corrective arcs must always be on
-  /// the table, independent of the current state and the planner's target.
+  /// Differential-drive yaw rates or Ackermann curvatures are sampled
+  /// uniformly over their configured range (not an acceleration window):
+  /// corrective arcs must always be on the table.
   int   w_samples   = 25;
-  /// Coarse-to-fine steering: this many finer w offsets are re-sampled on
-  /// each side of the coarse winner (at its v). Removes the steering
+  /// Coarse-to-fine steering: this many finer yaw-rate or curvature offsets
+  /// are re-sampled on each side of the coarse winner (at its v). Removes the steering
   /// quantization of the uniform grid, whose pitch otherwise becomes the
   /// smallest applicable correction (tick-scale zigzag in narrow passages).
   /// 0 disables.
@@ -225,7 +246,7 @@ struct Params
   /// decimated upstream, this cap bounds the worst case.
   int max_points = 1000;
 
-  /// Control period assumed for the angular-rate output limit [s].
+  /// Control period assumed for the body yaw-acceleration output limit [s].
   float control_period = 0.05f;
 
   float velocity_min = 0.005f;  // [m/s] outputs below are clamped to 0
@@ -326,7 +347,16 @@ class BacCore
 public:
   BacCore();
   explicit BacCore(const Params &params);
+  ~BacCore();
 
+  /// Value semantics are preserved; each instance owns a motion model bound
+  /// to its own params_. The model cannot be stolen from another instance,
+  /// so moves deliberately fall back to these copies.
+  BacCore(const BacCore &other);
+  BacCore &operator=(const BacCore &other);
+
+  /// Rebuilds the motion model, so an invalid kinematic configuration is
+  /// rejected here rather than inside a control tick.
   void          setParams(const Params &params);
   const Params &params() const;
 
@@ -348,6 +378,12 @@ public:
   ArcEvaluation evaluateArcWindows(const std::vector<Point2D> &points, float v, float w,
                                    float dist_clear, float dist_block) const;
 
+  /// Limit a command to what the plant can reach within one control period
+  /// under the configured motion model. Exposed for adapters that pass a
+  /// command through unchanged: the reachability contract still applies to
+  /// the passed-through command.
+  Twist2D limitReachableCommand(const Twist2D &current, const Twist2D &desired) const;
+
   Status status() const;
   /// Force the STOP status (e.g. sensor data lost); cleared by the next process()
   void forceStop();
@@ -355,11 +391,16 @@ public:
   void reset();
 
 private:
+  /// Bound to this instance's params_. Built once per configuration so that
+  /// process() neither allocates nor throws on a bad configuration.
+  void rebuildMotionModel();
+
   Params params_;
+  std::unique_ptr<detail::MotionModel> motion_model_;
 
   Status current_status_;
   int    avoiding_counter_;  // AVOIDING latch countdown
-  float  prev_selected_w_;   // previously selected steering rate (hysteresis)
+  Twist2D prev_selected_command_;  // previous model command (steering hysteresis)
   float  cap_ema_;           // density-adapted clearance reference (-1 = uninitialized)
   bool   alignment_mode_;    // reduce a large local-path tangent error before translating
 };

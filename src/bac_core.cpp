@@ -1,16 +1,18 @@
 /**
  * @file bac_core.cpp
  * @author Masaaki Hijikata (hijikata@react-robot.com)
- * @brief Framework-free core of the arc-clearance local planner (DWA-based)
+ * @brief Framework-free core of the arc-clearance local planner
  * @date 2026-08-26
  * @copyright Copyright (c) 2026 Masaaki Hijikata
  *
  * Algorithm summary (details and rationale in the package README):
  *  1. Emergency stop if any point is inside the body + braking distance zone,
  *     inflated by the safety margins with rounded (elliptical) corners.
- *  2. Sample v inside the acceleration-limited translational window and w
- *     over the configured angular range (plus a v=0 rotation row and the stop
- *     candidate), then roll each out as a constant-curvature arc.
+ *  2. Ask the configured motion model for candidates: v inside the
+ *     acceleration-limited translational window crossed with yaw rate
+ *     (differential drive, plus a v=0 rotation row) or with body curvature
+ *     bounded by turn_radius_min (Ackermann, never a rotation row), plus the
+ *     stop candidate. Roll each out as a constant-curvature arc.
  *  3. Admissibility: discard candidates that cannot stop before the first
  *     body hit on their arc (and rotations that sweep into an obstacle).
  *  4. Score = saturated bilateral clearance + local-goal following (distance /
@@ -20,7 +22,7 @@
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 
 #include "arc_trajectory_evaluator.hpp"
-#include "diff_drive_motion_model.hpp"
+#include "motion_model.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -267,22 +269,77 @@ BacCore::BacCore(const Params &params)
   : params_(params)
   , current_status_(Status::CLEAR)
   , avoiding_counter_(0)
-  , prev_selected_w_(0.0f)
+  , prev_selected_command_(0.0f, 0.0f)
   , cap_ema_(-1.0f)
   , alignment_mode_(false)
 {
+  rebuildMotionModel();
+}
+
+BacCore::~BacCore() = default;
+
+BacCore::BacCore(const BacCore &other)
+  : params_(other.params_)
+  , current_status_(other.current_status_)
+  , avoiding_counter_(other.avoiding_counter_)
+  , prev_selected_command_(other.prev_selected_command_)
+  , cap_ema_(other.cap_ema_)
+  , alignment_mode_(other.alignment_mode_)
+{
+  rebuildMotionModel();
+}
+
+BacCore &
+BacCore::operator=(const BacCore &other)
+{
+  if (this != &other)
+  {
+    params_                = other.params_;
+    current_status_        = other.current_status_;
+    avoiding_counter_      = other.avoiding_counter_;
+    prev_selected_command_ = other.prev_selected_command_;
+    cap_ema_               = other.cap_ema_;
+    alignment_mode_        = other.alignment_mode_;
+    rebuildMotionModel();
+  }
+  return *this;
+}
+
+void
+BacCore::rebuildMotionModel()
+{
+  motion_model_ = detail::makeMotionModel(params_);
 }
 
 void
 BacCore::setParams(const Params &params)
 {
+  // Validate FIRST. The motion model holds a reference to params_, so mutating
+  // params_ before a failed rebuild would leave the surviving model reading a
+  // rejected configuration - a negative turn_radius_min then turns the steering
+  // clamp into a full-lock command instead of a clean failure.
+  detail::validateMotionModelParams(params);
+
+  if (params_.motion_model.type != params.motion_model.type ||
+      params_.turn_radius_min != params.turn_radius_min)
+  {
+    prev_selected_command_ = Twist2D{};
+    alignment_mode_ = false;
+  }
   params_ = params;
+  rebuildMotionModel();
 }
 
 const Params &
 BacCore::params() const
 {
   return params_;
+}
+
+Twist2D
+BacCore::limitReachableCommand(const Twist2D &current, const Twist2D &desired) const
+{
+  return motion_model_->limitReachableCommand(current, desired);
 }
 
 Status
@@ -302,7 +359,7 @@ BacCore::reset()
 {
   current_status_   = Status::CLEAR;
   avoiding_counter_ = 0;
-  prev_selected_w_  = 0.0f;
+  prev_selected_command_ = Twist2D{};
   cap_ema_          = -1.0f;
   alignment_mode_   = false;
 }
@@ -611,6 +668,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   }
 
   float clearance_cap = params_.footprint.width / 2.0f + params_.avoid_margin.side;
+  const detail::MotionModel *motion_model = motion_model_.get();
 
   // Tightness probe: best RAW bilateral clearance over three probe arcs.
   // Near 0 in the open (balance term off, pure path following); towards 1 in
@@ -622,8 +680,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     float v_probe    = std::max(v_cap, 0.1f);
     float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
     probe_dist       = std::min(probe_dist, remaining_path);
-    for (float wp : { -0.4f, 0.0f, 0.4f })
+    for (const Twist2D &probe : motion_model->clearanceProbeCommands(v_probe))
     {
+      const float wp = probe.w;
       float dist_clear = probe_dist;
       if (std::fabs(wp) > 1e-4f)
       {
@@ -660,13 +719,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                                 std::max(moderation, params_.creep_fraction));
   }
 
-  const detail::DiffDriveMotionModel motion_model(params_);
-  const detail::CandidateBatch candidate_batch = motion_model.sampleCandidates(current, v_cap);
+  const detail::CandidateBatch candidate_batch =
+      motion_model->sampleCandidates(current, v_cap);
 
   // Rotation admissibility remains deliberately conservative: a full
   // in-place rotation sweeps the disk of the circumscribed radius.
-  const bool rotation_admissible =
-      motion_model.isInPlaceRotationAdmissible(filtered_points);
+  const bool rotation_admissible = motion_model->supportsInPlaceRotation() &&
+                                   motion_model->isInPlaceRotationAdmissible(filtered_points);
 
   // A geometric path alone does not say that any collision-free forward
   // motion is useful. When the ordered path initially points almost behind
@@ -743,7 +802,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
       // skip the expensive arc evaluation for candidates that cannot win.
       const detail::ProjectedPose2D projected =
-          motion_model.projectConstantCommand(Twist2D(v, w), params_.sim_time);
+          motion_model->projectConstantCommand(Twist2D(v, w), params_.sim_time);
       float end_th_pre = projected.theta;
       float end_x_pre = projected.x;
       float end_y_pre = projected.y;
@@ -758,7 +817,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         return;
       }
       float fixed_penalties = params_.weights.path_dist * gd_pre +
-                              params_.weights.hysteresis * std::fabs(w - prev_selected_w_);
+                              params_.weights.hysteresis *
+                                  motion_model->commandChange(Twist2D(v, w),
+                                                              prev_selected_command_);
       // (Pruning waits until one admissible forward candidate is on record:
       // the reverse gate depends on GOAL PROGRESS, and admissibility is
       // only known after evaluation. The v=0 row is exempt - its goal
@@ -822,9 +883,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       else
       {
-        if (std::fabs(w) > 1e-4f && std::fabs(v) / std::fabs(w) < params_.turn_radius_min)
+        if (!motion_model->isCommandKinematicallyValid(Twist2D(v, w)))
         {
-          return;  // near-spin arc: degenerate clearance geometry
+          return;
         }
         float dist_block = std::max(std::fabs(v) * params_.sim_time, params_.min_eval_distance);
         dist_block       = std::min(dist_block, remaining_path);
@@ -898,7 +959,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         const float alignment_error = (std::fabs(current.v) > 0.05f)
                                           ? std::fabs(w)
                                           : std::fabs(wrapAngle(relative_path_heading - end_th));
-        score = -alignment_error - 0.05f * std::fabs(w - prev_selected_w_);
+        score = -alignment_error -
+                0.05f * motion_model->commandChange(Twist2D(v, w),
+                                                     prev_selected_command_);
       }
       else
       {
@@ -906,7 +969,8 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                 params_.weights.balance * tightness * balance -
                 params_.weights.path_dist * path_cost -
                 params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
-                params_.weights.hysteresis * std::fabs(w - prev_selected_w_) -
+                params_.weights.hysteresis *
+                    motion_model->commandChange(Twist2D(v, w), prev_selected_command_) -
                 params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
       }
 #ifdef BAC_DEBUG_CANDIDATES
@@ -932,79 +996,90 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // 2 * w_max / (w_samples - 1); the hysteresis term then makes the coarse
   // pitch itself the smallest applicable correction, which shows up as
   // tick-scale zigzag in narrow passages.
-  if (params_.w_refine_steps > 0 && std::fabs(best_cmd.v) > 1e-3f)
+  for (const Twist2D &command : motion_model->refinementCandidates(best_cmd))
   {
-    float w_step   = candidate_batch.coarse_angular_step;
-    float w_center = best_cmd.w;
-    float v_center = best_cmd.v;
-    for (int i = 1; i <= params_.w_refine_steps; ++i)
-    {
-      float dw = w_step * static_cast<float>(i) /
-                 static_cast<float>(params_.w_refine_steps + 1);
-      for (float w : { w_center - dw, w_center + dw })
-      {
-        if (w >= candidate_batch.angular_min && w <= candidate_batch.angular_max)
-        {
-          evaluate_candidate(v_center, w);
-        }
-      }
-    }
+    evaluate_candidate(command.v, command.w);
   }
 
   float out_v = best_cmd.v;
   float out_w = best_cmd.w;
 
-  // Angular reachability of the OUTPUT: the plant cannot jump to an
-  // arbitrary w within one control period, so the commanded trajectory must
-  // be the clamped one - and the clamped arc must itself be able to stop
-  // before its first contact (otherwise the safe candidate was a promise
-  // the plant cannot keep). v is reduced to the admissible speed if not.
-  if (params_.limits.acc_w > 1e-3f && params_.control_period > 1e-4f)
+  // Output reachability: the plant cannot jump to arbitrary yaw rate or road-
+  // wheel angle in one cycle. If the reachable arc needs a lower speed to
+  // stop before contact, reduce v and w together to preserve its curvature.
+  // For differential drive at a large current yaw rate, that proportional w
+  // can itself lie outside the one-cycle deceleration interval. Reapply the
+  // reachability limit and recheck the resulting arc until it is admissible.
+  const Twist2D limited =
+      motion_model->limitReachableCommand(current, Twist2D(out_v, out_w));
+  if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f)
   {
-    const float dw      = params_.limits.acc_w * params_.control_period;
-    const float clamped = std::min(std::max(out_w, current.w - dw), current.w + dw);
-    if (std::fabs(clamped - out_w) > 1e-4f)
+    out_v = limited.v;
+    out_w = limited.w;
+    bool output_admissible = true;
+    constexpr int kReachabilityIterations = 8;
+    for (int iteration = 0; iteration < kReachabilityIterations; ++iteration)
     {
-      out_w = clamped;
-      // The exact contact test is valid for ANY radius, so the clamped arc
-      // is re-verified even below turn_radius_min (that guard exists for
-      // the clearance scoring degeneracy, not for contact).
-      if (std::fabs(out_v) > 1e-3f)
+      output_admissible = true;
+      if (std::fabs(out_v) <= 1e-3f)
       {
-        float dist_block = std::max(std::fabs(out_v) * params_.sim_time, params_.min_eval_distance);
-        dist_block       = std::min(dist_block, remaining_path);
-        const ArcEvaluation ev = evaluateArcWindows(filtered_points, out_v, out_w, 0.0f, dist_block);
-        if (ev.blocking_s < FLT_MAX)
+        if (std::fabs(out_w) > 1e-4f && !rotation_admissible)
         {
-          const float margin   = (out_v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
-          const float free_run = ev.blocking_s - margin;
-          if (free_run <= 0.0f)
-          {
-            out_v = 0.0f;
-          }
-          else
-          {
-            const float a      = std::max(params_.stop_decel, 0.1f);
-            const float tr     = params_.brake_reaction_time;
-            const float v_safe = a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr);
-            if (std::fabs(out_v) > v_safe)
-            {
-              out_v = (out_v > 0.0f ? 1.0f : -1.0f) * v_safe;
-            }
-          }
+          out_w = 0.0f;
         }
+        break;
       }
+
+      // The exact contact test is valid for any radius, including below
+      // turn_radius_min (that guard exists for scoring, not for contact).
+      float dist_block = std::max(std::fabs(out_v) * params_.sim_time, params_.min_eval_distance);
+      dist_block       = std::min(dist_block, remaining_path);
+      const ArcEvaluation ev = evaluateArcWindows(filtered_points, out_v, out_w, 0.0f, dist_block);
+      if (ev.blocking_s >= FLT_MAX)
+      {
+        break;
+      }
+
+      const float margin = (out_v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
+      const float free_run = ev.blocking_s - margin;
+      const float a = std::max(params_.stop_decel, 0.1f);
+      const float tr = params_.brake_reaction_time;
+      const float v_safe = free_run > 0.0f
+                               ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr)
+                               : 0.0f;
+      if (std::fabs(out_v) <= v_safe + 1e-4f)
+      {
+        break;
+      }
+
+      output_admissible = false;
+      const float safe_speed = (out_v > 0.0f ? 1.0f : -1.0f) * v_safe;
+      const Twist2D curvature_preserving =
+          motion_model->withLinearSpeed(Twist2D(out_v, out_w), safe_speed);
+      const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
+      if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f)
+      {
+        break;
+      }
+      out_v = next.v;
+      out_w = next.w;
+    }
+
+    if (!output_admissible)
+    {
+      // No simultaneously curvature-preserving, contact-admissible, and
+      // one-cycle-reachable translating command was found. Brake translation;
+      // differential drive may retain only a safe reachable rotation.
+      const Twist2D braking =
+          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f));
+      out_v = 0.0f;
+      out_w = (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
     }
   }
-  if (std::fabs(out_v) < params_.velocity_min)
-  {
-    out_v = 0.0f;
-  }
-  if (std::fabs(out_w) < params_.angvel_min)
-  {
-    out_w = 0.0f;
-  }
-  prev_selected_w_      = out_w;
+  const Twist2D finalized = motion_model->applyCommandDeadband(Twist2D(out_v, out_w));
+  out_v = finalized.v;
+  out_w = finalized.w;
+  prev_selected_command_ = Twist2D(out_v, out_w);
   result.output         = Twist2D(out_v, out_w);
   result.best_clearance = best_clearance;
   result.best_path_cost = best_path_cost;
