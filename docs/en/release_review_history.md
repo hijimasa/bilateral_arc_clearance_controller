@@ -23,7 +23,8 @@ English | [日本語](../release_review_history.md)
 - R16 (reviewing `a9c6c31`, with the unreviewed `433068a` foremost) has had its five High findings and the
   merge-blocking Medium ones addressed; the verdict before the response was **Hold**. H1's contact rested on the
   test world modelling walls as zero-thickness lines: the corridor now has thickness, and entering nearly
-  parallel to a thin wall is documented as a limit of the method
+  parallel to a thin wall is documented as a limit of the method. R16 is recorded in `3708fd4` and its
+  response landed in `c74fe7d`, `68a8ed9` and `4739c6f`
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
