@@ -701,6 +701,88 @@ testEmergencyLayerSeesLateralMotion()
              std::to_string(result.output.vy) + ")");
 }
 
+/// The proximity speed governor moderates speed in front of what the vehicle is
+/// about to run into. R16 H3 found it reading the forward axis only: the same
+/// wall, approached sideways, produced a command 32% faster than approaching it
+/// head-on, because the wall fell into the side-envelope branch rather than the
+/// head-on one.
+///
+/// This is a metamorphic check, not a threshold. With a SQUARE footprint and
+/// isotropic margins the problem is invariant under a 90 degree rotation, so
+/// driving at a wall and crabbing at the same wall rotated with it must be
+/// governed the same way. Measured before the fix: 0.2600 head-on against
+/// 0.3157-0.3423 sideways over wall distances 0.60-1.30 m.
+void
+testGovernorTreatsSidewaysLikeForward()
+{
+  bac::Params params = omniParams();
+  params.limits.v_max = 0.6f;
+  params.limits.vy_max = 0.6f;
+  // Square body and isotropic margins: a 90 degree rotation is an exact
+  // symmetry of the geometry, so any difference is the controller's.
+  params.footprint.front = 0.25f;
+  params.footprint.rear = -0.25f;
+  params.footprint.width = 0.5f;
+  params.safety_margin.front = 0.2f;
+  params.safety_margin.rear = 0.2f;
+  params.safety_margin.side = 0.2f;
+  params.heading_gain = 0.0f;  // hold the heading so the rotation stays exact
+
+  // Four rotations of the same problem: driving at the wall, crabbing left at
+  // it, reversing at it, crabbing right at it. A square body under isotropic
+  // margins makes all four the same problem, so any spread is the controller's.
+  float worst_gap = 0.0f;
+  std::string worst;
+  for (const float wall : { 0.60f, 0.80f, 1.00f, 1.10f, 1.30f })
+  {
+    float reference = 0.0f;
+    for (int rotation = 0; rotation < 4; ++rotation)
+    {
+      const float angle = 1.57079633f * static_cast<float>(rotation);
+      const float ca = std::cos(angle), sa = std::sin(angle);
+      const auto rotate = [&](float x, float y) {
+        return bac::Point2D(x * ca - y * sa, x * sa + y * ca);
+      };
+
+      std::vector<bac::Point2D> points, path;
+      for (int k = -30; k <= 30; ++k)
+      {
+        const float t = 0.05f * static_cast<float>(k);
+        points.push_back(rotate(wall, t));
+      }
+      for (int i = 1; i <= 20; ++i)
+      {
+        path.push_back(rotate(0.25f * static_cast<float>(i), 0.0f));
+      }
+      const bac::Point2D velocity = rotate(0.5f, 0.0f);
+
+      bac::BacCore core(params);
+      const bac::Result result =
+          core.process(points, path, bac::Twist2D(velocity.x, 0.0f, velocity.y));
+      if (rotation == 0)
+      {
+        reference = result.output.speed();
+        continue;
+      }
+      const float gap = result.output.speed() - reference;
+      if (gap > worst_gap)
+      {
+        worst_gap = gap;
+        worst = "wall " + std::to_string(wall) + " m, rotation " +
+                std::to_string(rotation * 90) + " deg: " +
+                std::to_string(result.output.speed()) + " against " +
+                std::to_string(reference) + " head-on";
+      }
+    }
+  }
+
+  // The two axes are sampled at different resolutions, so exact equality is not
+  // available; what must not happen is the sideways case being governed LESS.
+  expect(worst_gap < 0.02f,
+         "the governor moderates a wall approached sideways as it does one approached "
+         "head-on (worst excess " + std::to_string(worst_gap) + " m/s; " + worst + ")");
+}
+
 /// Nav2 asks for a goal POSE, not a goal position. A model that steers with yaw
 /// cannot honour the orientation - its heading is whatever direction it had to
 /// travel in - but a holonomic body can hold the requested orientation while
@@ -1031,6 +1113,7 @@ main()
   testEmittedCommandCanStopWhenAccelerationBinds();
   testLateralRowIsContactChecked();
   testEmergencyLayerSeesLateralMotion();
+  testGovernorTreatsSidewaysLikeForward();
   testGoalOrientationIsHeld();
   testZeroGainHoldsHeadingAndStillArrives();
   testNarrowCorridorCentering();

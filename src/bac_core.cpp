@@ -152,6 +152,26 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   }
 
   const float body_y_half = body_y_half_base;
+
+  // Unit direction of travel and the body's extents along it, used by the
+  // governor slab test below. Reduces to (+-1, 0) with lead = front (or -rear)
+  // plus the braking distance, and half-extent = width / 2, whenever vy == 0.
+  float travel_ux = (current.v >= 0.0f) ? 1.0f : -1.0f;
+  float travel_uy = 0.0f;
+  if (current_speed > 1e-6f)
+  {
+    travel_ux = current.v / current_speed;
+    travel_uy = current.vy / current_speed;
+  }
+  const float travel_nx = -travel_uy;
+  const float travel_ny = travel_ux;
+  const auto support = [&](float dx, float dy) {
+    const float along = (dx >= 0.0f) ? params.footprint.front * dx : params.footprint.rear * dx;
+    return along + body_y_half_base * std::fabs(dy);
+  };
+  const float travel_lead = support(travel_ux, travel_uy) + brake_distance;
+  const float travel_half = support(travel_nx, travel_ny);
+
   const float speed_scale = std::min(
       1.0f, params.margin_scale_floor +
                 (1.0f - params.margin_scale_floor) * current_speed /
@@ -200,10 +220,16 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
     // a point either hits the body head-on (|y| inside the body: brake on the
     // longitudinal ramp), grazes the side margin band (predictive side
     // envelope), or misses entirely (a corridor wall: no cap at all).
-    const bool  forward   = current.v >= 0.0f;
-    const float ahead     = forward ? point.x - zone_x_max : zone_x_min - point.x;
-    const float lookahead = std::max(params.side_envelope_lookahead, 1e-3f);
-    const float side_gap  = std::fabs(point.y) - body_y_half;
+    // In the DIRECTION OF TRAVEL, not along +x. Reading the forward axis alone
+    // put a wall the body was crabbing into on the side-envelope branch rather
+    // than the head-on one, so the same wall approached sideways was governed
+    // 32% less than approached head-on (R16 H3). For vy == 0 these reduce to
+    // the previous expressions exactly: travel_ux is +-1, travel_uy is 0.
+    const float travel_s   = point.x * travel_ux + point.y * travel_uy;
+    const float travel_lat = point.x * travel_nx + point.y * travel_ny;
+    const float ahead      = travel_s - travel_lead;
+    const float lookahead  = std::max(params.side_envelope_lookahead, 1e-3f);
+    const float side_gap   = std::fabs(travel_lat) - travel_half;
     if (side_gap < 0.0f && ahead > 0.0f)
     {
       // Dead-ahead collision course: linear speed ramp over the governor
@@ -252,7 +278,8 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
       // cover the swerve-carving phase - releasing the cap the moment the
       // predicted miss turns positive would let the robot accelerate
       // mid-carve and flatten its own berth.
-      const float behind = forward ? zone_x_min - point.x : point.x - zone_x_max;
+      // Behind the trailing edge, again in the direction of travel.
+      const float behind = -travel_s - support(-travel_ux, -travel_uy);
       if (behind < 0.0f && ahead < lookahead)
       {
         // Arc refinement, RELEASE-ONLY: mid-turn, the straight prediction
