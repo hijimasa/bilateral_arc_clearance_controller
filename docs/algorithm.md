@@ -87,12 +87,14 @@ score = 2.0 * min(clearance, adaptive_cap)
 - 1 runの開口幅sweepでは1.25 mまで完走したが、1.15 mでは最接近0.050 m、timeoutとなった。
   他の3 controllerは同じ1.15 m試行を完走しており、この境界条件でBACの優位性は観測されなかった。
 - Ackermann policyは、速度が加速度制限され曲率が有限速度で変化するplantに対する決定論的試験
-  11件を通過する。前方側方goal、offset通路、障害物迂回、行き止まり停止、後方goal、旋回半径拘束、
-  同梱設定例、安全停止（前進のみ）、安全停止（後退退避）、狭路centering、clutter走破である。
+  13件を通過する。前方側方goal、offset通路、障害物迂回、行き止まり停止、後方goal、旋回半径拘束、
+  ヨーレート上限拘束、clearance probe到達距離、同梱設定例、安全停止（前進のみ）、
+  安全停止（後退退避）、狭路centering、clutter走破である。
   後方goalの試験は、`turn_radius_min`以外を揃えた差動二輪の参照設定がその場旋回するのに対し、
-  Ackermannは旋回しないことを対比して確認する。狭路centeringとclutterは、横偏差・曲率符号反転・
-  1周期あたり曲率変化・停止tickを閾値検査し、候補生成や履歴項を壊すと落ちる。これは回帰試験であり、
-  実車evidenceではない。
+  Ackermannは旋回しないことを対比して確認する。狭路centeringは横偏差・曲率符号反転・停止tickを、
+  clutterはクリアランスと停止tickを閾値検査し、候補生成や履歴項を壊すと落ちる。1周期あたりの曲率
+  変化は、閾値が正常時と破壊時を分離できると実測できたoffset通路と同梱設定走行で検査する。
+  これは回帰試験であり、実車evidenceではない。
 
 これは[評価条件](method_comparison.md#nav2-system-benchmark)内の観測であり、未試験環境へ
 確率的・普遍的に一般化しない。

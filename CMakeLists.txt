@@ -99,6 +99,14 @@ if(BUILD_TESTING)
   target_compile_options(bac_core_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacCoreUnit COMMAND bac_core_unit)
 
+  # Differential-drive output reachability stage (behaviour every existing
+  # differential-drive user receives; see CHANGELOG "Forthcoming").
+  add_executable(bac_output_stage_unit test/output_stage_unit.cpp)
+  target_link_libraries(bac_output_stage_unit bac_core)
+  target_compile_options(bac_output_stage_unit PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacOutputStageUnit COMMAND bac_output_stage_unit)
+  set_tests_properties(BacOutputStageUnit PROPERTIES LABELS "regression;diff_drive")
+
   add_executable(bac_diff_drive_motion_model_unit test/diff_drive_motion_model_unit.cpp)
   target_include_directories(bac_diff_drive_motion_model_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(bac_diff_drive_motion_model_unit bac_core)

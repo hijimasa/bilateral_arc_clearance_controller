@@ -11,8 +11,10 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -45,6 +47,90 @@ ackermannParams()
   params.v_samples = 3;
   params.w_samples = 5;
   return params;
+}
+
+/// A vehicle whose SPEED limit, not its turning circle, is what makes the
+/// yaw-rate limit bite: v_max (1.2) > w_max (0.4) * turn_radius_min (0.5), so
+/// |v| / turn_radius_min reaches 2.4 rad/s while limits.w_max allows 0.4. In
+/// the fixture above - and in the shipped yaml, and in every scenario fixture
+/// before R14 - v_max <= w_max * turn_radius_min, so min(w_max, |v| / R)
+/// always picks the radius term and the w_max term is structurally inactive
+/// (R14 M2: `w_max` appeared zero times in this file).
+bac::Params
+yawRateBoundParams()
+{
+  bac::Params params;
+  params.motion_model.type = bac::MotionModelType::ACKERMANN;
+  params.turn_radius_min = 0.5f;
+  params.limits.v_min = 0.0f;
+  params.limits.v_max = 1.2f;
+  params.limits.w_max = 0.4f;
+  params.v_samples = 3;
+  params.w_samples = 5;
+  return params;
+}
+
+/// Every path through the Ackermann curvature bound, exercised where the
+/// `limits.w_max` term is the one that binds.
+void
+testYawRateLimitBinds()
+{
+  const bac::Params params = yawRateBoundParams();
+  const bac::detail::AckermannMotionModel model(params);
+  const float w_max = params.limits.w_max;
+  const float radius_bound_at_v_max = params.limits.v_max / params.turn_radius_min;
+  expect(radius_bound_at_v_max > w_max + 1e-3f,
+         "the fixture is one where limits.w_max, not the turning circle, binds "
+         "(circle allows " + std::to_string(radius_bound_at_v_max) + " rad/s, "
+         "limits.w_max " + std::to_string(w_max) + ")");
+
+  // 1. Candidate generation. Without the w_max term the fastest rows would be
+  //    sampled out to |w| = 2.4 rad/s.
+  const bac::detail::CandidateBatch batch =
+      model.sampleCandidates(bac::Twist2D(1.0f, 0.0f), params.limits.v_max);
+  bool sampled_a_binding_speed = false;
+  for (const bac::Twist2D &command : batch.commands)
+  {
+    expect(std::fabs(command.w) <= w_max + 1e-5f,
+           "no sampled candidate exceeds limits.w_max (v " +
+               std::to_string(command.v) + ", w " + std::to_string(command.w) + ")");
+    if (std::fabs(command.v) / params.turn_radius_min > w_max + 1e-5f)
+    {
+      sampled_a_binding_speed = true;
+    }
+  }
+  expect(sampled_a_binding_speed,
+         "the lattice actually reaches speeds where limits.w_max is the binding "
+         "term, so the bound above is not vacuous");
+
+  // 2. Validity. The turning circle alone would accept this arc.
+  expect(!model.isCommandKinematicallyValid({ 1.2f, 0.6f }),
+         "a yaw rate above limits.w_max is rejected even though the turning "
+         "circle would allow it");
+  expect(model.isCommandKinematicallyValid({ 1.2f, w_max }),
+         "a yaw rate exactly at limits.w_max is accepted");
+
+  // 3. Reachability limiting. The yaw-acceleration window here is
+  //    [0.275, 0.525] rad/s (acc_w * control_period around the current w), so
+  //    w_max = 0.4 sits strictly inside it and the clamp that produces 0.4 can
+  //    only be the curvature bound.
+  const bac::Twist2D limited =
+      model.limitReachableCommand({ 1.2f, w_max }, { 1.2f, radius_bound_at_v_max });
+  expect(near(limited.w, w_max),
+         "limitReachableCommand clamps the yaw rate to limits.w_max (" +
+             std::to_string(limited.w) + ")");
+
+  // 4. Refinement and probes are built from the same bound.
+  for (const bac::Twist2D &command : model.refinementCandidates({ 1.2f, w_max }))
+  {
+    expect(std::fabs(command.w) <= w_max + 1e-5f,
+           "refinement never leaves limits.w_max (w " + std::to_string(command.w) + ")");
+  }
+  for (const bac::Twist2D &probe : model.clearanceProbeCommands(1.2f))
+  {
+    expect(std::fabs(probe.w) <= w_max + 1e-5f,
+           "probe arcs never exceed limits.w_max (w " + std::to_string(probe.w) + ")");
+  }
 }
 
 void
@@ -104,11 +190,28 @@ testCurvatureCandidateLattice()
   }
   expect(!exceeded_cap, "the lattice never exceeds the caller's linear speed cap");
 
+  // The cap is the proximity speed governor's output, which is BELOW
+  // limits.v_max exactly when an obstacle is near; a lattice that used v_max
+  // here would round obstacles at 0.18 m instead of 0.36 m. This is the
+  // coverage the closed-loop min_clearance bound in testObstacleDetour used to
+  // provide before R14 M3 measured it as a tripwire - it is deterministic and
+  // needs no threshold, and it fails 12 times on that mutation.
   const bac::detail::CandidateBatch capped =
       model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.1f);
   for (const bac::Twist2D &command : capped.commands)
   {
     expect(command.v <= 0.1f + 1e-5f, "a lowered speed cap lowers the lattice");
+  }
+  // ... including when the acceleration window alone would allow much more:
+  // current 0.4 m/s + acc_v * window_time (0.2) is 0.6, and limits.v_max is
+  // 0.4, but the caller only allows 0.15.
+  const bac::detail::CandidateBatch hard_capped =
+      model.sampleCandidates(bac::Twist2D(0.4f, 0.0f), 0.15f);
+  for (const bac::Twist2D &command : hard_capped.commands)
+  {
+    expect(command.v <= 0.15f + 1e-5f,
+           "the caller's cap, not limits.v_max, bounds the lattice (v " +
+               std::to_string(command.v) + ")");
   }
 
   // An even w_samples puts no sample at kappa = 0, so the explicit straight
@@ -331,6 +434,58 @@ testInvalidConfiguration()
   expect(near(straight.v, 0.3f) && near(straight.w, 0.0f),
          "a rejected setParams leaves the core driving straight, not full lock");
 
+  // The `limits.w_max` half of the same guard (R14 M2: S2 and S3). Both
+  // layers are checked directly, because routing through makeMotionModel would
+  // let either one alone satisfy the test: the factory validates first, and the
+  // constructor re-checks. `bad` outlives the model, which holds params by
+  // reference.
+  const float infinity = std::numeric_limits<float>::infinity();
+  const float not_a_number = std::numeric_limits<float>::quiet_NaN();
+  const float bad_w_max_values[] = { 0.0f, -0.5f, infinity, not_a_number };
+  for (float bad_w_max : bad_w_max_values)
+  {
+    bac::Params bad = ackermannParams();
+    bad.limits.w_max = bad_w_max;
+    const std::string shown = std::to_string(bad_w_max);
+
+    bool validator_rejected = false;
+    try
+    {
+      bac::detail::validateMotionModelParams(bad);
+    }
+    catch (const std::invalid_argument &)
+    {
+      validator_rejected = true;
+    }
+    expect(validator_rejected,
+           "validateMotionModelParams rejects limits.w_max = " + shown);
+
+    bool constructor_rejected = false;
+    try
+    {
+      const bac::detail::AckermannMotionModel model(bad);
+      (void)model;
+    }
+    catch (const std::invalid_argument &)
+    {
+      constructor_rejected = true;
+    }
+    expect(constructor_rejected,
+           "direct construction rejects limits.w_max = " + shown);
+
+    bool core_rejected = false;
+    try
+    {
+      bac::BacCore rejecting;
+      rejecting.setParams(bad);
+    }
+    catch (const std::invalid_argument &)
+    {
+      core_rejected = true;
+    }
+    expect(core_rejected, "setParams rejects limits.w_max = " + shown);
+  }
+
   bac::Params zero_radius = ackermannParams();
   zero_radius.turn_radius_min = 0.0f;
   bac::BacCore ackermann_core(ackermannParams());
@@ -388,6 +543,7 @@ testCoreValueSemantics()
 int
 main()
 {
+  testYawRateLimitBinds();
   testCurvatureCandidateLattice();
   testProjectionAndRefinement();
   testBodyReachabilityAndFactory();

@@ -11,8 +11,19 @@ Forthcoming
   kinematics belong to the downstream vehicle controller.
 * Add deterministic Ackermann unit and closed-loop regression tests plus an
   installable Ackermann Nav2 configuration.
-* Preserve constant-command curvature when contact rechecking lowers speed,
-  then reapply yaw reachability and contact checks when needed.
+* Change the differential-drive output reachability stage, which every
+  existing differential-drive user receives. When the one-cycle yaw limit
+  changes the selected command and the clamped arc can then no longer stop
+  before contact, the command is decelerated along its own curvature and the
+  yaw limit and contact test are reapplied (up to eight times), instead of
+  holding the yaw rate and lowering the speed once. A command that never
+  becomes admissible brakes translation and retains only a reachable in-place
+  rotation that is itself admissible. Measured per tick against the previous
+  implementation with synchronised state on the shipped ``diff_drive``
+  configuration, 1014 of 200000 sampled ticks differ (0.5070%); every observed
+  difference is conservative (stop, drive slower, or give up the rotation). In
+  closed loop, 9 of 10 worlds are bit-identical and the tenth deviates by at
+  most 2 mm. ``test/output_stage_unit.cpp`` pins the new semantics.
 * Bind the motion model once per configuration instead of per control tick, so
   an unusable kinematic configuration is rejected by ``setParams`` and
   ``process`` neither allocates nor throws.
@@ -23,8 +34,9 @@ Forthcoming
 * Differential drive no longer emits an in-place rotation that was never
   checked for admissibility when the output stage brakes to zero speed. Such a
   tick now reports ``STOP`` rather than ``AVOIDING``; subscribers of
-  ``avoid_status`` may observe the changed value. The 17-scenario harness
-  output is unchanged.
+  ``avoid_status`` may observe the changed value. This is the largest class of
+  the output-stage difference measured above (977 of the 1014 differing
+  ticks). The 17-scenario harness output is unchanged.
 * Extract differential-drive candidate generation, constant-command rollout,
   and in-place rotation policy from ``BacCore`` as a motion-model boundary.
 * Extract constant-curvature bilateral-clearance and exact swept-footprint

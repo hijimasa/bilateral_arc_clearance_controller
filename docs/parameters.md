@@ -93,9 +93,13 @@ road-wheel操舵速度を保証するものではない。加速・操舵過渡�
 `weights.hysteresis`の単位はモデルで異なる。差動二輪では[score per rad/s]でヨーレート差に、
 Ackermannでは[score per 1/m]で曲率差にかかるため、同じ重み値でも実効的な強さは変わる。Ackermann側の
 項の大きさは概ね`2 / turn_radius_min`に比例し、差動二輪側は`2 * w_max`に比例する。同梱の
-Ackermann設定例（`turn_radius_min` 1.0、`w_max` 0.8）では両者がほぼ一致するが、`turn_radius_min`を
-小さくすると`weights.hysteresis`が`weights.clearance`を圧倒しうるので、モデルを変えたら重みは
-評価し直す。
+Ackermann設定例（`turn_radius_min` 1.0、`w_max` 0.8）では前者2.0に対し後者1.6であり、一致しない。
+さらにAckermannの曲率項は、差動二輪のヨーレート項と違って速度とともに縮まない。したがって
+**この重み値はモデル間で移らない**。実測では、差動二輪の既定値0.6を同梱Ackermann設定へそのまま
+入れると経路追従が圧倒され、車両はgoalへ収束せず周回する（`bac_ackermann_scenarios`が落ちる）。
+同梱のAckermann設定例が配布する値は0.3である。`turn_radius_min`を小さくすると
+`weights.hysteresis`が`weights.clearance`を圧倒しうる点も同じ理由によるので、モデルを変えたら
+重みは必ず評価し直す。
 
 重みを変更するときは `bac_scenario_harness --strict` を必ず再実行する。特に
 `weights.balance` と `weights.hysteresis` は狭路中心収束と操舵振動の交換になる。

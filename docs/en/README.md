@@ -21,7 +21,7 @@ This index separates current user documentation from pre-release review records.
 
 - [Public-release readiness checklist](public_release_checklist.md): private preparation, publication gates, and
   post-publication actions
-- [Release review history](release_review_history.md): summary of all ten review rounds, their resolutions,
+- [Release review history](release_review_history.md): summary of every review round, their resolutions,
   and remaining follow-up work
 - [Review-record policy](../reviews/README.en.md): naming, metadata, and update rules
 - `docs/reviews/rNN-YYYY-MM-DD-{findings,response}.md`: Japanese audit records preserving the evidence and

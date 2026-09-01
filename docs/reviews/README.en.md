@@ -51,8 +51,11 @@ instead of dedicated metadata fields.
 5. Prefer symbol names or heading anchors when referring to source. Do not use a mutable `#L123` link as the only
    evidence identifier; include the target commit when needed.
 6. After moving or renaming records, validate relative links across all Markdown files, including READMEs.
+7. The package commit named in the history's `Current state` cannot be written by the response commit itself - a
+   commit cannot contain its own SHA. **Always follow the response commit with a small commit that records that
+   SHA.** R12 L4, R13 L5 and R14 M10 are the same defect recurring because this step did not exist.
 
 ## Current records
 
-See the [release review history](../en/release_review_history.md) for the ten-round summary, final decision, and
+See the [release review history](../en/release_review_history.md) for the per-round summary, final decision, and
 withdrawn statements. If an individual record conflicts with the history, the later review takes precedence.

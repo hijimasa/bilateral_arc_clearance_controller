@@ -19,9 +19,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -68,6 +70,9 @@ struct AckermannRun
   bool stopped_at_end = false;
   float min_clearance = 1e9f;
   float max_abs_curvature = 0.0f;
+  float max_abs_yaw_rate = 0.0f;   // largest commanded |w| (vs limits.w_max)
+  int yaw_bound_ticks = 0;         // ticks where limits.w_max, not the turning
+                                   // circle, is the binding term of the bound
   float min_goal_distance = 1e9f;
   float travelled_distance = 0.0f;   // path length actually driven
   float max_curvature_step = 0.0f;   // largest per-tick commanded curvature jump
@@ -110,6 +115,11 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
     const bac::Result result = core.process(points, path, current);
     const bac::Twist2D command = result.output;
 
+    run.max_abs_yaw_rate = std::max(run.max_abs_yaw_rate, std::fabs(command.w));
+    if (std::fabs(command.v) / params.turn_radius_min > params.limits.w_max)
+    {
+      ++run.yaw_bound_ticks;
+    }
     if (std::fabs(command.v) <= 1e-4f && std::fabs(command.w) > 1e-4f)
     {
       run.offered_in_place_rotation = true;
@@ -299,11 +309,20 @@ testObstacleDetour()
       9.0f, 0.0f, 90.0f);
 
   expect(!run.collided, "Ackermann detour has no body contact");
-  // Not implied by "no contact": a speed governor that ignores its caller's cap
-  // still rounds the obstacle, but at 0.18 m instead of 0.36 m.
-  expect(run.min_clearance > 0.25f,
-         "Ackermann detour keeps physical clearance (" +
-             std::to_string(run.min_clearance) + " m)");
+  // Deliberately no min_clearance bound here (R14 M3). Both sides were swept
+  // over the SAME grid - v_max 0.35/0.40/0.45/0.50/0.55/0.60 x sim_time
+  // 2.0/2.5/3.0/3.5 x footprint.width 0.50/0.60/0.70 x plant curvature_rate
+  // 0.7/1.0/1.5/2.0, 288 runs each, every run contact-free:
+  //   correct controller                        0.144282 - 0.524244 m
+  //   speed governor ignoring the caller's cap  0.117452 - 0.524440 m
+  // The bands overlap completely, so no threshold on this metric separates
+  // correct from broken. The 0.25 m bound R13 M2 placed here was a tripwire:
+  // it failed on the UNMODIFIED controller at v_max 0.45/0.50/0.55/0.60 and
+  // sim_time 3.0/3.5 while the mutation it targeted sits at 0.182466.
+  // That mutation (`v_hi = std::min(params_.limits.v_max, current.v +
+  // window_dv)`, i.e. sampling past the proximity governor's cap) stays dead:
+  // "a lowered speed cap lowers the lattice" in ackermann_motion_model_unit.cpp
+  // fails 12 times on it, deterministically and with no threshold at all.
   expect(run.reached_goal,
          "Ackermann vehicle rounds a blocking obstacle (final " +
              std::to_string(run.final_pose.x) + ", " +
@@ -418,8 +437,21 @@ testSafetyStopHoldsPosition()
   expect(run.travelled_distance < 0.05f,
          "forward-only Ackermann holds position (travelled " +
              std::to_string(run.travelled_distance) + " m)");
-  expect(run.stop_ticks > 0, "the safety stop actually commands a standstill");
-  expect(!run.violated_turning_radius, "the safety stop respects minimum turning radius");
+  // Measured (R14 M6): all 160 ticks of the 8.0 s / 0.05 s run are stop ticks
+  // (stop_ticks = 160, max |curvature| = 0.000000, max |w| = 0.000000), which
+  // is the property this scenario is about. `violated_turning_radius` is only
+  // ever set on the |command.v| > 1e-4 branch, so on the correct controller it
+  // is UNREACHABLE here; asserting it would read as a curvature check that
+  // cannot fail. The two assertions below state what is actually observable
+  // instead - the run is a complete standstill - and they are what a change
+  // that starts moving this vehicle would have to falsify.
+  expect(run.stop_ticks == 160,
+         "the safety stop commands a standstill on every tick (" +
+             std::to_string(run.stop_ticks) + " of 160)");
+  expect(run.max_abs_curvature <= 0.0f,  // a max of absolute values: <= 0 is == 0
+         "the safety stop never commands any curvature at all (max |curvature| " +
+             std::to_string(run.max_abs_curvature) + " 1/m, max |w| " +
+             std::to_string(run.max_abs_yaw_rate) + " rad/s)");
   expect(!run.offered_in_place_rotation, "the safety stop never turns on the spot");
   expect(!run.commanded_reverse, "the safety stop respects limits.v_min = 0");
 }
@@ -450,13 +482,23 @@ testSafetyStopReverseEscape()
   expect(!run.violated_turning_radius,
          "the reverse escape respects minimum turning radius (max curvature " +
              std::to_string(run.max_abs_curvature) + ")");
-  // Measured band: correct behaviour spans 0-17 sign changes over v_max
-  // 0.30-0.60 and plant curvature_rate 0.7-2.0; measuring hysteresis in yaw
-  // rate instead of curvature spans 25-30 at this scenario's v_max. The bound
-  // sits between the two bands, not just above one trajectory.
-  expect(run.curvature_sign_changes <= 22,
-         "the reverse escape does not chatter the steering (" +
-             std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
+  // Deliberately no curvature_sign_changes bound here (R14 M4). R13 swept only
+  // the correct side; sweeping BOTH sides over the same grid - v_max
+  // 0.30/0.40/0.50/0.55/0.60 x plant curvature_rate 0.7/1.0/1.3/1.6/2.0 x
+  // horizon 8/12/20/40 s, 100 runs each - the bands overlap:
+  //          horizon 8 s   12 s     20 s     40 s
+  //   correct   0 - 17    0 - 27   0 - 47   0 - 97
+  //   broken    0 - 51    3 - 86   6 - 156 15 - 331
+  // The broken side reaches 0 (v_max 0.50, curvature_rate >= 1.3) and 11-12
+  // (v_max 0.55) - below the correct side's own maximum - so no bound on the
+  // count separates. Neither does a rate: per second the correct side spans
+  // 0.00-2.42 and the broken side 0.00-8.28; per metre 0.0-59.7 against
+  // 0.0-360.1. Both are also horizon-dependent cumulative counts. The
+  // mutation this bound targeted (hysteresis measured in yaw rate instead of
+  // curvature) stays dead in ackermann_motion_model_unit.cpp, where "the same
+  // arc at a different speed is not a steering change" and "the same yaw rate
+  // at a different speed IS a steering change" both fail on it by
+  // construction.
 }
 
 /// Offset entry into a long narrow corridor. This is where steering quality is
@@ -501,6 +543,12 @@ testNarrowCorridorCentering()
   expect(run.curvature_sign_changes <= 12,
          "narrow corridor traverse does not oscillate (" +
              std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
+  // Note (R14 L7): `stop_ticks == 0` above already asserts that every tick with
+  // a path commands |v| > 1e-4, and this scenario's path source is never empty,
+  // so the next assertion can only fail together with that one. It is kept for
+  // uniformity with the other ten scenarios, not because it adds a failure mode
+  // here; the scenario that makes the no-in-place-rotation property observable
+  // on its own is testRearGoal.
   expect(!run.offered_in_place_rotation, "narrow corridor traverse never turns on the spot");
   expect(!run.violated_turning_radius,
          "narrow corridor traverse respects minimum turning radius (max curvature " +
@@ -547,26 +595,169 @@ testClutterField()
   // where it is robust - the corridor and shipped-configuration runs.
 }
 
+/// `limits.w_max` is the other half of the Ackermann curvature bound
+/// min(w_max, |v| / turn_radius_min). In every other fixture here, in the unit
+/// fixture, and in the shipped yaml, v_max <= w_max * turn_radius_min, so the
+/// radius term always wins and the w_max term is structurally inactive (R14
+/// M2): deleting it from yawRateBound changed nothing anywhere. This vehicle
+/// is fast and tight - v_max 1.2, turn_radius_min 0.5, w_max 0.4 - so the
+/// turning circle would allow 2.4 rad/s and w_max is what actually limits the
+/// commanded yaw rate.
+void
+testYawRateLimitBinds()
+{
+  bac_sim::World world;
+  bac::Params params = ackermannParams(0.5f);
+  params.limits.v_max = 1.2f;
+  params.limits.w_max = 0.4f;
+  bac::BacCore core(params);
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(4.0f, 3.0f),
+      4.0f, 3.0f, 60.0f);
+
+  expect(!run.collided, "the fast tight vehicle has no body contact");
+  expect(run.reached_goal,
+         "the fast tight vehicle reaches its lateral goal (final " +
+             std::to_string(run.final_pose.x) + ", " +
+             std::to_string(run.final_pose.y) + ", closest " +
+             std::to_string(run.min_goal_distance) + ")");
+  expect(!run.offered_in_place_rotation,
+         "the fast tight vehicle never turns on the spot");
+  expect(!run.violated_turning_radius,
+         "the fast tight vehicle respects minimum turning radius (max curvature " +
+             std::to_string(run.max_abs_curvature) + ")");
+  // The bound itself, which is a contract rather than a tuned level: no
+  // configuration may command more yaw rate than limits.w_max. Measured over
+  // v_max 1.0-1.4 x sim_time 2.0-3.0 x plant acc_v 0.65-1.0 x footprint.width
+  // 0.6/0.7 x plant curvature_rate 0.7-2.0 (360 runs, all goal-reaching,
+  // contact-free, spin-free): max |w| spans 0.366667 - 0.400000 and never once
+  // exceeds limits.w_max. Removing the w_max term from yawRateBound spans
+  // 0.359792 - 0.527083 over the same grid and breaks the limit in 240 of the
+  // 360 runs; at this scenario's own parameters it is 0.421667 - 0.440000
+  // against exactly 0.400000 here.
+  expect(run.max_abs_yaw_rate <= params.limits.w_max + 1e-4f,
+         "the commanded yaw rate never exceeds limits.w_max (max |w| " +
+             std::to_string(run.max_abs_yaw_rate) + " vs " +
+             std::to_string(params.limits.w_max) + " rad/s)");
+  // ... and the structural witness that keeps the bound above from being
+  // vacuous: ticks where |v| / turn_radius_min exceeds w_max are ticks where
+  // w_max is the term that limits the yaw rate. Measured 127-157 of 1200 over
+  // the same 360-run grid (0 in every pre-R14 fixture and in the shipped yaml,
+  // which is what made the term untested). A count, not a level: the assertion
+  // is > 0 against a measured minimum of 127.
+  expect(run.yaw_bound_ticks > 0,
+         "limits.w_max is the binding term on at least one tick, so the bound "
+         "above is not vacuous (" + std::to_string(run.yaw_bound_ticks) +
+             " of 1200 ticks)");
+}
+
+/// The tightness probe must reach at least `min_eval_distance` regardless of
+/// candidate speed: `probe_dist = max(v_probe * sim_time, min_eval_distance)`
+/// in BacCore. Dropping that floor makes the controller myopic at low speed -
+/// the source comment says it "creeps into them until the emergency stop" -
+/// and until R13 M1 removed the clutter `max_curvature_step` bound, that bound
+/// was the only thing killing it (R14 M5).
+///
+/// This is a single deterministic tick rather than another closed-loop
+/// threshold: the gate sits in the annulus that the floor reaches and a purely
+/// time-based horizon does not (v_probe * sim_time = 0.4 * 2.5 = 1.0 m,
+/// min_eval_distance = 1.6 m, gate at 1.7 m), and the reference is the same
+/// tick in an empty world rather than an absolute speed.
+void
+testClearanceProbeReach()
+{
+  const bac::Params params = ackermannParams();
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 40; ++i)
+  {
+    path.push_back({ 0.25f * static_cast<float>(i), 0.0f });
+  }
+  const bac_sim::Pose origin{ 0.0f, 0.0f, 0.0f };
+  const bac::Twist2D current(0.2f, 0.0f);
+
+  bac_sim::World gated;
+  gated.addWall(1.7f, 0.6f, 2.0f, 0.6f);
+  gated.addWall(1.7f, -0.6f, 2.0f, -0.6f);
+  bac::BacCore gated_core(params);
+  const bac::Result gated_result = gated_core.process(
+      bac_sim::simulateLidar(gated, origin, 720, params.max_range), path, current);
+
+  bac_sim::World open;
+  bac::BacCore open_core(params);
+  const bac::Result open_result = open_core.process(
+      bac_sim::simulateLidar(open, origin, 720, params.max_range), path, current);
+
+  expect(open_result.output.v > params.limits.v_max - 1e-4f,
+         "the open-field reference tick cruises at limits.v_max (" +
+             std::to_string(open_result.output.v) + " m/s)");
+  // Measured as gated / open commanded speed over gate distance 1.7/1.8 m x
+  // half-gap 0.50/0.55/0.60/0.65/0.70/0.80 m x current speed 0.2/0.3/0.4 m/s
+  // (36 cases per side):
+  //   correct controller                   0.801 - 0.859
+  //   probe horizon without the floor      1.000 in all 36 (the gate is
+  //                                        invisible; full cruise is commanded)
+  // 0.95 separates the two measured bands with margin on both sides.
+  expect(gated_result.output.v < 0.95f * open_result.output.v,
+         "a gate 1.7 m ahead - beyond the speed-scaled horizon but inside "
+         "min_eval_distance - still moderates the cruise (gated " +
+             std::to_string(gated_result.output.v) + " vs open " +
+             std::to_string(open_result.output.v) + " m/s)");
+}
+
 /// The configuration users copy must be the configuration the suite defends,
 /// so this READS config/bac_controller_ackermann.yaml rather than mirroring it.
 /// A hand-copied duplicate would let a yaml edit ship a configuration that
 /// fails this very suite while every test stays green.
 ///
+/// The guard is bound to the FILE, not to a list of key names (R14 H1): every
+/// entry the file contains must be either consumed by this scenario or named
+/// in kAllowedUnconsumedKeys below, keys may not repeat, and the values this
+/// scenario uses must live in the FollowPath block. A key the guard neither
+/// reads nor allows - and a second block that re-declares the same leaves
+/// further down the file - is a failure, not a silent pass.
+///
 /// Deliberately a minimal `key: value` reader, not a YAML library: the file is
 /// a flat parameter block, and the point is to have no build dependency
 /// between the regression suite and the configuration it defends.
-std::map<std::string, std::string>
+struct ConfigEntry
+{
+  std::string value;
+  std::string section;  // the block header this entry appeared under
+  int line = 0;
+};
+
+struct ConfigFile
+{
+  bool readable = false;
+  std::map<std::string, ConfigEntry> entries;  // `key: value` lines
+  std::vector<std::string> sections;           // `key:` lines (block headers)
+  std::vector<std::string> duplicates;         // any key that appears twice
+};
+
+ConfigFile
 readConfigFile(const std::string &path)
 {
-  std::map<std::string, std::string> values;
+  ConfigFile config;
   std::ifstream file(path);
   if (!file)
   {
-    return values;
+    return config;
   }
+  config.readable = true;
+
+  const auto trim = [](std::string &text) {
+    const std::size_t first = text.find_first_not_of(" \t\r\n");
+    const std::size_t last = text.find_last_not_of(" \t\r\n");
+    text = (first == std::string::npos) ? std::string{} : text.substr(first, last - first + 1);
+  };
+
+  std::set<std::string> seen;
+  std::string section;
   std::string line;
+  int line_number = 0;
   while (std::getline(file, line))
   {
+    ++line_number;
     const std::size_t comment = line.find('#');
     if (comment != std::string::npos)
     {
@@ -579,19 +770,66 @@ readConfigFile(const std::string &path)
     }
     std::string key = line.substr(0, colon);
     std::string value = line.substr(colon + 1);
-    const auto trim = [](std::string &text) {
-      const std::size_t first = text.find_first_not_of(" \t\r\n");
-      const std::size_t last = text.find_last_not_of(" \t\r\n");
-      text = (first == std::string::npos) ? std::string{} : text.substr(first, last - first + 1);
-    };
     trim(key);
     trim(value);
-    if (!key.empty() && !value.empty())
+    if (key.empty())
     {
-      values[key] = value;
+      continue;
+    }
+    if (!seen.insert(key).second)
+    {
+      // Last-wins would let a healthy duplicate block mask a broken one.
+      config.duplicates.push_back(key + " (line " + std::to_string(line_number) + ")");
+      continue;
+    }
+    if (value.empty())
+    {
+      config.sections.push_back(key);
+      section = key;
+      continue;
+    }
+    ConfigEntry entry;
+    entry.value = value;
+    entry.section = section;
+    entry.line = line_number;
+    config.entries.emplace(key, entry);
+  }
+  return config;
+}
+
+/// Keys the file may carry without this scenario consuming them. Deliberately
+/// small and deliberately explicit: three block headers plus the Nav2- and
+/// adapter-level settings that have no effect on the closed-loop geometry
+/// measured here. Everything else in the file must be read by
+/// shippedExampleParams(), so a new parameter cannot enter the shipped
+/// configuration without either being exercised by this suite or being added
+/// to this list on purpose.
+const char *const kAllowedUnconsumedKeys[] = {
+    "controller_server",           // block header
+    "ros__parameters",             // block header
+    "FollowPath",                  // block header: the plugin block itself
+    "controller_frequency",        // Nav2 control loop rate, not a BAC parameter
+    "controller_plugins",          // Nav2 plugin list
+    "plugin",                      // plugin class name (checked by the docker gate)
+    "scan_topic",                  // BacController scan adapter, not BacCore
+    "scan_timeout",                //   "
+    "scan_downsample",             //   "
+    "scan_min_points",             //   "
+    "scan_inf_is_valid",           //   "
+    "diagnostics_publish_period",  // diagnostics only
+};
+
+bool
+isAllowedUnconsumed(const std::string &key)
+{
+  for (const char *allowed : kAllowedUnconsumedKeys)
+  {
+    if (key == allowed)
+    {
+      return true;
     }
   }
-  return values;
+  return false;
 }
 
 bool g_shipped_config_loaded = false;
@@ -599,9 +837,9 @@ bool g_shipped_config_loaded = false;
 bac::Params
 shippedExampleParams()
 {
-  const std::map<std::string, std::string> config = readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
+  const ConfigFile config = readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
   bac::Params params;
-  if (config.empty())
+  if (!config.readable || config.entries.empty())
   {
     expect(false, "the shipped Ackermann configuration is readable at "
                       BAC_ACKERMANN_CONFIG_PATH);
@@ -609,21 +847,54 @@ shippedExampleParams()
   }
 
   bool complete = true;
+  std::set<std::string> consumed;
+
+  // A quoted or unit-suffixed number is a type error for the real parameter
+  // loader, and `.inf` / `nan` are values no vehicle can drive; report the KEY
+  // rather than letting std::stof abort the process without one (R14 L5).
+  const auto parseNumber = [](const std::string &text, float &out) {
+    const char *begin = text.c_str();
+    char *end = nullptr;
+    const float parsed = std::strtof(begin, &end);
+    if (end == begin || *end != '\0' || !std::isfinite(parsed))
+    {
+      return false;
+    }
+    out = parsed;
+    return true;
+  };
+
   const auto number = [&](const char *key, float &field) {
-    const auto found = config.find(key);
-    if (found == config.end())
+    consumed.insert(key);
+    const auto found = config.entries.find(key);
+    if (found == config.entries.end())
     {
       expect(false, std::string("the shipped configuration declares ") + key);
       complete = false;
       return;
     }
-    field = std::stof(found->second);
+    if (!parseNumber(found->second.value, field))
+    {
+      expect(false, std::string("the shipped configuration gives ") + key +
+                        " a plain finite number (got '" + found->second.value +
+                        "' on line " + std::to_string(found->second.line) + ")");
+      complete = false;
+    }
   };
 
-  const auto model = config.find("motion_model.type");
-  if (model == config.end() || model->second != "ackermann")
+  consumed.insert("motion_model.type");
+  const auto model = config.entries.find("motion_model.type");
+  std::string model_value = model == config.entries.end() ? std::string{} : model->second.value;
+  // The loader takes this one as a string, so `"ackermann"` is legal YAML for
+  // it - unlike a quoted number above, which is a type error there too.
+  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
   {
-    expect(false, "the shipped configuration selects the Ackermann model");
+    model_value = model_value.substr(1, model_value.size() - 2U);
+  }
+  if (model_value != "ackermann")
+  {
+    expect(false, "the shipped configuration selects the Ackermann model (got '" +
+                      model_value + "')");
     complete = false;
   }
   params.motion_model.type = bac::MotionModelType::ACKERMANN;
@@ -652,6 +923,37 @@ shippedExampleParams()
   number("weights.squeeze", params.weights.squeeze);
   number("sim_time", params.sim_time);
 
+  // --- the guard is on the FILE, not on the key list above (R14 H1) ---
+  for (const std::string &duplicate : config.duplicates)
+  {
+    expect(false, "the shipped configuration declares " + duplicate +
+                      " only once; a repeated key means a second block is "
+                      "masking the one users copy");
+  }
+  for (const std::string &section : config.sections)
+  {
+    expect(isAllowedUnconsumed(section),
+           "the shipped configuration block '" + section +
+               "' is one this suite knows about");
+  }
+  for (const auto &entry : config.entries)
+  {
+    if (consumed.count(entry.first) != 0U)
+    {
+      expect(entry.second.section == "FollowPath",
+             "the shipped configuration keeps " + entry.first +
+                 " inside the FollowPath block users copy (found under '" +
+                 entry.second.section + "' on line " +
+                 std::to_string(entry.second.line) + ")");
+      continue;
+    }
+    expect(isAllowedUnconsumed(entry.first),
+           "the shipped configuration key " + entry.first + " (line " +
+               std::to_string(entry.second.line) +
+               ") is exercised by this suite or listed in "
+               "kAllowedUnconsumedKeys on purpose");
+  }
+
   g_shipped_config_loaded = complete;
   return params;
 }
@@ -674,9 +976,14 @@ testShippedExampleConfiguration()
       9.0f, 0.0f, 90.0f);
 
   expect(!run.collided, "the shipped Ackermann example has no body contact");
-  expect(run.min_clearance > 0.20f,
-         "the shipped Ackermann example keeps physical clearance (" +
-             std::to_string(run.min_clearance) + " m)");
+  // Deliberately no min_clearance bound here either (R14 M3/M9). Same world,
+  // same 288-run grid, this time on the shipped geometry and weights:
+  //   correct controller                        0.175166 - 0.478241 m
+  //   speed governor ignoring the caller's cap  0.117090 - 0.478012 m
+  // The bands overlap, and the 0.20 m bound R13 M2 added here fails on benign
+  // yaml edits the file itself invites (`limits.v_max: 1.4` -> 0.171 m), which
+  // is exactly the contradiction R14 M9 records. What defends this file is the
+  // guard above plus the goal/contact/turning-circle assertions below.
   expect(run.reached_goal,
          "the shipped Ackermann example reaches its goal rather than orbiting "
          "(closest " + std::to_string(run.min_goal_distance) + " m, travelled " +
@@ -717,6 +1024,9 @@ testTurningRadiusBinds()
   expect(tight_run.max_abs_curvature > 1.0f / 3.0f + 1e-3f,
          "the tight vehicle uses curvature beyond the wide vehicle's limit (tight " +
              std::to_string(tight_run.max_abs_curvature) + ")");
+  // R14 L7: the eleventh scenario was the only one without this assertion.
+  expect(!tight_run.offered_in_place_rotation && !wide_run.offered_in_place_rotation,
+         "neither vehicle turns on the spot to reach the lateral goal");
 }
 
 }  // namespace
@@ -730,6 +1040,8 @@ main()
   testDeadEndStopsWithoutRotating();
   testRearGoal();
   testTurningRadiusBinds();
+  testYawRateLimitBinds();
+  testClearanceProbeReach();
   testShippedExampleConfiguration();
   testSafetyStopHoldsPosition();
   testSafetyStopReverseEscape();

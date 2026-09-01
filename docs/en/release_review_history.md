@@ -10,6 +10,9 @@ English | [日本語](../release_review_history.md)
   landed in `3521226`; R13 reviewed through `3bd88cb` (the scenario expansion closing R11 L5)
 - Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); neither R11 nor R12 re-ran the benchmark
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
+- R14 (reviewing `112eb35` on `feature/ackermann-motion-model`) has had its 1 High and 10 Medium findings
+  addressed. The verdict is **Conditional Go** and merging to main was concluded to be permissible. The 9 Low
+  findings move to the next cycle (L5, L7 and L9 were partly closed)
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
@@ -52,19 +55,25 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R11 | Ackermann support: half-applied rejected configuration, documentation diverged from code, vacuous test assertions | Validate-before-commit `setParams`, corrected the abandoned-design documentation, assertions that kill nine mutants | [Findings, ja](../reviews/r11-2026-09-01-findings.md) / [Response, ja](../reviews/r11-2026-09-01-response.md) |
 | R12 | Shipped Ackermann config failed the regression suite, abandoned-design wording in the public header, replaced differential-drive adapter coverage | Retuned the example weight and added a shipped-configuration scenario, corrected the header, restored the default-configuration test and split the Ackermann one out | [Findings, ja](../reviews/r12-2026-09-01-findings.md) / [Response, ja](../reviews/r12-2026-09-01-response.md) |
 | R13 | Shipped-configuration guard not tied to the yaml, thresholds fitted to one trajectory, speed governor uncovered closed-loop, wrong scenario count | The scenario now reads the yaml, thresholds re-derived from a perturbation band (the one with no separating value was dropped), clearance assertions added, count corrected to 11 | [Findings, ja](../reviews/r13-2026-09-01-findings.md) / [Response, ja](../reviews/r13-2026-09-01-response.md) |
+| R14 | Merge-readiness for main. Unpinned behaviour change in the differential-drive output stage, shipped-configuration guard bound per key rather than per file, bands behind the two new thresholds, the `limits.w_max` term never exercised, documentation that misstates the tests | Output-stage semantics pinned by a unit regression, guard bound to the file, two non-separating thresholds removed with their coverage moved to unit tests, a `w_max`-binding fixture added, documentation corrected | [Findings, ja](../reviews/r14-2026-09-01-findings.md) / [Response, ja](../reviews/r14-2026-09-01-response.md) |
 
 ## Current validation contract
 
-- Plain CMake Release build and seven CTest entries; eight CTest entries in ROS 2 Jazzy/Nav2 with the adapter
+- Plain CMake Release build and eight CTest entries; nine CTest entries in ROS 2 Jazzy/Nav2 with the adapter
   tests, which run the default (differential-drive) configuration while a separate test covers the Ackermann
   parameter plumbing. The two assert opposite halves of the same tick, so a misresolved `motion_model.type`
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Core unit/property tests, 17 closed-loop scenarios, and 11 Ackermann closed-loop scenarios. The Ackermann set
-  includes a run of the shipped example configuration, and its narrow-corridor and clutter scenarios bound
-  lateral error, curvature sign changes, per-cycle curvature change and stop ticks. The thresholds were chosen
-  to separate the measured correct behaviour from the measured broken behaviour
+- Core unit/property tests, 17 closed-loop scenarios, and 13 Ackermann closed-loop scenarios. The Ackermann set
+  includes a run of the shipped example configuration; its narrow-corridor scenario bounds lateral error,
+  curvature sign changes and stop ticks, its clutter scenario bounds clearance and stop ticks, and per-cycle
+  curvature change is bounded in the offset-corridor and shipped-configuration runs. Thresholds are derived by
+  sweeping **both** the correct and the broken band over the same perturbation grid; where no separating value
+  exists no threshold is asserted, and the coverage moves to a threshold-free unit test instead (R14 M3, M4)
+- A unit regression pinning the differential-drive output reachability stage (`test/output_stage_unit.cpp`):
+  curvature-preserving deceleration, repeated correction, and an exact `(0,0)` with `STOP` when no rotation is
+  admissible (R14 M1)
 - Motion-model unit tests for differential drive and Ackermann; the Ackermann set covers the candidate lattice,
   the turning-radius bound, refinement, clearance probes, the deadband, a runtime model switch, and that the core
   stays usable after a rejected configuration

@@ -97,9 +97,13 @@ executing those limits.
 `weights.hysteresis` carries different units per model: [score per rad/s] against yaw-rate change for
 differential drive, [score per 1/m] against curvature change for Ackermann. The same weight value therefore has a
 different effective strength. The Ackermann term scales roughly with `2 / turn_radius_min` and the
-differential-drive one with `2 * w_max`; they happen to coincide for the shipped Ackermann example
-(`turn_radius_min` 1.0, `w_max` 0.8), but a small `turn_radius_min` can let `weights.hysteresis` dominate
-`weights.clearance`. Re-tune the weights after changing the motion model.
+differential-drive one with `2 * w_max`, which for the shipped Ackermann example (`turn_radius_min` 1.0,
+`w_max` 0.8) is 2.0 against 1.6 - they do not coincide. The Ackermann curvature term also does not shrink with
+speed the way the differential-drive yaw-rate term does, so **this weight does not transfer between models**.
+Measured: putting the differential-drive default of 0.6 into the shipped Ackermann configuration overpowers path
+following and the vehicle orbits instead of closing on the goal (`bac_ackermann_scenarios` fails). The shipped
+Ackermann example ships 0.3. A small `turn_radius_min` can let `weights.hysteresis` dominate
+`weights.clearance` for the same reason, so always re-tune the weights after changing the motion model.
 
 Always re-run `bac_scenario_harness --strict` after changing weights. In particular, `weights.balance` and
 `weights.hysteresis` trade narrow-passage centering against steering oscillation.

@@ -10,6 +10,8 @@
   に入っている。R13は `3bd88cb`（シナリオ拡充、R11 L5の対応）までを対象とする
 - benchmark: `026a17a`（正準）/ `4fed3d2`（公平条件比較・ablation）。R11・R12ともbenchmarkを再実行していない
 - 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
+- R14（`feature/ackermann-motion-model`、`112eb35` を対象）はHigh 1件・Medium 10件に対応済み。判定は
+  **Conditional Go**で、main統合そのものは可と結論した。Low 9件は次cycleへ送る（L5・L7・L9は部分的に閉じた）
 
 全13回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、
 第11回のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、
@@ -47,17 +49,22 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 | R11 | Ackermann対応: 却下設定の半適用、文書と実装の乖離、テストの空振り | 検証先行によるsetParams例外安全、廃案設計記述の訂正、ミューテーション9件を殺すテスト追加 | [指摘](reviews/r11-2026-09-01-findings.md) / [対応](reviews/r11-2026-09-01-response.md) |
 | R12 | 同梱Ackermann設定が回帰試験に不合格、公開ヘッダの廃案設計記述、差動二輪adapter coverageの置換 | 設定例の重み訂正と同梱設定シナリオ追加、ヘッダ訂正、既定設定試験の復帰とAckermann試験の分離 | [指摘](reviews/r12-2026-09-01-findings.md) / [対応](reviews/r12-2026-09-01-response.md) |
 | R13 | 同梱設定ガードがyamlに未接続、単一軌道に合わせた閾値、速度governorの閉ループ未被覆、シナリオ数の誤り | シナリオがyamlを直接読む、閾値を摂動帯から再導出（分離不能な1件は削除）、クリアランス検査追加、11本へ訂正 | [指摘](reviews/r13-2026-09-01-findings.md) / [対応](reviews/r13-2026-09-01-response.md) |
+| R14 | main統合可否の判断。差動二輪出力段の未固定な挙動変化、同梱設定ガードのキー単位結合、新規2閾値の帯、`limits.w_max` 項の未検証、文書の虚偽記述 | 出力段の意味論を単体回帰で固定、ガードをファイルへ結合、分離しない閾値2件を削除し被覆を単体へ移設、`w_max` 拘束fixture追加、文書訂正 | [指摘](reviews/r14-2026-09-01-findings.md) / [対応](reviews/r14-2026-09-01-response.md) |
 
 ## 現在の検証contract
 
-- plain CMake Release buildとCTest 7件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 8件。
+- plain CMake Release buildとCTest 8件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 9件。
   adapter結合試験は既定設定（差動二輪）で実行し、Ackermannのパラメータ配線は独立した試験で検査する。
   両者は同一tickの表と裏を検査するため、`motion_model.type`の誤解決は必ずどちらかが検出する。
   Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
   実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
-- core unit / property testと17 closed-loop scenarios、Ackermann 11 closed-loop scenarios。Ackermann側は
-  同梱設定例そのものを走らせる試験を含み、狭路centeringとclutterでは横偏差・曲率符号反転・1周期あたり
-  曲率変化・停止tickを閾値検査する。閾値は正常時と破壊時の実測値を分離するように決めている。
+- core unit / property testと17 closed-loop scenarios、Ackermann 13 closed-loop scenarios。Ackermann側は
+  同梱設定例そのものを走らせる試験を含み、狭路centeringでは横偏差・曲率符号反転・停止tickを、
+  clutterではクリアランスと停止tickを閾値検査する。1周期あたりの曲率変化はoffset通路と同梱設定走行で
+  検査する。閾値は正常時と破壊時の帯を**同一の摂動格子で両側とも掃引して**決めており、分離する値が
+  存在しないと実測された検査は閾値を置かず、対象の被覆は閾値の要らない単体試験へ移している（R14 M3・M4）。
+- 差動二輪の出力reachability段の意味論を固定する単体回帰（`test/output_stage_unit.cpp`）。曲率保存減速、
+  複数回の反復、旋回不可時に厳密な`(0,0)`と`STOP`を出すことを検査する（R14 M1）。
 - 差動二輪とAckermannのmotion model単体試験。Ackermann側は候補格子、旋回半径拘束、refinement、
   clearance probe、deadband、実行時のmodel切替、却下設定後の可用性を検査する。
 - scan投影・plan変換/pruneの単体試験、およびplugin lifecycle、TF error、scan fallback、speed limit、
