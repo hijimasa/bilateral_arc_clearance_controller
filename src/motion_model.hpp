@@ -74,8 +74,14 @@ public:
                               const Twist2D &previous) const = 0;
   virtual Twist2D limitReachableCommand(const Twist2D &current,
                                         const Twist2D &desired) const = 0;
-  virtual Twist2D withLinearSpeed(const Twist2D &command,
-                                  float linear_speed) const = 0;
+  /**
+   * @param speed Non-negative SPEED along the direction of travel. The
+   *   direction itself is the model's business: a non-holonomic model recovers
+   *   it from the sign of `command.v`, and a holonomic one from the whole
+   *   velocity vector. Handing the caller's sign convention down here reversed
+   *   a holonomic command whose forward component happened to be zero.
+   */
+  virtual Twist2D withLinearSpeed(const Twist2D &command, float speed) const = 0;
   virtual Twist2D applyCommandDeadband(const Twist2D &command) const = 0;
 };
 

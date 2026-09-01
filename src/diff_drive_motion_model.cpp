@@ -199,16 +199,19 @@ DiffDriveMotionModel::limitReachableCommand(const Twist2D &current,
 }
 
 Twist2D
-DiffDriveMotionModel::withLinearSpeed(const Twist2D &command, float linear_speed) const
+DiffDriveMotionModel::withLinearSpeed(const Twist2D &command, float speed) const
 {
-  if (std::fabs(command.v) <= 1e-3f || std::fabs(linear_speed) <= 1e-3f)
+  // The direction of travel is the sign of the forward component; `speed` is a
+  // magnitude.
+  const float signed_speed = (command.v >= 0.0f ? 1.0f : -1.0f) * std::fabs(speed);
+  if (std::fabs(command.v) <= 1e-3f || std::fabs(speed) <= 1e-3f)
   {
-    return { linear_speed, 0.0f };
+    return { signed_speed, 0.0f };
   }
   // Preserve the curvature of the reachable arc that was checked for
   // contact. Keeping w fixed here would tighten w/v as speed is reduced and
   // silently replace the selected geometric path.
-  return { linear_speed, command.w * linear_speed / command.v };
+  return { signed_speed, command.w * signed_speed / command.v };
 }
 
 Twist2D

@@ -99,11 +99,17 @@ The published benchmark observations below use the differential-drive model.
   driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
   rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
   degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is gated to passages — bounded on both
-  sides and open straight ahead. Measured mean lateral error at an entry offset of 0.30 m, for corridor widths
-  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, is 0.013 / 0.014 / 0.012 / 0.012 / 0.016 m against 0.025 / 0.026 / 0.027 /
-  0.037 / 0.035 m for differential drive in the same corridors; at 1.0 m it stops at the mouth. Rounding an
-  isolated obstacle it commands a peak |yaw rate| of 0.036 rad/s where differential drive needs 0.313. It passes
-  seventeen deterministic tests, nine unit and eight closed-loop.
+  sides and open straight ahead. **The measurement conditions are stated here** because R15 M12 found that a table
+  without them did not reproduce on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH
+  models, a 7 m corridor, `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
+  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m is 0.0124 / 0.0143 / 0.0123 / 0.0119 / 0.0155 m against 0.0253 / 0.0261 / 0.0272
+  / 0.0367 / 0.0348 m for differential drive, a factor of 1.8 to 3.1. Lowering `avoid_margin.side` stops the
+  bilateral term from engaging at all: in a 1.6 m corridor the mean error is 0.0119 m at 0.9 and 0.139 m at 0.5,
+  with the boundary between 0.70 and 0.75 and 0.8 reaching essentially the same value as 0.9.
+  **The entry offset has a limit.** A 1.2 m corridor is traversed from 0.30 to 0.40 m of offset but not at
+  0.45 m, where the vehicle holds at the mouth, and a 1.1 m corridor is routed around from 0.36 m. Neither is a
+  contact. Rounding an isolated obstacle it commands a peak |yaw rate| of 0.036 rad/s where differential drive
+  needs 0.313. It passes twenty-two deterministic tests, ten unit and twelve closed-loop.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle
   detour, dead-end stop, rear goal, turning-radius binding, yaw-rate-limit binding, clearance-probe reach, the
   shipped example configuration, safety stop (forward-only), safety stop (reverse escape), narrow-corridor

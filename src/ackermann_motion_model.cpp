@@ -252,14 +252,16 @@ AckermannMotionModel::limitReachableCommand(const Twist2D &current,
 }
 
 Twist2D
-AckermannMotionModel::withLinearSpeed(const Twist2D &command, float linear_speed) const
+AckermannMotionModel::withLinearSpeed(const Twist2D &command, float speed) const
 {
-  if (std::fabs(linear_speed) <= 1e-3f)
+  if (std::fabs(speed) <= 1e-3f)
   {
     return { 0.0f, 0.0f };
   }
   // Preserve the selected curvature across collision-driven speed reduction.
-  return commandFromCurvature(linear_speed, curvature(command));
+  // `speed` is a magnitude; a reversing command keeps reversing.
+  const float signed_speed = (command.v >= 0.0f ? 1.0f : -1.0f) * std::fabs(speed);
+  return commandFromCurvature(signed_speed, curvature(command));
 }
 
 Twist2D

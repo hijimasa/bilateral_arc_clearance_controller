@@ -164,7 +164,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The 17 differential-drive closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator,
-and unicycle kinematics. A separate 13-scenario Ackermann regression, and an 8-scenario holonomic one, drive a plant whose speed is
+and unicycle kinematics. A separate 13-scenario Ackermann regression, and a 12-scenario holonomic one, drive a plant whose speed is
 acceleration-limited and whose curvature slews at a bounded rate, so the commands are checked against a vehicle
 that cannot change its steering instantly. It includes the shipped example configuration, so the file users copy
 is the file the suite defends.
@@ -314,8 +314,9 @@ obstacles just in front of the bumper.
   controller must map the twist to road-wheel steering, for example
   `delta = atan(wheelbase * angular.z / linear.x)`. BAC does not model wheelbase, road-wheel angle, or steering
   rate, and does not read measured steering-joint feedback.
-- A forward-only differential-drive or Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind
-  the vehicle. BAC brakes instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery. The
+- A forward-only ACKERMANN configuration (`limits.v_min = 0`) cannot reach a goal behind the vehicle. BAC brakes
+  instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery. Differential drive solves it
+  by rotating on the spot - `test/scenarios.cpp`'s `goal_behind` runs exactly that configuration - and the
   holonomic model reaches it by translating.
 - Only the holonomic model honours the goal ORIENTATION Nav2 carries on the last plan pose. `diff_drive` and
   `ackermann` steer with yaw and cannot choose their orientation independently of their direction of travel, so

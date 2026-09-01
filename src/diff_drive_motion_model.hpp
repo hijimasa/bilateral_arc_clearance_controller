@@ -41,7 +41,7 @@ public:
   float commandChange(const Twist2D &command, const Twist2D &previous) const override;
   Twist2D limitReachableCommand(const Twist2D &current,
                                 const Twist2D &desired) const override;
-  Twist2D withLinearSpeed(const Twist2D &command, float linear_speed) const override;
+  Twist2D withLinearSpeed(const Twist2D &command, float speed) const override;
   Twist2D applyCommandDeadband(const Twist2D &command) const override;
 private:
   const Params &params_;

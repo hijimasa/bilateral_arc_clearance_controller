@@ -154,7 +154,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 差動二輪の17本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を
-含みます。別のAckermann回帰試験13本と全方向回帰試験8本では、速度が加速度制限され曲率が有限速度でしか変化しないplantを使い、
+含みます。別のAckermann回帰試験13本と全方向回帰試験12本では、速度が加速度制限され曲率が有限速度でしか変化しないplantを使い、
 操舵を即座に変えられない車両に対して指令を検証します。同梱の設定例そのものを走らせる試験を含むため、
 利用者がコピーするファイルが試験の対象になります。
 
@@ -289,8 +289,10 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
   これはnav2 MPPIの`AckermannConstraints`と同じ粒度です。下位の車両controllerで、たとえば
   `delta = atan(wheelbase * angular.z / linear.x)`により実舵角へ変換する必要があります。BACはwheelbase、
   実舵角、操舵速度をモデル化せず、操舵jointの実測feedbackも読みません。
-- 前進のみの設定（`limits.v_min = 0`）では、差動二輪とAckermannは車体後方のgoalに到達できません。BACは
-  その場旋回を捏造せず停止し、切り返しはNav2側のrecoveryに委ねます。全方向モデルは横移動で到達できます。
+- 前進のみの設定（`limits.v_min = 0`）で車体後方のgoalに到達できないのは**Ackermannだけ**です。BACは
+  その場旋回を捏造せず停止し、切り返しはNav2側のrecoveryに委ねます。差動二輪はその場旋回で解決し
+  （`test/scenarios.cpp` の `goal_behind` がまさにこの設定を走らせています）、全方向モデルは横移動で
+  到達します。
 - Nav2が渡すgoal姿勢に従えるのは全方向モデルだけです。ヨーで操舵する差動二輪とAckermannは方位を
   進行方向と独立に選べないため、goal姿勢を無視して経路接線に従います。
 - 全方向モデルの横移動は車体側方のセンサ被覆を前提とします。前方のみのLiDARでは、斜行先が見えません。

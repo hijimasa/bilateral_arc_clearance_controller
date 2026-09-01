@@ -111,8 +111,9 @@ configureに失敗する。全体は install対象の[全方向設定例](../con
 base frameへ変換してcoreへ渡す。goalの手前1.5 mから姿勢規範を経路接線からgoal姿勢へフェードさせ、
 0.5 m以内では完全にgoal姿勢が支配する。ヨーが操舵入力ではないため、**位置を横移動で詰めながら要求
 された方位を保って到着できる**。実測のヨー誤差は、goal姿勢0.0 / -1.2 / 1.5 / 2.5 / -2.8 / 3.0 radに
-対して0.009〜0.102 radであり、Nav2の`SimpleGoalChecker`既定の`yaw_goal_tolerance` 0.25 radの内側に
-収まる。
+対して0.006〜0.060 radであり、Nav2の`SimpleGoalChecker`既定の`yaw_goal_tolerance` 0.25 radの内側に
+収まる（測定条件: `heading_gain` 1.5、goalは(4, 2)、開所）。`heading_gain`を下げると誤差は増える。
+同条件の差動二輪は0.541〜2.943 radで、要求に関わらず接近方向が残した姿勢で終わる。
 
 goal姿勢が渡されるのは、pruning後の経路にgoal自身が残っている場合に限る（`max_range`で打ち切られた
 先の末尾は通過点であり、その向きはgoal姿勢ではない）。`heading_gain: 0.0`とすれば機体方位を固定した

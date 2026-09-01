@@ -355,6 +355,235 @@ testHeadingRegulatorTracksTheTangent()
   expectLimitsRespected(run, "off-axis goal");
 }
 
+/// THE post-condition of the whole controller: the twist it emits must be able
+/// to stop, along its own direction of travel, before it touches anything.
+/// Asserted on the OUTPUT rather than on the lattice, over randomised worlds
+/// AND randomised parameters, so it holds however the command was arrived at.
+/// R15 H1/H2 were both found this way - the v = 0 row of the lattice never
+/// reached the contact test, and the stopping distance was computed from the
+/// forward component - and no per-scenario threshold could have seen either.
+/// It then found a third: the emergency fallback kept a residual lateral
+/// velocity and a residual yaw whose COMBINED arc could no longer stop, which
+/// gating the lateral component alone did not catch.
+///
+/// The margin is re-derived here independently of the core's own support
+/// function, so a mistake in that function shows up as a violation rather than
+/// cancelling out.
+///
+/// Bodies already INSIDE their own margin are excluded: there the documented
+/// behaviour is escape - motion away from the offending point - and no speed
+/// could satisfy a stopping test. That regime is not covered by any assertion
+/// here; see the R15 response for why no separating criterion was found.
+void
+testEmittedCommandCanAlwaysStop()
+{
+  unsigned seed = 20260902u;
+  const auto next = [&seed]() {
+    seed = seed * 1664525u + 1013904223u;
+    return static_cast<float>((seed >> 8) & 0xFFFFu) / 65535.0f;
+  };
+
+  int violations = 0;
+  int moving = 0;
+  std::string worst;
+  for (int trial = 0; trial < 6000; ++trial)
+  {
+    bac::Params params;
+    params.motion_model.type = bac::MotionModelType::OMNI;
+    params.limits.v_max = 0.2f + next() * 0.6f;
+    params.limits.vy_max = 0.1f + next() * 0.6f;
+    params.limits.v_min = 0.0f;
+    params.limits.w_max = 0.5f + next() * 1.5f;
+    // Acceleration limits far above anything one control period can need, so
+    // limitReachableCommand is a no-op and the emitted twist IS the candidate
+    // the scorer admitted. That isolates the candidate stage, which is where
+    // R15 H1 and H2 lived. The output stage pulls a command back TOWARDS the
+    // current velocity and re-checks it against a window capped by the
+    // remaining path, so mixing the two regimes here would test a different
+    // contract than the one this assertion states.
+    params.limits.acc_v = 1000.0f;
+    params.limits.acc_w = 1000.0f;
+    params.control_period = 0.05f;
+    params.stop_decel = 0.4f + next() * 1.6f;
+    params.brake_reaction_time = next() * 0.25f;
+    params.footprint.front = 0.2f + next() * 0.3f;
+    params.footprint.rear = -(0.2f + next() * 0.3f);
+    params.footprint.width = 0.3f + next() * 0.5f;
+    params.safety_margin.front = 0.05f + next() * 0.3f;
+    params.safety_margin.rear = params.safety_margin.front;
+    params.safety_margin.side = 0.05f + next() * 0.3f;
+    params.avoid_margin.side = 0.4f + next() * 0.6f;
+    params.sim_time = 1.5f + next() * 2.0f;
+    params.heading_gain = next() * 3.0f;
+    bac::BacCore core(params);
+
+    std::vector<bac::Point2D> points;
+    const int clusters = 1 + static_cast<int>(next() * 3.0f);
+    for (int c = 0; c < clusters; ++c)
+    {
+      const float bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+      const float distance = 0.35f + next() * 1.3f;
+      for (int k = -14; k <= 14; ++k)
+      {
+        const float spread = 0.05f * static_cast<float>(k);
+        points.push_back({ distance * std::cos(bearing) - spread * std::sin(bearing),
+                           distance * std::sin(bearing) + spread * std::cos(bearing) });
+      }
+    }
+    const float path_bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    std::vector<bac::Point2D> path;
+    for (int i = 1; i <= 20; ++i)
+    {
+      const float r = 0.25f * static_cast<float>(i);
+      path.push_back({ r * std::cos(path_bearing), r * std::sin(path_bearing) });
+    }
+    // Drawn from the set the controller itself can command, so the first tick
+    // is not asked to recover from a state it would never have produced
+    // (limits.v_min is 0 here, so there is no reverse to start from).
+    bac::Twist2D current(next() * params.limits.v_max,
+                         (next() * 2.0f - 1.0f) * params.limits.w_max,
+                         (next() * 2.0f - 1.0f) * params.limits.vy_max);
+
+    const int ticks = 1 + static_cast<int>(next() * 3.0f);
+    for (int tick = 0; tick < ticks; ++tick)
+    {
+      const bac::Result result = core.process(points, path, current);
+      const bac::Twist2D out = result.output;
+      current = out;
+      const float speed = out.speed();
+      if (speed <= 1e-3f)
+      {
+        continue;
+      }
+      ++moving;
+
+      const float horizon = std::max(speed * params.sim_time, params.min_eval_distance);
+      const bac::ArcEvaluation eval =
+          core.evaluateArcWindows(points, out, horizon, horizon);
+      if (eval.blocking_s >= 1e9f)
+      {
+        continue;
+      }
+      const float ux = out.v / speed;
+      const float uy = out.vy / speed;
+      const float margin =
+          ((ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux) +
+          params.safety_margin.side * std::fabs(uy);
+      const float free_run = eval.blocking_s - margin;
+      if (free_run <= 0.0f)
+      {
+        continue;  // already inside the margin: the escape regime, see above
+      }
+      const float decel = std::max(params.stop_decel, 0.1f);
+      const float needed =
+          speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+      if (free_run <= needed - 1e-4f)
+      {
+        if (violations == 0)
+        {
+          worst = "trial " + std::to_string(trial) + " out (" + std::to_string(out.v) + ", " +
+                  std::to_string(out.w) + ", " + std::to_string(out.vy) + ") speed " +
+                  std::to_string(speed) + ", free run " + std::to_string(free_run) +
+                  ", needs " + std::to_string(needed);
+        }
+        ++violations;
+      }
+    }
+  }
+
+  expect(moving > 3000,
+         "the sweep actually produced moving commands, so the check is not vacuous (" +
+             std::to_string(moving) + ")");
+  expect(violations == 0,
+         "every emitted twist can stop before contact along its own direction of travel (" +
+             std::to_string(violations) + " violations; first: " + worst + ")");
+}
+
+/// The v = 0 ROW of the lattice still translates - sideways - so it has to be
+/// contact-checked like any other candidate. R15 H1 found it scored as a
+/// turn-then-go rotation instead, which routed every pure-crab candidate around
+/// the contact test and the stopping test.
+///
+/// Here forward motion is blocked by a wall exactly at footprint.front plus the
+/// front margin, and the path leads sideways into a second wall. Every command
+/// that progresses along that path either advances into the wall ahead or
+/// slides into the one abeam, so the correct answer is to hold station.
+/// Measured: with the row contact-checked the vehicle commands 0.0000 m/s at
+/// abeam distances 0.50-0.95 m; scoring it as a rotation instead commands
+/// 0.1800 m/s at every one of them.
+void
+testLateralRowIsContactChecked()
+{
+  bac::Params params = omniParams();
+  params.limits.v_max = 0.6f;
+  params.limits.vy_max = 0.6f;
+  params.limits.acc_v = 1000.0f;  // isolate the candidate stage from reachability
+  params.limits.acc_w = 1000.0f;
+  params.heading_gain = 0.0f;
+  bac::BacCore core(params);
+
+  std::vector<bac::Point2D> points;
+  for (int k = -40; k <= 40; ++k)
+  {
+    points.push_back({ 0.05f * static_cast<float>(k), 0.70f });  // abeam
+    points.push_back({ 0.55f, 0.05f * static_cast<float>(k) });  // ahead, at the margin
+  }
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 20; ++i)
+  {
+    path.push_back({ 0.0f, 0.25f * static_cast<float>(i) });
+  }
+
+  const bac::Result result = core.process(points, path, bac::Twist2D(0.0f, 0.0f, 0.3f));
+  expect(result.output.speed() <= 1e-3f,
+         "a sideways candidate that cannot clear the wall ahead of it is rejected, not "
+         "emitted (speed " + std::to_string(result.output.speed()) + " m/s, twist " +
+             std::to_string(result.output.v) + ", " + std::to_string(result.output.w) + ", " +
+             std::to_string(result.output.vy) + ")");
+}
+
+/// The emergency layer decides on the direction of travel too. R15 H3 found it
+/// reading `current.v` only in three places at once: the zone extended along
+/// +x alone, a body crabbing at limits.vy_max counted as stationary and skipped
+/// the hard brake, and the escape gate projected candidates onto emergency_x
+/// while ignoring emergency_y.
+///
+/// A wall abeam at 0.52 m with the body sliding towards it at 0.3 m/s is inside
+/// the zone once the zone follows the direction of travel, and outside it when
+/// the zone only grows forwards. Measured over abeam distances 0.28-0.60 m,
+/// the generalised layer stops at every distance up to 0.52 m and the
+/// forward-axis one is already moving at 0.52 m (vy 0.2600), with
+/// min_proximity_norm 0.9187 against 1.3500 at that distance.
+void
+testEmergencyLayerSeesLateralMotion()
+{
+  bac::Params params = omniParams();
+  params.limits.v_max = 0.4f;
+  params.limits.vy_max = 0.4f;
+  params.heading_gain = 0.0f;  // hold the heading so the geometry stays fixed
+  bac::BacCore core(params);
+
+  std::vector<bac::Point2D> points;
+  for (int k = -6; k <= 6; ++k)
+  {
+    points.push_back({ 0.05f * static_cast<float>(k), 0.52f });
+  }
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 20; ++i)
+  {
+    path.push_back({ 0.0f, 0.25f * static_cast<float>(i) });  // straight at the wall
+  }
+
+  const bac::Result result = core.process(points, path, bac::Twist2D(0.0f, 0.0f, 0.3f));
+  expect(result.min_proximity_norm < 1.0f,
+         "a wall the body is sliding into is inside the emergency zone (normalised " +
+             std::to_string(result.min_proximity_norm) + ")");
+  expect(result.output.speed() <= 1e-3f,
+         "and the sideways motion is stopped rather than continued (speed " +
+             std::to_string(result.output.speed()) + " m/s, vy " +
+             std::to_string(result.output.vy) + ")");
+}
+
 /// Nav2 asks for a goal POSE, not a goal position. A model that steers with yaw
 /// cannot honour the orientation - its heading is whatever direction it had to
 /// travel in - but a holonomic body can hold the requested orientation while
@@ -418,9 +647,25 @@ testZeroGainHoldsHeadingAndStillArrives()
 
 /// A corridor barely wider than the body. This is where pointing INTO the gap
 /// beats crabbing towards it: a crabbing rectangle sweeps wider than a straight
-/// one, so at this width a purely lateral correction does not fit. Measured on
-/// this scenario, a controller that corrects only by crabbing does not get in
-/// at all (it stops at x = 1.83), which is what the traverse assertion pins.
+/// one, so at this width a purely lateral correction does not fit.
+///
+/// Swept over the ENTRY OFFSET rather than run at one. R15 M3 found that a
+/// single offset made the kill for the centering term a tripwire on one grid
+/// cell, and R15 H4 found a body contact at offset 0.40 that the single-offset
+/// fixture could not see. The grid is recorded here so a later round can tell
+/// what was and was not covered:
+///   entry offset 0.30, 0.36, 0.40 m x corridor width 1.2 m
+/// Measured after the R15 fixes, holonomic mean lateral error over that grid is
+/// 0.0117-0.0143 m with zero contacts, against 0.0349-0.0357 m for the
+/// differential-drive reference. Removing the centering bias fails every cell,
+/// not just one.
+///
+/// The grid stops at 0.40 because that is where the capability stops. At 0.45 m
+/// of entry offset in this fixture the vehicle does not get in at all (it holds
+/// at x = 1.544), and in a 1.1 m corridor it routes around the outside from
+/// 0.36 m. Neither is a contact - the R15 H4 contact is gone - but both are
+/// real limits, and docs/algorithm.md states them rather than letting the grid
+/// imply they do not exist.
 void
 testNarrowCorridorCentering()
 {
@@ -431,36 +676,45 @@ testNarrowCorridorCentering()
   window.center_y = 0.0f;
   window.x_from = 3.0f;
   window.x_to = 9.0f;
+  // Inside the corridor at all: half-width 0.60 less the body half-width 0.25.
+  // Without this a run that goes AROUND the corridor satisfies both the
+  // traverse and the sample-count checks (R15 M6).
+  constexpr float kInsideCorridor = 0.35f;
 
-  bac::BacCore reference(diffDriveReferenceParams());
-  const OmniRun diff_run =
-      runOmni(reference, world, { 0.0f, 0.30f, 0.0f },
-              bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
-  bac::BacCore core(omniParams());
-  const OmniRun run = runOmni(core, world, { 0.0f, 0.30f, 0.0f },
-                              bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
+  for (const float offset : { 0.30f, 0.36f, 0.40f })
+  {
+    const std::string at = "entry offset " + std::to_string(offset) + " m";
+    bac::BacCore reference(diffDriveReferenceParams());
+    const OmniRun diff_run =
+        runOmni(reference, world, { 0.0f, offset, 0.0f },
+                bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
+    bac::BacCore core(omniParams());
+    const OmniRun run = runOmni(core, world, { 0.0f, offset, 0.0f },
+                                bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
 
-  expect(!run.collided, "corridor centering has no body contact");
-  expect(run.lateral_samples > 0,
-         "the vehicle entered the corridor, so the centering metrics are not vacuous (" +
-             std::to_string(run.lateral_samples) + " samples)");
-  expect(run.final_pose.x > 9.0f,
-         "the holonomic vehicle traverses a corridor 1.2 m wide (final x " +
-             std::to_string(run.final_pose.x) + ")");
-  expect(diff_run.final_pose.x > 9.0f,
-         "the differential-drive reference traverses it too, so the comparison below is "
-         "between two solutions (final x " + std::to_string(diff_run.final_pose.x) + ")");
-  // A comparison, not a threshold. Measured over entry offset 0.20-0.40 m x
-  // corridor width 1.1-1.8 m: the holonomic runs hold 0.012-0.016 m of mean
-  // lateral error and the differential-drive runs 0.025-0.037 m, so the two
-  // bands do not touch. Stating it as a ratio also survives the regime change
-  // at wide corridors, where the bilateral balance term gates off for BOTH
-  // models because the far side counts as open.
-  expect(run.mean_abs_lateral < diff_run.mean_abs_lateral,
-         "the holonomic vehicle holds the centerline better than the differential-drive "
-         "reference (mean |y| " + std::to_string(run.mean_abs_lateral) + " vs " +
-             std::to_string(diff_run.mean_abs_lateral) + " m)");
-  expectLimitsRespected(run, "corridor");
+    expect(!run.collided, at + ": corridor centering has no body contact");
+    expect(run.lateral_samples > 0,
+           at + ": the vehicle reached the measurement window (" +
+               std::to_string(run.lateral_samples) + " samples)");
+    expect(run.max_abs_lateral < kInsideCorridor,
+           at + ": the vehicle went THROUGH the corridor rather than around it (max |y| " +
+               std::to_string(run.max_abs_lateral) + " m)");
+    expect(run.final_pose.x > 9.0f,
+           at + ": the holonomic vehicle traverses a corridor 1.2 m wide (final x " +
+               std::to_string(run.final_pose.x) + ")");
+    expect(diff_run.final_pose.x > 9.0f,
+           at + ": the differential-drive reference traverses it too, so the comparison "
+                "below is between two solutions (final x " +
+               std::to_string(diff_run.final_pose.x) + ")");
+    // A comparison, not a threshold: the two bands measured over the grid above
+    // do not touch (0.0117-0.0143 against 0.0349-0.0357).
+    expect(run.mean_abs_lateral < diff_run.mean_abs_lateral,
+           at + ": the holonomic vehicle holds the centerline better than the "
+                "differential-drive reference (mean |y| " +
+               std::to_string(run.mean_abs_lateral) + " vs " +
+               std::to_string(diff_run.mean_abs_lateral) + " m)");
+    expectLimitsRespected(run, "corridor at " + at);
+  }
 }
 
 /// An obstacle inside the safety polygon. The correct behaviour is to hold
@@ -656,6 +910,9 @@ main()
   testSidestepsInsteadOfYawing();
   testRearGoalWithoutAligningFirst();
   testHeadingRegulatorTracksTheTangent();
+  testEmittedCommandCanAlwaysStop();
+  testLateralRowIsContactChecked();
+  testEmergencyLayerSeesLateralMotion();
   testGoalOrientationIsHeld();
   testZeroGainHoldsHeadingAndStillArrives();
   testNarrowCorridorCentering();

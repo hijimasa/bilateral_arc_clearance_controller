@@ -4,6 +4,18 @@ Changelog for package bilateral_arc_clearance_controller
 
 Forthcoming
 -----------
+* Generalise the DIRECTION OF TRAVEL through the whole controller, not just the
+  geometry. The candidate stopping test, the contact horizon, the braking
+  margin, the emergency zone and its escape gate, and the deceleration ramp all
+  computed from the forward component alone, so a purely lateral command was
+  admitted with zero braking distance, measured against ``safety_margin.front``
+  instead of ``.side``, classified as stationary by the emergency layer, and
+  could be reversed outright by the deceleration sign. Each is now computed on
+  the velocity vector. ``withLinearSpeed`` takes a non-negative SPEED and the
+  model recovers the direction, rather than the caller deriving a sign from the
+  forward component. Differential drive and Ackermann are unaffected: every one
+  of these reduces to the previous expression when ``vy`` is zero, and their
+  outputs stay byte-identical.
 * Add a holonomic (omnidirectional) motion model, ``motion_model.type: omni``.
   Lateral velocity is the avoidance dimension, not yaw rate: the candidate
   lattice is forward speed x lateral speed, the same size as the
@@ -23,9 +35,10 @@ Forthcoming
   choose its orientation independently of its direction of travel - so
   differential drive and Ackermann ignore it and follow the path tangent
   exactly as before. Measured yaw error over goal orientations 0.0, -1.2, 1.5,
-  2.5, -2.8 and 3.0 rad is 0.009-0.102 rad, inside the 0.25 rad
-  ``yaw_goal_tolerance`` that Nav2's ``SimpleGoalChecker`` defaults to; the
-  differential-drive reference spans 0.959-1.741 rad in the same runs.
+  2.5, -2.8 and 3.0 rad, at ``heading_gain`` 1.5 with the goal at (4, 2), is
+  0.006-0.060 rad, inside the 0.25 rad ``yaw_goal_tolerance`` that Nav2's
+  ``SimpleGoalChecker`` defaults to; the differential-drive reference spans
+  0.541-2.943 rad over the same set.
 * Generalise the swept-trajectory evaluator from "velocity is along body +x" to
   an arbitrary constant body twist. The centre of rotation moves from
   ``(0, v / w)`` to ``(-vy / w, v / w)`` and the footprint's leading, trailing

@@ -117,7 +117,9 @@ adapter transforms its orientation into the base frame and passes it to the core
 the path tangent to the goal orientation over the last 1.5 m and is fully governed by it within 0.5 m. Because
 yaw is not the steering input, the vehicle **arrives holding the requested orientation while lateral velocity
 closes the remaining position error**. Measured yaw error for goal orientations of 0.0, -1.2, 1.5, 2.5, -2.8 and
-3.0 rad is 0.009-0.102 rad, inside the 0.25 rad `yaw_goal_tolerance` that Nav2's `SimpleGoalChecker` defaults to.
+3.0 rad is 0.006-0.060 rad, inside the 0.25 rad `yaw_goal_tolerance` that Nav2's `SimpleGoalChecker` defaults to.
+The conditions matter and are stated: `heading_gain` 1.5, the goal at (4, 2), open space. A lower gain gives a
+larger error. The differential-drive reference spans 0.541-2.943 rad over the same set.
 
 The orientation is passed on only when the goal itself survives pruning: pruning stops at `max_range`, and the
 orientation of an intermediate waypoint is a path tangent, not a goal. `heading_gain: 0.0` holds the heading

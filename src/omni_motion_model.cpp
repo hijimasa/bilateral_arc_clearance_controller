@@ -64,17 +64,25 @@ OmniMotionModel::sampleCandidates(const Twist2D &current, float linear_speed_cap
 
   // Lateral authority is bounded by the configured cap AND by what one
   // acceleration window can reach from the measured lateral velocity.
+  // The lateral authority is bounded by the configured cap, by one
+  // acceleration window, AND by the proximity governor's cap. The last one
+  // matters on its own: the norm cap below is widened to |limits.v_min| so a
+  // reverse candidate survives the governor the way it does for differential
+  // drive, and without this line that widening would hand the same licence to
+  // the lateral axis - which has no reverse-escape rationale and is the
+  // direction of largest swept width (R15 M1).
+  const float lateral_cap =
+      std::min(params_.limits.vy_max, std::fabs(linear_speed_cap));
   const float vy_reach_lo = current.vy - window_dv;
   const float vy_reach_hi = current.vy + window_dv;
-  const float vy_lo = std::max(-params_.limits.vy_max, vy_reach_lo);
-  const float vy_hi = std::min(params_.limits.vy_max, vy_reach_hi);
+  const float vy_lo = std::max(-lateral_cap, vy_reach_lo);
+  const float vy_hi = std::min(lateral_cap, vy_reach_hi);
 
   std::vector<float> lateral_speeds;
   const int vy_samples = std::max(3, params_.vy_samples);
   if (vy_hi <= vy_lo)
   {
-    lateral_speeds.push_back(std::max(-params_.limits.vy_max,
-                                      std::min(params_.limits.vy_max, current.vy)));
+    lateral_speeds.push_back(std::max(-lateral_cap, std::min(lateral_cap, current.vy)));
   }
   else
   {
@@ -273,18 +281,20 @@ OmniMotionModel::limitReachableCommand(const Twist2D &current,
 }
 
 Twist2D
-OmniMotionModel::withLinearSpeed(const Twist2D &command, float linear_speed) const
+OmniMotionModel::withLinearSpeed(const Twist2D &command, float requested) const
 {
   const float speed = command.speed();
-  if (speed <= 1e-3f || std::fabs(linear_speed) <= 1e-3f)
+  if (speed <= 1e-3f || std::fabs(requested) <= 1e-3f)
   {
-    return { linear_speed, 0.0f, 0.0f };
+    // No direction of travel to preserve: brake to a standstill rather than
+    // inventing one.
+    return { 0.0f, 0.0f, 0.0f };
   }
   // Scale the WHOLE twist, yaw included, so the trajectory that was checked
   // for contact keeps its geometry. Holding the yaw rate while slowing would
   // tighten the circle and silently replace the checked path - the same
   // failure the differential-drive model avoids by preserving curvature.
-  const float scale = linear_speed / speed;
+  const float scale = std::fabs(requested) / speed;
   return { command.v * scale, command.w * scale, command.vy * scale };
 }
 

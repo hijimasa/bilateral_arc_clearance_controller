@@ -114,25 +114,47 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   ProximityResult result;
 
   const float stop_decel = std::max(params.stop_decel, 0.1f);
-  const float brake_distance = current.v * current.v / (2.0f * stop_decel) +
-                               std::fabs(current.v) * params.brake_reaction_time;
+  // The zone extends along the DIRECTION OF TRAVEL. A holonomic body moving
+  // sideways has the same braking distance as one moving forward, and both
+  // the zone and the speed-dependent margin scaling have to see it (R15 H3):
+  // computing either from `current.v` alone classifies a body crabbing at
+  // vy_max as stationary.
+  const float current_speed = current.speed();
+  const float brake_distance = current_speed * current_speed / (2.0f * stop_decel) +
+                               current_speed * params.brake_reaction_time;
   const float body_x_min = params.footprint.rear;
   const float body_x_max = params.footprint.front;
   float       zone_x_min = body_x_min;
   float       zone_x_max = body_x_max;
-  if (current.v >= 0.0f)
+  const float body_y_half_base = params.footprint.width / 2.0f;
+  float       zone_y_min = -body_y_half_base;
+  float       zone_y_max = body_y_half_base;
+  if (current_speed > 1e-6f)
   {
-    zone_x_max += brake_distance;
-  }
-  else
-  {
-    zone_x_min -= brake_distance;
+    const float ux = current.v / current_speed;
+    const float uy = current.vy / current_speed;
+    if (ux >= 0.0f)
+    {
+      zone_x_max += brake_distance * ux;
+    }
+    else
+    {
+      zone_x_min += brake_distance * ux;
+    }
+    if (uy >= 0.0f)
+    {
+      zone_y_max += brake_distance * uy;
+    }
+    else
+    {
+      zone_y_min += brake_distance * uy;
+    }
   }
 
-  const float body_y_half = params.footprint.width / 2.0f;
+  const float body_y_half = body_y_half_base;
   const float speed_scale = std::min(
       1.0f, params.margin_scale_floor +
-                (1.0f - params.margin_scale_floor) * std::fabs(current.v) /
+                (1.0f - params.margin_scale_floor) * current_speed /
                     std::max(params.margin_scale_speed, 1e-3f));
   const float margin_front = std::max(params.safety_margin.front * speed_scale, 1e-3f);
   const float margin_rear  = std::max(params.safety_margin.rear * speed_scale, 1e-3f);
@@ -150,10 +172,18 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
       dx_normalized = (zone_x_min - point.x) / margin_rear;
     }
 
+    // The lateral half of the emergency zone extends the same way the
+    // longitudinal half does, so a point directly abeam of a crabbing body is
+    // as urgent as one ahead of a body driving forward. Identical to the
+    // previous fixed half-width whenever vy == 0.
     float dy_normalized = 0.0f;
-    if (std::fabs(point.y) > body_y_half)
+    if (point.y > zone_y_max)
     {
-      dy_normalized = (std::fabs(point.y) - body_y_half) / margin_side;
+      dy_normalized = (point.y - zone_y_max) / margin_side;
+    }
+    else if (point.y < zone_y_min)
+    {
+      dy_normalized = (zone_y_min - point.y) / margin_side;
     }
     const float normalized =
         std::sqrt(dx_normalized * dx_normalized + dy_normalized * dy_normalized);
@@ -432,9 +462,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   bool escape_only = false;
   if (proximity.emergency)
   {
-    if (std::fabs(current.v) > 0.05f || std::fabs(current.w) > 0.1f)
+    if (current.speed() > 0.05f || std::fabs(current.w) > 0.1f)
     {
-      // Braking has priority while moving.
+      // Braking has priority while moving - in ANY direction. Testing
+      // `current.v` alone classified a body crabbing at limits.vy_max as
+      // stationary and skipped the hard emergency brake (R15 H3).
       current_status_ = Status::STOP;
       result.output   = Twist2D(0.0f, 0.0f);
       result.status   = Status::STOP;
@@ -786,7 +818,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // probe, this is inactive in the open and inactive in front of an obstacle,
   // where the candidate search does the avoiding.
   constexpr float kCenteringHeading = 0.6f;  // [rad] at full imbalance
-  float pose_reference = relative_path_heading + tightness * kCenteringHeading * probe_center_bias;
+  // Wrapped: past +-pi the proportional error stops being the short way round,
+  // and the body would take the long way while inside a narrow passage - the
+  // opposite of what this term exists for (R15 M9).
+  float pose_reference =
+      wrapAngle(relative_path_heading + tightness * kCenteringHeading * probe_center_bias);
 
   // Arriving in the orientation the goal asks for. A model that steers with
   // yaw cannot choose its orientation independently of where it is going, so
@@ -877,6 +913,22 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float lead_margin   = params_.safety_margin.front;
   float stop_decel    = std::max(params_.stop_decel, 0.1f);
 
+  // Margin facing the direction of travel. This is the support function of the
+  // margin box in that direction, so a forward command sees safety_margin.front
+  // exactly, a reversing one safety_margin.rear, and a purely lateral one
+  // safety_margin.side. Only a holonomic model can produce the blended case.
+  const auto travel_margin = [&](const Twist2D &command) {
+    const float speed = command.speed();
+    if (speed <= 1e-6f)
+    {
+      return lead_margin;
+    }
+    const float ux = command.v / speed;
+    const float uy = command.vy / speed;
+    const float along = (ux >= 0.0f) ? lead_margin * ux : params_.safety_margin.rear * -ux;
+    return along + params_.safety_margin.side * std::fabs(uy);
+  };
+
   float best_score = -FLT_MAX;
   Twist2D best_cmd(0.0f, 0.0f);
   float best_clearance = 0.0f, best_path_cost = 0.0f;
@@ -896,8 +948,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       if (escape_only)
       {
-        const bool rotation = std::fabs(v) <= 1e-3f && std::fabs(w) > 1e-3f;
-        const bool towards  = v * proximity.emergency_x > 1e-6f;  // closing on the point
+        const bool rotation = command.speed() <= 1e-3f && std::fabs(w) > 1e-3f;
+        // Closing on the offending point, measured on the whole velocity
+        // vector. Projecting only `v` onto `emergency_x` let a pure crab move
+        // straight at a point directly abeam of the body (R15 H3).
+        const bool towards =
+            v * proximity.emergency_x + command.vy * proximity.emergency_y > 1e-6f;
         if (rotation || towards)
         {
           return;  // emergency standstill: only motion away from the point, or stop
@@ -937,7 +993,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
 
       float clearance, lateral_fraction, clear_left, clear_right;
-      if (std::fabs(v) <= 1e-3f)
+      // Not translating at all. `command.v` alone is the wrong test for a
+      // holonomic candidate: the v = 0 ROW of the lattice still translates,
+      // sideways, and scoring it as a turn-then-go rotation would route the
+      // whole family of pure-crab candidates around the contact test and the
+      // stopping test below (R15 H1).
+      if (command.speed() <= 1e-3f)
       {
         if (std::fabs(w) > 1e-3f && !rotation_admissible)
         {
@@ -992,12 +1053,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         {
           return;
         }
-        float dist_block = std::max(std::fabs(v) * params_.sim_time, params_.min_eval_distance);
+        const float candidate_speed = command.speed();
+        float dist_block = std::max(candidate_speed * params_.sim_time, params_.min_eval_distance);
         dist_block       = std::min(dist_block, remaining_path);
         float dist_clear = dist_block;
         if (std::fabs(w) > 1e-4f)
         {
-          float radius = std::fabs(v) / std::fabs(w);
+          float radius = candidate_speed / std::fabs(w);
           dist_clear   = std::min(dist_clear, radius * params_.eval_angle_max);
           if (params_.eval_lateral_max < radius)
           {
@@ -1011,9 +1073,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           // DWA admissibility: able to stop (keeping the directional safety
           // margin) before first contact. blocking_s already accounts for
           // the body extent (it is the body-origin travel at contact).
-          float margin   = (v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
+          // Along the DIRECTION OF TRAVEL, not the forward axis. Computing
+          // either from `v` alone admits a pure crab with zero braking
+          // distance and the front margin instead of the side one (R15 H2).
+          float margin   = travel_margin(command);
           float free_run = eval.blocking_s - margin;
-          float needed   = v * v / (2.0f * stop_decel) + std::fabs(v) * params_.brake_reaction_time;
+          float needed   = candidate_speed * candidate_speed / (2.0f * stop_decel) +
+                         candidate_speed * params_.brake_reaction_time;
           if (free_run <= needed)
           {
             return;
@@ -1111,21 +1177,31 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float out_vy = best_cmd.vy;
   const auto out_command = [&]() { return Twist2D(out_v, out_w, out_vy); };
 
-  // Margin facing the direction of travel. This is the support function of the
-  // margin box in that direction, so a forward command sees safety_margin.front
-  // exactly, a reversing one safety_margin.rear, and a purely lateral one
-  // safety_margin.side. Only a holonomic model can produce the blended case.
-  const auto travel_margin = [&](const Twist2D &command) {
+  // DWA admissibility of one emitted twist: can it stop, along its own
+  // direction of travel and keeping the directional margin, before it touches
+  // anything? One definition, used by the emergency fallback below.
+  const auto stoppable = [&](const Twist2D &command) {
     const float speed = command.speed();
-    if (speed <= 1e-6f)
+    if (speed <= 1e-3f)
     {
-      return lead_margin;
+      return true;
     }
-    const float ux = command.v / speed;
-    const float uy = command.vy / speed;
-    const float along = (ux >= 0.0f) ? lead_margin * ux : params_.safety_margin.rear * -ux;
-    return along + params_.safety_margin.side * std::fabs(uy);
+    float dist_block = std::max(speed * params_.sim_time, params_.min_eval_distance);
+    dist_block = std::min(dist_block, remaining_path);
+    const ArcEvaluation ev =
+        evaluateArcWindows(filtered_points, command, 0.0f, dist_block);
+    if (ev.blocking_s >= FLT_MAX)
+    {
+      return true;
+    }
+    const float free_run = ev.blocking_s - travel_margin(command);
+    const float a = std::max(params_.stop_decel, 0.1f);
+    const float tr = params_.brake_reaction_time;
+    const float v_safe =
+        free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
+    return speed <= v_safe + 1e-4f;
   };
+
 
   // Output reachability: the plant cannot jump to arbitrary yaw rate or road-
   // wheel angle in one cycle. If the reachable arc needs a lower speed to
@@ -1180,9 +1256,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
 
       output_admissible = false;
-      const float safe_speed = (out_v > 0.0f ? 1.0f : -1.0f) * v_safe;
+      // A SPEED, not a signed forward speed. The direction of travel is the
+      // model's business: deriving a sign from out_v alone flipped both the
+      // lateral velocity and the yaw rate for a v = 0 winner, turning the
+      // vehicle around instead of slowing it down (R15 H2 derivative).
       const Twist2D curvature_preserving =
-          motion_model->withLinearSpeed(out_command(), safe_speed);
+          motion_model->withLinearSpeed(out_command(), v_safe);
       const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
       if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f &&
           std::fabs(next.vy - out_vy) <= 1e-5f)
@@ -1202,8 +1281,29 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       const Twist2D braking =
           motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f, 0.0f));
       out_v = 0.0f;
-      out_vy = braking.vy;
-      out_w = (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
+      // What one deceleration window leaves of the previous motion: a residual
+      // rotation and a residual sideways slide. Both are commands like any
+      // other, so the pair is kept only while the COMBINED twist passes the
+      // same stopping test. Testing the lateral component on its own is not
+      // enough - the retained yaw bends it onto an arc, and it was that arc,
+      // not the straight slide, that could no longer stop (R15 H3).
+      const float braking_w =
+          (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
+      if (stoppable(Twist2D(0.0f, braking_w, braking.vy)))
+      {
+        out_vy = braking.vy;
+        out_w = braking_w;
+      }
+      else if (stoppable(Twist2D(0.0f, braking_w, 0.0f)))
+      {
+        out_vy = 0.0f;
+        out_w = braking_w;
+      }
+      else
+      {
+        out_vy = 0.0f;
+        out_w = 0.0f;
+      }
     }
   }
   const Twist2D finalized = motion_model->applyCommandDeadband(out_command());

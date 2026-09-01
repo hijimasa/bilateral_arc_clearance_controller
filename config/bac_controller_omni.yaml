@@ -45,8 +45,11 @@ controller_server:
       # engages only where BOTH sides are closer than
       # footprint.width / 2 + avoid_margin.side. With 0.5 here that cap is
       # 0.75 m, so an ordinary 1.6 m corridor is "open" on the far side and the
-      # term never fires for this 0.5 m wide body. Measured: raising it to 0.9
-      # takes mean lateral error in a 1.6 m corridor from 0.156 m to 0.016 m.
+      # term never fires for this 0.5 m wide body. Measured in a 1.6 m corridor
+      # at an entry offset of 0.30 m: mean lateral error 0.139 m at 0.5 and
+      # 0.0119 m at 0.9. The engagement boundary is between 0.70 and 0.75; 0.8
+      # already reaches essentially the same value as 0.9, so 0.9 is a margin
+      # over that boundary rather than a required value.
       avoid_margin.side: 0.9
 
       limits.v_max: 0.4

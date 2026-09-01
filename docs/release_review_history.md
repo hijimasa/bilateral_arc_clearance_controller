@@ -14,9 +14,9 @@
 - 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
 - R14（`feature/ackermann-motion-model`、`112eb35` を対象）はHigh 1件・Medium 10件に対応済み。判定は
   **Conditional Go**で、main統合そのものは可と結論した。Low 9件は次cycleへ送る（L5・L7・L9は部分的に閉じた）
-- R15（`feature/omni-motion-model`、`616746b` を対象）は判定 **Hold**、対応未了。統合してはならない。
-  幾何と既存2モデルへの影響は健全だが、High 4件が安全に関わる不変条件の破れである。この節が記載する
-  `評価対象package` と検証contractは、`616746b` を含まない `main`（`2488248`）についてのものである
+- R15（`feature/omni-motion-model`、`616746b` を対象）はHigh 4件と統合前条件のMedium、および修正を
+  守るためのMediumに対応済み。判定は対応前が **Hold**。残るMedium 6件とLow全件は次cycleへ送る。
+  この節が記載する `評価対象package` は `main`（`2488248`）のものであり、全方向モデルはまだ入っていない
 
 全13回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、
 第11回のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、
@@ -55,7 +55,7 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 | R12 | 同梱Ackermann設定が回帰試験に不合格、公開ヘッダの廃案設計記述、差動二輪adapter coverageの置換 | 設定例の重み訂正と同梱設定シナリオ追加、ヘッダ訂正、既定設定試験の復帰とAckermann試験の分離 | [指摘](reviews/r12-2026-09-01-findings.md) / [対応](reviews/r12-2026-09-01-response.md) |
 | R13 | 同梱設定ガードがyamlに未接続、単一軌道に合わせた閾値、速度governorの閉ループ未被覆、シナリオ数の誤り | シナリオがyamlを直接読む、閾値を摂動帯から再導出（分離不能な1件は削除）、クリアランス検査追加、11本へ訂正 | [指摘](reviews/r13-2026-09-01-findings.md) / [対応](reviews/r13-2026-09-01-response.md) |
 | R14 | main統合可否の判断。差動二輪出力段の未固定な挙動変化、同梱設定ガードのキー単位結合、新規2閾値の帯、`limits.w_max` 項の未検証、文書の虚偽記述 | 出力段の意味論を単体回帰で固定、ガードをファイルへ結合、分離しない閾値2件を削除し被覆を単体へ移設、`w_max` 拘束fixture追加、文書訂正 | [指摘](reviews/r14-2026-09-01-findings.md) / [対応](reviews/r14-2026-09-01-response.md) |
-| R15 | 全方向モデルのmain統合可否。`vy`が「進行方向」を判断する4か所へ行き渡っておらず、純横移動指令で接触判定・DWA制動判定・emergency層の不変条件が不成立。廊下進入で接触1件。実測値6件が再現せず | 未対応（判定 **Hold**） | [指摘](reviews/r15-2026-09-02-findings.md) |
+| R15 | 全方向モデルのmain統合可否。`vy`が「進行方向」を判断する4か所へ行き渡っておらず、純横移動指令で接触判定・DWA制動判定・emergency層の不変条件が不成立。廊下進入で接触1件。実測値6件が再現せず | 進行方向の判断4か所をベクトルへ一般化、fallbackの合成指令も停止判定へ、property testで不変条件を検査、実測値と本数の訂正 | [指摘](reviews/r15-2026-09-02-findings.md) / [対応](reviews/r15-2026-09-02-response.md) |
 
 ## 現在の検証contract
 
@@ -64,8 +64,9 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
   両者は同一tickの表と裏を検査するため、`motion_model.type`の誤解決は必ずどちらかが検出する。
   Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
   実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
-- 全方向モデルの単体試験9件と閉ループ8件。閉ループのうち3件は同一世界を差動二輪参照設定でも走らせ、
-  差分を検査する（回避手段が横速度かヨーか、後方goalで整列を挟むか、狭路centeringの精度）。同梱の
+- 全方向モデルの単体試験10件と閉ループ12件。閉ループのうち5件は同一世界を差動二輪参照設定でも走らせて
+  差分を検査し、1件はパラメータも無作為化した6000試行のproperty testで、出力した指令が自身の進行方向に
+  沿って接触前に停止できることを毎tick検査する（R15 H1・H2・H3はこの形でしか見つからなかった）。同梱の
   全方向設定例そのものを走らせる試験を含む。
 - core unit / property testと17 closed-loop scenarios、Ackermann 13 closed-loop scenarios。Ackermann側は
   同梱設定例そのものを走らせる試験を含み、狭路centeringでは横偏差・曲率符号反転・停止tickを、

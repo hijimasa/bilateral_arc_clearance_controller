@@ -15,10 +15,10 @@ English | [日本語](../release_review_history.md)
 - R14 (reviewing `112eb35` on `feature/ackermann-motion-model`) has had its 1 High and 10 Medium findings
   addressed. The verdict is **Conditional Go** and merging to main was concluded to be permissible. The 9 Low
   findings move to the next cycle (L5, L7 and L9 were partly closed)
-- R15 (reviewing `616746b` on `feature/omni-motion-model`) is **Hold** and unaddressed: it must not be merged.
-  The geometry and the effect on the two existing models are sound, but four High findings are breaks of
-  safety-relevant invariants. The `Evaluated package` and the validation contract in this section describe
-  `main` (`2488248`), which does not contain `616746b`
+- R15 (reviewing `616746b` on `feature/omni-motion-model`) has had its four High findings addressed, along with
+  the Medium ones that blocked the merge and those needed to defend the fixes; the verdict before the response
+  was **Hold**. Six Medium findings and all Low ones move to the next cycle. The `Evaluated package` named in
+  this section is `main` (`2488248`); the holonomic model is not in it yet
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
@@ -62,7 +62,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R12 | Shipped Ackermann config failed the regression suite, abandoned-design wording in the public header, replaced differential-drive adapter coverage | Retuned the example weight and added a shipped-configuration scenario, corrected the header, restored the default-configuration test and split the Ackermann one out | [Findings, ja](../reviews/r12-2026-09-01-findings.md) / [Response, ja](../reviews/r12-2026-09-01-response.md) |
 | R13 | Shipped-configuration guard not tied to the yaml, thresholds fitted to one trajectory, speed governor uncovered closed-loop, wrong scenario count | The scenario now reads the yaml, thresholds re-derived from a perturbation band (the one with no separating value was dropped), clearance assertions added, count corrected to 11 | [Findings, ja](../reviews/r13-2026-09-01-findings.md) / [Response, ja](../reviews/r13-2026-09-01-response.md) |
 | R14 | Merge-readiness for main. Unpinned behaviour change in the differential-drive output stage, shipped-configuration guard bound per key rather than per file, bands behind the two new thresholds, the `limits.w_max` term never exercised, documentation that misstates the tests | Output-stage semantics pinned by a unit regression, guard bound to the file, two non-separating thresholds removed with their coverage moved to unit tests, a `w_max`-binding fixture added, documentation corrected | [Findings, ja](../reviews/r14-2026-09-01-findings.md) / [Response, ja](../reviews/r14-2026-09-01-response.md) |
-| R15 | Merge-readiness for the holonomic model. `vy` never reached the four places that decide the direction of travel, so contact checking, the stop-before-contact test and the emergency layer do not hold for a purely lateral command; one corridor-entry contact; six measured claims did not reproduce | Open (verdict **Hold**) | [Findings, ja](../reviews/r15-2026-09-02-findings.md) |
+| R15 | Merge-readiness for the holonomic model. `vy` never reached the four places that decide the direction of travel, so contact checking, the stop-before-contact test and the emergency layer do not hold for a purely lateral command; one corridor-entry contact; six measured claims did not reproduce | The four direction-of-travel decisions generalised to the velocity vector, the emergency fallback gated on its combined twist, a property test asserting the invariant, and the measured claims and test counts corrected | [Findings, ja](../reviews/r15-2026-09-02-findings.md) / [Response, ja](../reviews/r15-2026-09-02-response.md) |
 
 ## Current validation contract
 
@@ -72,10 +72,11 @@ The linked findings and responses are preserved in Japanese as the original audi
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Nine holonomic unit tests and eight closed-loop scenarios. Three of the scenarios run the same world under a
-  differential-drive reference and assert on the difference - whether avoidance uses lateral velocity or yaw,
-  whether a rear goal is preceded by an alignment phase, and how tightly the corridor centerline is held - and
-  one runs the shipped holonomic configuration itself
+- Ten holonomic unit tests and twelve closed-loop scenarios. Five of the scenarios run the same world under a
+  differential-drive reference and assert on the difference, one runs the shipped holonomic configuration
+  itself, and one is a property test over 6000 randomised worlds AND randomised parameters that checks, on every
+  tick, that the emitted twist can stop before contact along its own direction of travel - the form in which
+  R15 H1, H2 and H3 were found and the only one that could have found them
 - Core unit/property tests, 17 closed-loop scenarios, and 13 Ackermann closed-loop scenarios. The Ackermann set
   includes a run of the shipped example configuration; its narrow-corridor scenario bounds lateral error,
   curvature sign changes and stop ticks, its clutter scenario bounds clearance and stop ticks, and per-cycle
