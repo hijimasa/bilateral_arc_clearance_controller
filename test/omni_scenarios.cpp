@@ -384,7 +384,10 @@ testEmittedCommandCanAlwaysStop()
   };
 
   int violations = 0;
+  int stop_while_moving = 0;
+  std::string stop_while_moving_worst;
   int moving = 0;
+  int evaluated = 0;
   std::string worst;
   for (int trial = 0; trial < 6000; ++trial)
   {
@@ -474,6 +477,7 @@ testEmittedCommandCanAlwaysStop()
       {
         continue;  // already inside the margin: the escape regime, see above
       }
+      ++evaluated;
       const float decel = std::max(params.stop_decel, 0.1f);
       const float needed =
           speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
@@ -491,9 +495,16 @@ testEmittedCommandCanAlwaysStop()
     }
   }
 
-  expect(moving > 3000,
-         "the sweep actually produced moving commands, so the check is not vacuous (" +
-             std::to_string(moving) + ")");
+  // Counts the ticks where the invariant was actually EVALUATED, not the ticks
+  // where the vehicle merely moved. R16 M5 found the previous guard
+  // anti-correlated with coverage: pushing the obstacles away raised `moving`
+  // and lowered the number of checks to 16.
+  expect(evaluated > 60,
+         "the sweep reached the invariant often enough to mean something (" +
+             std::to_string(evaluated) + " of " + std::to_string(moving) + " moving ticks)");
+  expect(stop_while_moving == 0,
+         "no tick reports STOP while it is still translating (" +
+             std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
   expect(violations == 0,
          "every emitted twist can stop before contact along its own direction of travel (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
@@ -522,6 +533,8 @@ testEmittedCommandCanStopWhenAccelerationBinds()
 
   int checked = 0;
   int violations = 0;
+  int stop_while_moving = 0;
+  std::string stop_while_moving_worst;
   std::string worst;
   for (int trial = 0; trial < 40000; ++trial)
   {
@@ -571,6 +584,17 @@ testEmittedCommandCanStopWhenAccelerationBinds()
     const bac::Result result = core.process(points, path, current);
     const bac::Twist2D out = result.output;
     const float speed = out.speed();
+    // Status::STOP means the vehicle is holding still. R16 M4 found it reported
+    // while still translating sideways, because the test read v and w only.
+    if (result.status == bac::Status::STOP && speed > 1e-3f)
+    {
+      if (stop_while_moving == 0)
+      {
+        stop_while_moving_worst = "speed " + std::to_string(speed) + " m/s, vy " +
+                                  std::to_string(out.vy);
+      }
+      ++stop_while_moving;
+    }
     if (speed <= 1e-3f)
     {
       continue;
@@ -611,6 +635,9 @@ testEmittedCommandCanStopWhenAccelerationBinds()
              std::to_string(checked) + ")");
   // Measured: 0 here, against 32 with the fallback gate removed and 7 with the
   // deadband left unchecked. Both bands are far from the bound.
+  expect(stop_while_moving == 0,
+         "no tick reports STOP while it is still translating (" +
+             std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
   expect(violations == 0,
          "what the output stage and the fallback publish can stop before contact (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
@@ -702,6 +729,75 @@ testEmergencyLayerSeesLateralMotion()
          "and the sideways motion is stopped rather than continued (speed " +
              std::to_string(result.output.speed()) + " m/s, vy " +
              std::to_string(result.output.vy) + ")");
+}
+
+/// `Status::STOP` means the vehicle is holding still. R16 M4 found it reported
+/// while the vehicle was still translating sideways at up to 0.49 m/s, because
+/// the test that decides it read `v` and `w` and not `vy`. Subscribers of
+/// `avoid_status` and the filter node's arbitration both act on this.
+///
+/// R16 M12: the same scenario exercises the heading wrap. The path tangent here
+/// sits near -pi, so the centering bias pushes the pose reference across the
+/// branch cut; unwrapped, the regulator takes the long way round - 3.70 rad
+/// instead of 2.58 - and does it inside the passage, which is the opposite of
+/// what the bias exists for.
+void
+testStopMeansStoppedAndHeadingTakesTheShortWay()
+{
+  bac::Params params = omniParams();
+  bac::BacCore core(params);
+
+  // Boxed in on three sides with the goal behind: the only honest answer is to
+  // hold still, and the path tangent is near -pi.
+  std::vector<bac::Point2D> points;
+  for (int k = -20; k <= 20; ++k)
+  {
+    const float t = 0.05f * static_cast<float>(k);
+    points.push_back({ 0.45f, t });
+    points.push_back({ t, 0.42f });
+    points.push_back({ t, -0.42f });
+  }
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 20; ++i)
+  {
+    path.push_back({ -0.25f * static_cast<float>(i), 0.0f });
+  }
+
+  const bac::Result result = core.process(points, path, bac::Twist2D(0.0f, 0.0f, 0.2f));
+  if (result.status == bac::Status::STOP)
+  {
+    expect(result.output.speed() <= 1e-3f,
+           "a tick that reports STOP is not still translating (speed " +
+               std::to_string(result.output.speed()) + " m/s, vy " +
+               std::to_string(result.output.vy) + ")");
+  }
+  expect(std::fabs(result.output.w) <= params.limits.w_max + 1e-4f,
+         "the yaw reference stays inside limits.w_max even with the path tangent near -pi (" +
+             std::to_string(result.output.w) + ")");
+
+  // The wrap itself. Inside a passage the centering bias is added to the path
+  // heading error, and near the branch cut the sum can leave (-pi, pi]. Here
+  // the tangent is at 3.05 rad and the bias is positive, so unwrapped the sum
+  // is 3.24 and the regulator turns the LONG way: measured, the commanded yaw
+  // is -0.1250 rad/s wrapped and +0.1250 unwrapped, a reversal.
+  std::vector<bac::Point2D> corridor;
+  for (int k = -60; k <= 60; ++k)
+  {
+    const float t = 0.05f * static_cast<float>(k);
+    corridor.push_back({ t, 0.85f });   // asymmetric: more room to the left
+    corridor.push_back({ t, -0.35f });
+  }
+  std::vector<bac::Point2D> rear_path;
+  for (int i = 1; i <= 20; ++i)
+  {
+    const float r = 0.25f * static_cast<float>(i);
+    rear_path.push_back({ r * std::cos(3.05f), r * std::sin(3.05f) });
+  }
+  bac::BacCore wrap_core(params);
+  const bac::Result wrap = wrap_core.process(corridor, rear_path, bac::Twist2D(0.0f, 0.0f, 0.0f));
+  expect(wrap.output.w < 0.0f,
+         "a heading error past the branch cut turns the short way round (yaw " +
+             std::to_string(wrap.output.w) + " rad/s)");
 }
 
 /// The proximity speed governor moderates speed in front of what the vehicle is
@@ -1123,6 +1219,7 @@ main()
   testEmittedCommandCanStopWhenAccelerationBinds();
   testLateralRowIsContactChecked();
   testEmergencyLayerSeesLateralMotion();
+  testStopMeansStoppedAndHeadingTakesTheShortWay();
   testGovernorTreatsSidewaysLikeForward();
   testGoalOrientationIsHeld();
   testZeroGainHoldsHeadingAndStillArrives();

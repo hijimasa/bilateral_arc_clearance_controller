@@ -1316,20 +1316,19 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // not the straight slide, that could no longer stop (R15 H3).
       const float braking_w =
           (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
+      // Two outcomes, not three. A standstill rotation has zero SPEED, so
+      // `stoppable` returns true for it immediately and a third rung below
+      // this one could never be reached (R16 M3). The rotation itself is
+      // already gated on `rotation_admissible` above.
       if (stoppable(Twist2D(0.0f, braking_w, braking.vy)))
       {
         out_vy = braking.vy;
         out_w = braking_w;
       }
-      else if (stoppable(Twist2D(0.0f, braking_w, 0.0f)))
-      {
-        out_vy = 0.0f;
-        out_w = braking_w;
-      }
       else
       {
         out_vy = 0.0f;
-        out_w = 0.0f;
+        out_w = braking_w;
       }
     }
   }
@@ -1363,7 +1362,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.admissible_count = admissible_count;
   result.candidate_count  = candidate_count;
 
-  if (out_v == 0.0f && out_w == 0.0f)
+  // A holding-still report has to mean holding still in EVERY axis. Testing
+  // `out_v` and `out_w` alone reported STOP while the body was still sliding
+  // sideways, which `avoid_status` subscribers and the filter node's
+  // arbitration both act on (R16 M4).
+  if (out_command().speed() == 0.0f && out_w == 0.0f)
   {
     // Intent exists but the best move is to hold still: blocked.
     current_status_ = Status::STOP;
