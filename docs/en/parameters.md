@@ -73,6 +73,22 @@ vehicle in front of an obstacle while it still slid sideways at full `limits.vy_
 largest swept width unmoderated. The norm cap on the velocity vector does relax to `|limits.v_min|`, so that a
 reverse candidate survives the governor as it does for differential drive (the default `v_min` is -0.1).
 
+No value of `heading_gain` is uniformly best: the more orientation the goal demands, the more path is spent
+achieving it. Measured in open space driving to a goal at (4, 2) with an orientation requested (4.47 m in a
+straight line):
+
+| `heading_gain` | goal yaw -2.8 rad: distance / final yaw error | goal yaw +3.0 rad: distance / final yaw error |
+|---:|---|---|
+| 0.5 | 4.43 m / 0.602 rad | 4.40 m / 0.517 rad |
+| 1.0 | 4.47 m / 0.289 rad | 4.44 m / 0.141 rad |
+| 1.5 | 8.63 m / 0.006 rad | 4.47 m / 0.060 rad |
+| 3.0 | 8.06 m / 0.003 rad | 4.50 m / 0.005 rad |
+| 5.0 | 7.72 m / 0.067 rad | 4.53 m / 0.002 rad |
+
+At 1.0 and below the final yaw can miss Nav2's default `yaw_goal_tolerance` of 0.25 rad. At 1.5 and above the
+orientation is met, but an extreme goal yaw nearly doubles the distance travelled and widens the final position
+error from 0.29 m to 0.37-0.49 m. The shipped 1.5 is the smallest value that meets the tolerance.
+
 `omni` requires a positive `limits.vy_max`; selecting the model with zero lateral authority would silently
 degrade it to a drive that cannot steer, so the controller throws during configuration. **Sideways motion needs
 sensor coverage abeam the body** — the same caveat `limits.v_min` carries for reverse.
@@ -93,7 +109,7 @@ sensor coverage abeam the body** — the same caveat `limits.v_min` carries for 
 | `w_refine_steps` | 3 | Fine samples added on each side of the best coarse yaw-rate/curvature candidate; 0 disables refinement |
 | `turn_radius_min` | 0.25 | Minimum turn radius [m]. For `diff_drive` it is the lower bound that keeps clearance scoring of translating candidates from degenerating; for `ackermann` it is the kinematic constraint that bounds candidate curvature itself and must be positive |
 | `limits.vy_max` | 0.0 | `omni` only. Lateral speed authority [m/s]; must be positive, and presumes sensor coverage abeam the body |
-| `heading_gain` | 1.5 | `omni` only. Proportional gain of the pose regulator [1/s]. 0 holds the heading fixed, which suits a body with 360-degree sensing |
+| `heading_gain` | 1.5 | `omni` only. Proportional gain of the pose regulator [1/s]. 0 holds the heading fixed, which suits a body with 360-degree sensing. No upper bound is validated; see the measured trade-off below |
 | `vy_samples` | 15 | `omni` only. Lateral-velocity samples per forward-speed row, the counterpart of `w_samples`; at least 3 |
 | `velocity_min` | 0.005 | Output linear speeds below this value are rounded to zero [m/s]. Ackermann zeroes the whole command, since a yaw rate without speed is not realizable |
 | `angvel_min` | 0.01 | Differential drive only: output angular speeds below this value are rounded to zero [rad/s]. Ackermann does not apply it, because a small yaw rate at low speed can still represent material curvature; it zeroes `angular.z` only when the curvature itself is negligible |

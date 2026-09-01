@@ -892,19 +892,42 @@ testGoalOrientationIsHeld()
 {
   bac_sim::World world;
   const bac_sim::PathSource path = bac_sim::gotoPointPath(4.0f, 2.0f);
-  const float goal_yaw = -1.2f;  // deliberately unlike the approach direction
 
-  bac::BacCore reference(diffDriveReferenceParams());
-  const OmniRun diff_run = runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f,
-                                   90.0f, LateralWindow{}, goal_yaw);
-  bac::BacCore core(omniParams());
-  const OmniRun run =
-      runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f, 90.0f, LateralWindow{}, goal_yaw);
+  // Swept over the goal orientation rather than run at one. R15 M2 found the
+  // single-orientation form did not separate: with the fade disabled, 33 of 90
+  // grid cells still landed inside the tolerance. Over the SET, the worst case
+  // does separate - 0.0603 correct against 0.7701 broken.
+  float error = 0.0f;
+  float diff_error = 1e9f;
+  float worst_yaw = 0.0f;
+  float worst_position = 0.0f;
+  for (const float goal_yaw : { 0.0f, -1.2f, 1.5f, 2.5f, -2.8f, 3.0f })
+  {
+    bac::BacCore reference(diffDriveReferenceParams());
+    const OmniRun diff_run = runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f,
+                                     90.0f, LateralWindow{}, goal_yaw);
+    bac::BacCore core(omniParams());
+    const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f, 90.0f,
+                                LateralWindow{}, goal_yaw);
+    worst_position = std::max(worst_position, run.min_goal_distance);
+    expectLimitsRespected(run, "goal orientation " + std::to_string(goal_yaw));
+    const float e = std::fabs(wrapAngle(run.final_pose.th - goal_yaw));
+    if (e > error)
+    {
+      error = e;
+      worst_yaw = goal_yaw;
+    }
+    diff_error = std::min(diff_error, std::fabs(wrapAngle(diff_run.final_pose.th - goal_yaw)));
+  }
+  (void)worst_yaw;
 
-  expect(run.reached_goal, "the holonomic vehicle still reaches the goal position (closest " +
-                               std::to_string(run.min_goal_distance) + " m)");
-  const float error = std::fabs(wrapAngle(run.final_pose.th - goal_yaw));
-  const float diff_error = std::fabs(wrapAngle(diff_run.final_pose.th - goal_yaw));
+  // Position, stated as the measured distance rather than the harness's
+  // reached_goal flag. The path source stops emitting within 0.3 m of the goal,
+  // so 0.27 m is the floor; holding the most extreme orientation (-2.8 rad)
+  // costs a little on top of it. Measured over the set: 0.271-0.371 m.
+  expect(worst_position < 0.40f,
+         "holding the commanded orientation does not cost the goal position (worst "
+         "closest approach " + std::to_string(worst_position) + " m)");
   // The bound is Nav2's own SimpleGoalChecker default yaw_goal_tolerance of
   // 0.25 rad - the tolerance the goal actually has to pass - not a number
   // picked here. Measured over goal orientations 0.0, -1.2, 1.5, 2.5, -2.8 and
@@ -915,9 +938,8 @@ testGoalOrientationIsHeld()
          "the holonomic vehicle arrives within Nav2's default yaw_goal_tolerance of the "
          "requested orientation (error " + std::to_string(error) + " rad)");
   expect(diff_error > error,
-         "the differential-drive reference does not hold it, so the check above is "
-         "discriminating (its error " + std::to_string(diff_error) + " rad)");
-  expectLimitsRespected(run, "goal orientation");
+         "the differential-drive reference does not hold it at any of them, so the check "
+         "above is discriminating (its best error " + std::to_string(diff_error) + " rad)");
 }
 
 /// heading_gain = 0 holds the heading fixed. A platform with 360 degree
@@ -1186,24 +1208,59 @@ shippedExampleParams()
 
 /// Runs the shipped example end to end, so a yaml edit cannot ship a
 /// configuration that fails this suite while every test stays green.
+///
+/// TWO worlds, not one. R15 M5 found that with only the detour world, 13 of 16
+/// value perturbations of the shipped yaml passed - including
+/// `avoid_margin.side: 0.9 -> 0.5`, which the file's own comment says takes
+/// mean lateral error from 0.0119 m to 0.139 m. A corridor is what makes that
+/// value matter, so the shipped configuration is driven through one as well.
 void
 testShippedExampleConfiguration()
 {
-  bac_sim::World world;
-  world.addBox(3.0f, 0.0f, 0.8f, 0.8f);
-  bac::BacCore core(shippedExampleParams());
-  expect(g_shipped_config_loaded,
-         "every value the scenario needs was read from the shipped configuration");
-  const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
-                              bac_sim::gotoPointPath(6.0f, 0.0f), 6.0f, 0.0f, 60.0f);
+  {
+    bac_sim::World world;
+    world.addBox(3.0f, 0.0f, 0.8f, 0.8f);
+    bac::BacCore core(shippedExampleParams());
+    expect(g_shipped_config_loaded,
+           "every value the scenario needs was read from the shipped configuration");
+    const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
+                                bac_sim::gotoPointPath(6.0f, 0.0f), 6.0f, 0.0f, 60.0f);
 
-  expect(!run.collided, "the shipped holonomic example has no body contact");
-  expect(run.reached_goal, "the shipped holonomic example reaches its goal (closest " +
-                               std::to_string(run.min_goal_distance) + " m)");
-  expect(run.max_abs_vy > 0.05f,
-         "the shipped configuration grants usable lateral authority (max |vy| " +
-             std::to_string(run.max_abs_vy) + " m/s)");
-  expectLimitsRespected(run, "shipped configuration");
+    expect(!run.collided, "the shipped holonomic example has no body contact");
+    expect(run.reached_goal, "the shipped holonomic example reaches its goal (closest " +
+                                 std::to_string(run.min_goal_distance) + " m)");
+    expect(run.max_abs_vy > 0.05f,
+           "the shipped configuration grants usable lateral authority (max |vy| " +
+               std::to_string(run.max_abs_vy) + " m/s)");
+    expectLimitsRespected(run, "shipped configuration");
+  }
+
+  {
+    bac_sim::World world;
+    world.addCorridorXWalls(2.0f, 9.5f, 0.0f, 1.2f, 0.10f);
+    LateralWindow window;
+    window.enabled = true;
+    window.center_y = 0.0f;
+    window.x_from = 3.0f;
+    window.x_to = 9.0f;
+    bac::BacCore core(shippedExampleParams());
+    const OmniRun run = runOmni(core, world, { 0.0f, 0.30f, 0.0f },
+                                bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
+
+    expect(!run.collided, "the shipped configuration has no body contact in a corridor");
+    expect(run.final_pose.x > 9.0f,
+           "the shipped configuration traverses a 1.2 m corridor (final x " +
+               std::to_string(run.final_pose.x) + ")");
+    expect(run.lateral_samples > 0,
+           "it reached the measurement window (" + std::to_string(run.lateral_samples) + ")");
+    // Measured on the shipped values: 0.0126 m. With avoid_margin.side at 0.5,
+    // where the bilateral term never engages for this body, it is 0.139 m. The
+    // bound sits between the two, which is what makes the yaml value matter.
+    expect(run.mean_abs_lateral < 0.05f,
+           "and holds the centerline, which the shipped avoid_margin.side is what buys "
+           "(mean |y| " + std::to_string(run.mean_abs_lateral) + " m)");
+    expectLimitsRespected(run, "shipped configuration in a corridor");
+  }
 }
 
 }  // namespace
