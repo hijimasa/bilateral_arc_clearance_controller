@@ -399,8 +399,15 @@ ArcEvaluation
 BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w, float dist_clear,
                             float dist_block) const
 {
+  return evaluateArcWindows(points, Twist2D(v, w), dist_clear, dist_block);
+}
+
+ArcEvaluation
+BacCore::evaluateArcWindows(const std::vector<Point2D> &points, const Twist2D &command,
+                            float dist_clear, float dist_block) const
+{
   const detail::ArcTrajectoryEvaluator evaluator(params_);
-  return evaluator.evaluate(points, Twist2D(v, w), dist_clear, dist_block);
+  return evaluator.evaluate(points, command, dist_clear, dist_block);
 }
 
 Result
@@ -806,7 +813,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   int   admissible_count = 0, candidate_count = 0;
   int   forward_progressing = 0;  // gates reverse only when forward advances the ordered path
 
-  auto evaluate_candidate = [&](float v, float w) {
+  auto evaluate_candidate = [&](const Twist2D &command) {
+      // The scalars stay so the scoring body reads as it did; `command` is
+      // what reaches the motion model and the swept-geometry evaluator, so a
+      // holonomic candidate is scored on the trajectory it actually drives.
+      const float v = command.v;
+      const float w = command.w;
       candidate_count++;
       if (alignment_required && std::fabs(v) > 1e-3f)
       {
@@ -826,7 +838,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
       // skip the expensive arc evaluation for candidates that cannot win.
       const detail::ProjectedPose2D projected =
-          motion_model->projectConstantCommand(Twist2D(v, w), params_.sim_time);
+          motion_model->projectConstantCommand(command, params_.sim_time);
       float end_th_pre = projected.theta;
       float end_x_pre = projected.x;
       float end_y_pre = projected.y;
@@ -842,8 +854,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       float fixed_penalties = params_.weights.path_dist * gd_pre +
                               params_.weights.hysteresis *
-                                  motion_model->commandChange(Twist2D(v, w),
-                                                              prev_selected_command_);
+                                  motion_model->commandChange(command, prev_selected_command_);
       // (Pruning waits until one admissible forward candidate is on record:
       // the reverse gate depends on GOAL PROGRESS, and admissibility is
       // only known after evaluation. The v=0 row is exempt - its goal
@@ -907,7 +918,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
       else
       {
-        if (!motion_model->isCommandKinematicallyValid(Twist2D(v, w)))
+        if (!motion_model->isCommandKinematicallyValid(command))
         {
           return;
         }
@@ -924,7 +935,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                 dist_clear, radius * std::acos(1.0f - params_.eval_lateral_max / radius));
           }
         }
-        ArcEvaluation eval = evaluateArcWindows(filtered_points, v, w, dist_clear, dist_block);
+        ArcEvaluation eval = evaluateArcWindows(filtered_points, command, dist_clear, dist_block);
         if (eval.blocking_s < FLT_MAX)
         {
           // DWA admissibility: able to stop (keeping the directional safety
@@ -984,7 +995,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                                           ? std::fabs(w)
                                           : std::fabs(wrapAngle(relative_path_heading - end_th));
         score = -alignment_error -
-                0.05f * motion_model->commandChange(Twist2D(v, w),
+                0.05f * motion_model->commandChange(command,
                                                      prev_selected_command_);
       }
       else
@@ -994,7 +1005,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                 params_.weights.path_dist * path_cost -
                 params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
                 params_.weights.hysteresis *
-                    motion_model->commandChange(Twist2D(v, w), prev_selected_command_) -
+                    motion_model->commandChange(command, prev_selected_command_) -
                 params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
       }
 #ifdef BAC_DEBUG_CANDIDATES
@@ -1004,7 +1015,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       if (score > best_score)
       {
         best_score     = score;
-        best_cmd       = Twist2D(v, w);
+        best_cmd       = command;
         best_clearance = std::min(clearance, cap_eff);
         best_path_cost = path_cost;
       }
@@ -1012,7 +1023,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
   for (const Twist2D &command : candidate_batch.commands)
   {
-    evaluate_candidate(command.v, command.w);
+    evaluate_candidate(command);
   }
 
   // Coarse-to-fine steering: re-sample w around the coarse winner at a finer
@@ -1022,11 +1033,29 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // tick-scale zigzag in narrow passages.
   for (const Twist2D &command : motion_model->refinementCandidates(best_cmd))
   {
-    evaluate_candidate(command.v, command.w);
+    evaluate_candidate(command);
   }
 
   float out_v = best_cmd.v;
   float out_w = best_cmd.w;
+  float out_vy = best_cmd.vy;
+  const auto out_command = [&]() { return Twist2D(out_v, out_w, out_vy); };
+
+  // Margin facing the direction of travel. This is the support function of the
+  // margin box in that direction, so a forward command sees safety_margin.front
+  // exactly, a reversing one safety_margin.rear, and a purely lateral one
+  // safety_margin.side. Only a holonomic model can produce the blended case.
+  const auto travel_margin = [&](const Twist2D &command) {
+    const float speed = command.speed();
+    if (speed <= 1e-6f)
+    {
+      return lead_margin;
+    }
+    const float ux = command.v / speed;
+    const float uy = command.vy / speed;
+    const float along = (ux >= 0.0f) ? lead_margin * ux : params_.safety_margin.rear * -ux;
+    return along + params_.safety_margin.side * std::fabs(uy);
+  };
 
   // Output reachability: the plant cannot jump to arbitrary yaw rate or road-
   // wheel angle in one cycle. If the reachable arc needs a lower speed to
@@ -1035,17 +1064,19 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // can itself lie outside the one-cycle deceleration interval. Reapply the
   // reachability limit and recheck the resulting arc until it is admissible.
   const Twist2D limited =
-      motion_model->limitReachableCommand(current, Twist2D(out_v, out_w));
-  if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f)
+      motion_model->limitReachableCommand(current, out_command());
+  if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f ||
+      std::fabs(limited.vy - out_vy) > 1e-4f)
   {
     out_v = limited.v;
     out_w = limited.w;
+    out_vy = limited.vy;
     bool output_admissible = true;
     constexpr int kReachabilityIterations = 8;
     for (int iteration = 0; iteration < kReachabilityIterations; ++iteration)
     {
       output_admissible = true;
-      if (std::fabs(out_v) <= 1e-3f)
+      if (out_command().speed() <= 1e-3f)
       {
         if (std::fabs(out_w) > 1e-4f && !rotation_admissible)
         {
@@ -1056,22 +1087,24 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
       // The exact contact test is valid for any radius, including below
       // turn_radius_min (that guard exists for scoring, not for contact).
-      float dist_block = std::max(std::fabs(out_v) * params_.sim_time, params_.min_eval_distance);
+      float dist_block =
+          std::max(out_command().speed() * params_.sim_time, params_.min_eval_distance);
       dist_block       = std::min(dist_block, remaining_path);
-      const ArcEvaluation ev = evaluateArcWindows(filtered_points, out_v, out_w, 0.0f, dist_block);
+      const ArcEvaluation ev =
+          evaluateArcWindows(filtered_points, out_command(), 0.0f, dist_block);
       if (ev.blocking_s >= FLT_MAX)
       {
         break;
       }
 
-      const float margin = (out_v >= 0.0f) ? lead_margin : params_.safety_margin.rear;
+      const float margin = travel_margin(out_command());
       const float free_run = ev.blocking_s - margin;
       const float a = std::max(params_.stop_decel, 0.1f);
       const float tr = params_.brake_reaction_time;
       const float v_safe = free_run > 0.0f
                                ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr)
                                : 0.0f;
-      if (std::fabs(out_v) <= v_safe + 1e-4f)
+      if (out_command().speed() <= v_safe + 1e-4f)
       {
         break;
       }
@@ -1079,14 +1112,16 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       output_admissible = false;
       const float safe_speed = (out_v > 0.0f ? 1.0f : -1.0f) * v_safe;
       const Twist2D curvature_preserving =
-          motion_model->withLinearSpeed(Twist2D(out_v, out_w), safe_speed);
+          motion_model->withLinearSpeed(out_command(), safe_speed);
       const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
-      if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f)
+      if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f &&
+          std::fabs(next.vy - out_vy) <= 1e-5f)
       {
         break;
       }
       out_v = next.v;
       out_w = next.w;
+      out_vy = next.vy;
     }
 
     if (!output_admissible)
@@ -1095,16 +1130,18 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // one-cycle-reachable translating command was found. Brake translation;
       // differential drive may retain only a safe reachable rotation.
       const Twist2D braking =
-          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f));
+          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f, 0.0f));
       out_v = 0.0f;
+      out_vy = braking.vy;
       out_w = (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
     }
   }
-  const Twist2D finalized = motion_model->applyCommandDeadband(Twist2D(out_v, out_w));
+  const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
   out_v = finalized.v;
   out_w = finalized.w;
-  prev_selected_command_ = Twist2D(out_v, out_w);
-  result.output         = Twist2D(out_v, out_w);
+  out_vy = finalized.vy;
+  prev_selected_command_ = out_command();
+  result.output         = out_command();
   result.best_clearance = best_clearance;
   result.best_path_cost = best_path_cost;
   result.admissible_count = admissible_count;

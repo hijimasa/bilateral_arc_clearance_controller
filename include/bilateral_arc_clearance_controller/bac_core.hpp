@@ -35,6 +35,7 @@
 #ifndef BILATERAL_ARC_CLEARANCE_CONTROLLER__BAC_CORE_HPP_
 #define BILATERAL_ARC_CLEARANCE_CONTROLLER__BAC_CORE_HPP_
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -61,8 +62,12 @@ struct Point2D
 
 struct Twist2D
 {
-  float v = 0.0f;  // forward velocity [m/s]
-  float w = 0.0f;  // angular velocity [rad/s], CCW positive
+  float v = 0.0f;   // forward velocity, body +x [m/s]
+  float w = 0.0f;   // angular velocity [rad/s], CCW positive
+  float vy = 0.0f;  // lateral velocity, body +y [m/s]; non-zero only for
+                    // holonomic models. Every non-holonomic model produces
+                    // and consumes vy == 0, so the field is invisible to
+                    // differential-drive and Ackermann users.
 
   Twist2D() = default;
   Twist2D(float v_val, float w_val)
@@ -70,12 +75,22 @@ struct Twist2D
     , w(w_val)
   {
   }
+  Twist2D(float v_val, float w_val, float vy_val)
+    : v(v_val)
+    , w(w_val)
+    , vy(vy_val)
+  {
+  }
+
+  /// Speed along the direction of travel. Equals |v| exactly when vy == 0.
+  float speed() const { return (vy == 0.0f) ? std::fabs(v) : std::hypot(v, vy); }
 };
 
 enum class MotionModelType : int
 {
   DIFF_DRIVE = 0,
-  ACKERMANN  = 1
+  ACKERMANN  = 1,
+  OMNI       = 2
 };
 
 /// Vehicle-kinematic policy. Every model consumes and produces body Twist.
@@ -383,6 +398,11 @@ public:
   /// Arc evaluation with separate windows: clearance/squeeze aggregate within
   /// dist_clear along the arc, blocking is searched within dist_block.
   ArcEvaluation evaluateArcWindows(const std::vector<Point2D> &points, float v, float w,
+                                   float dist_clear, float dist_block) const;
+
+  /// Same, for a full body twist. Holonomic candidates carry a lateral
+  /// component that the scalar overload cannot express.
+  ArcEvaluation evaluateArcWindows(const std::vector<Point2D> &points, const Twist2D &command,
                                    float dist_clear, float dist_block) const;
 
   /// Limit a command to what the plant can reach within one control period
