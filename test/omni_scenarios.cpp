@@ -625,9 +625,12 @@ testEmittedCommandCanStopWhenAccelerationBinds()
 /// front margin, and the path leads sideways into a second wall. Every command
 /// that progresses along that path either advances into the wall ahead or
 /// slides into the one abeam, so the correct answer is to hold station.
-/// Measured: with the row contact-checked the vehicle commands 0.0000 m/s at
-/// abeam distances 0.50-0.95 m; scoring it as a rotation instead commands
-/// 0.1800 m/s at every one of them.
+/// Measured at an abeam distance of 0.70 m: with the row contact-checked the
+/// vehicle commands 0.0000 m/s; scoring it as a rotation instead commands
+/// 0.1800 m/s. R16 M7 found the previously recorded band ("0.0000 at every
+/// abeam distance from 0.50 to 0.95") to be wrong - the mutation survives at
+/// 0.50 through 0.65 - so the claim is now limited to the distance this
+/// scenario actually runs.
 void
 testLateralRowIsContactChecked()
 {
@@ -809,9 +812,9 @@ testGoalOrientationIsHeld()
   // The bound is Nav2's own SimpleGoalChecker default yaw_goal_tolerance of
   // 0.25 rad - the tolerance the goal actually has to pass - not a number
   // picked here. Measured over goal orientations 0.0, -1.2, 1.5, 2.5, -2.8 and
-  // 3.0 rad, the holonomic error spans 0.009-0.102 rad while the
-  // differential-drive reference spans 0.959-1.741 rad: it ends at whatever
-  // heading the approach left it with, 0.541 rad, whatever was asked for.
+  // 3.0 rad at heading_gain 1.5, the holonomic error spans 0.0065-0.0603 rad
+  // while the differential-drive reference spans 0.5406-2.9426 rad: it ends at
+  // whatever heading its approach left it with, whatever was asked for.
   expect(error < 0.25f,
          "the holonomic vehicle arrives within Nav2's default yaw_goal_tolerance of the "
          "requested orientation (error " + std::to_string(error) + " rad)");
@@ -855,21 +858,27 @@ testZeroGainHoldsHeadingAndStillArrives()
 /// what was and was not covered:
 ///   entry offset 0.30, 0.36, 0.40 m x corridor width 1.2 m
 /// Measured after the R15 fixes, holonomic mean lateral error over that grid is
-/// 0.0117-0.0143 m with zero contacts, against 0.0349-0.0357 m for the
+/// 0.0126-0.0151 m with zero contacts, against 0.0291-0.0361 m for the
 /// differential-drive reference. Removing the centering bias fails every cell,
 /// not just one.
 ///
-/// The grid stops at 0.40 because that is where the capability stops. At 0.45 m
-/// of entry offset in this fixture the vehicle does not get in at all (it holds
-/// at x = 1.544), and in a 1.1 m corridor it routes around the outside from
-/// 0.36 m. Neither is a contact - the R15 H4 contact is gone - but both are
-/// real limits, and docs/algorithm.md states them rather than letting the grid
-/// imply they do not exist.
+/// The grid is swept rather than sampled at three points. R16 H1 found that the
+/// R15 fix had only been checked on the offsets it happened to try: a 0.002 m
+/// sweep of the same fixture reproduced contact between them. After the R16
+/// fixes to the deadband and the speed governor, that sweep is clean - 61 cells
+/// from 0.30 to 0.42 m, zero contacts, every one traversed - with walls of
+/// either 0.05, 0.10 or 0.20 m thickness and with zero-thickness ones.
+///
+/// The entry offset still has a limit: at 0.45 m in this fixture the vehicle
+/// holds at the mouth rather than entering. That is a limit, not a contact, and
+/// docs/algorithm.md states it.
 void
 testNarrowCorridorCentering()
 {
   bac_sim::World world;
-  world.addCorridorX(2.0f, 9.5f, 0.0f, 1.2f);
+  // Walls with thickness: see addCorridorXWalls for why a corridor driven
+  // ALONG must not be modelled as zero-thickness lines.
+  world.addCorridorXWalls(2.0f, 9.5f, 0.0f, 1.2f, 0.10f);
   LateralWindow window;
   window.enabled = true;
   window.center_y = 0.0f;
@@ -906,7 +915,8 @@ testNarrowCorridorCentering()
                 "below is between two solutions (final x " +
                std::to_string(diff_run.final_pose.x) + ")");
     // A comparison, not a threshold: the two bands measured over the grid above
-    // do not touch (0.0117-0.0143 against 0.0349-0.0357).
+    // do not touch (0.0126-0.0151 against 0.0291-0.0361), measured on this
+    // fixture with 0.10 m thick walls.
     expect(run.mean_abs_lateral < diff_run.mean_abs_lateral,
            at + ": the holonomic vehicle holds the centerline better than the "
                 "differential-drive reference (mean |y| " +

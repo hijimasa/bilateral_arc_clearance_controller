@@ -20,9 +20,10 @@ English | [日本語](../release_review_history.md)
   was **Hold**. Six Medium findings and all Low ones move to the next cycle. The `Evaluated package` named in
   this section is `main` (`2488248`); the holonomic model is not in it yet. R15 is recorded in `a1d25f3` and
   its response landed in `433068a`
-- R16 (reviewing `a9c6c31`, with the unreviewed `433068a` foremost) is **Hold** and unaddressed. R15 H4 was
-  closed only on the grid points that were sampled; a 0.002 m sweep reproduces contact. Its five High findings
-  block the merge
+- R16 (reviewing `a9c6c31`, with the unreviewed `433068a` foremost) has had its five High findings and the
+  merge-blocking Medium ones addressed; the verdict before the response was **Hold**. H1's contact rested on the
+  test world modelling walls as zero-thickness lines: the corridor now has thickness, and entering nearly
+  parallel to a thin wall is documented as a limit of the method
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
@@ -67,7 +68,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R13 | Shipped-configuration guard not tied to the yaml, thresholds fitted to one trajectory, speed governor uncovered closed-loop, wrong scenario count | The scenario now reads the yaml, thresholds re-derived from a perturbation band (the one with no separating value was dropped), clearance assertions added, count corrected to 11 | [Findings, ja](../reviews/r13-2026-09-01-findings.md) / [Response, ja](../reviews/r13-2026-09-01-response.md) |
 | R14 | Merge-readiness for main. Unpinned behaviour change in the differential-drive output stage, shipped-configuration guard bound per key rather than per file, bands behind the two new thresholds, the `limits.w_max` term never exercised, documentation that misstates the tests | Output-stage semantics pinned by a unit regression, guard bound to the file, two non-separating thresholds removed with their coverage moved to unit tests, a `w_max`-binding fixture added, documentation corrected | [Findings, ja](../reviews/r14-2026-09-01-findings.md) / [Response, ja](../reviews/r14-2026-09-01-response.md) |
 | R15 | Merge-readiness for the holonomic model. `vy` never reached the four places that decide the direction of travel, so contact checking, the stop-before-contact test and the emergency layer do not hold for a purely lateral command; one corridor-entry contact; six measured claims did not reproduce | The four direction-of-travel decisions generalised to the velocity vector, the emergency fallback gated on its combined twist, a property test asserting the invariant, and the measured claims and test counts corrected | [Findings, ja](../reviews/r15-2026-09-02-findings.md) / [Response, ja](../reviews/r15-2026-09-02-response.md) |
-| R16 | Re-review of the R15 response. R15 H4 was closed only on the sampled grid points - a 0.002 m sweep reproduces contact with 0.23 m of penetration; the output deadband runs after every admissibility check, so the invariant fails on the published twist; the speed governor is still forward-only; and the code the R15 response added is never executed by the suite | Open (verdict **Hold**) | [Findings, ja](../reviews/r16-2026-09-02-findings.md) |
+| R16 | Re-review of the R15 response. R15 H4 was closed only on the sampled grid points - a 0.002 m sweep reproduces contact with 0.23 m of penetration; the output deadband runs after every admissibility check, so the invariant fails on the published twist; the speed governor is still forward-only; and the code the R15 response added is never executed by the suite | The deadband's output re-checked, the governor generalised to the direction of travel, a sweep that reaches the fallback, and the direction recovery covered. H1 turned out to rest on zero-thickness walls: the corridor now has thickness and the limitation is documented | [Findings, ja](../reviews/r16-2026-09-02-findings.md) / [Response, ja](../reviews/r16-2026-09-02-response.md) |
 
 ## Current validation contract
 
@@ -77,7 +78,7 @@ The linked findings and responses are preserved in Japanese as the original audi
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Ten holonomic unit tests and twelve closed-loop scenarios. Five of the scenarios run the same world under a
+- Ten holonomic unit tests and twelve closed-loop scenarios. Four of the scenarios run the same world under a
   differential-drive reference and assert on the difference, one runs the shipped holonomic configuration
   itself, and one is a property test over 6000 randomised worlds AND randomised parameters that checks, on every
   tick, that the emitted twist can stop before contact along its own direction of travel - the form in which

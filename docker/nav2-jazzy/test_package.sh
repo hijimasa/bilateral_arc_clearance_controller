@@ -151,6 +151,11 @@ if ! grep -q 'motion_model.type: omni' "${OMNI_CONFIG}"; then
   exit 5
 fi
 
+# The node accepts the holonomic model and rejects a configuration it cannot
+# honour. It does NOT carry a holonomic command through - the filter node's
+# virtual path and speed cap are forward-only - so this checks configuration
+# handling, not the holonomic output path. That path is the Nav2 controller
+# plugin's, and the labelled ctest entries above cover it.
 readonly OMNI_VALID_LOG="${WORK_DIR}/omni-node-valid.log"
 OMNI_VALID_STATUS=0
 run_filter_node "${OMNI_VALID_LOG}" \

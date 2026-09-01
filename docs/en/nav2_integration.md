@@ -129,6 +129,11 @@ fixed while translating, which suits a platform with 360-degree sensing.
 of travel, so they ignore a commanded goal orientation and follow the path tangent as before. A specific goal yaw
 for those models needs a Nav2 recovery or a controller switch.
 
+**`bac_filter_node` does not carry a holonomic command.** The evaluation node synthesises its virtual path and
+applies its speed cap on the forward component only, so it accepts `motion_model.type: omni` but never reproduces
+an upstream `linear.y` (a purely lateral command comes out as zero). The holonomic model is for the Nav2
+controller plugin, `bac::BacController`.
+
 **Sideways motion needs sensor coverage abeam the body** — the same caveat `limits.v_min < 0` carries for the
 rear. A front-only lidar cannot see where a crabbing robot is going, so set `limits.vy_max` from the observed
 field of view, not from the drivetrain.

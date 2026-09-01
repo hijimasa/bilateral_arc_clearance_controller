@@ -68,9 +68,10 @@ to passages: bounded on both sides **and** open straight ahead. Around an isolat
 are the obstacle's own edges, so balancing them would steer into it.
 
 The speed limit applies to the velocity **vector**, not per axis; a per-axis cap would admit
-`hypot(limits.v_max, limits.vy_max)`. The proximity speed governor's cap applies to the vector as well: bounding
-only the forward axis would slow the vehicle in front of an obstacle while it still slid sideways at full
-`limits.vy_max`, leaving the direction of largest swept width unmoderated.
+`hypot(limits.v_max, limits.vy_max)`. The proximity speed governor's cap reaches the lateral axis too; bounding only the forward axis would slow the
+vehicle in front of an obstacle while it still slid sideways at full `limits.vy_max`, leaving the direction of
+largest swept width unmoderated. The norm cap on the velocity vector does relax to `|limits.v_min|`, so that a
+reverse candidate survives the governor as it does for differential drive (the default `v_min` is -0.1).
 
 `omni` requires a positive `limits.vy_max`; selecting the model with zero lateral authority would silently
 degrade it to a drive that cannot steer, so the controller throws during configuration. **Sideways motion needs

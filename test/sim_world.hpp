@@ -48,6 +48,25 @@ struct World
     addWall(x_start, y_center - width / 2.0f, x_end, y_center - width / 2.0f);
   }
 
+  /// A corridor whose walls have THICKNESS, built from closed boxes rather than
+  /// zero-thickness segments. `gap` is the free space between the inner faces.
+  ///
+  /// The difference matters at the mouth. A ray cast almost along a
+  /// zero-thickness segment can miss it entirely between beams, so a body
+  /// entering nearly parallel to such a wall may not see the very edge it is
+  /// about to touch - not a controller failure but an artefact of modelling a
+  /// wall as a line. Real walls have thickness and present a face. Scenarios
+  /// that drive along a wall should use this.
+  void addCorridorXWalls(float x_start, float x_end, float y_center, float gap,
+                         float thickness)
+  {
+    const float half = gap / 2.0f;
+    const float length = x_end - x_start;
+    const float centre = (x_start + x_end) / 2.0f;
+    addBox(centre, y_center + half + thickness / 2.0f, length, thickness);
+    addBox(centre, y_center - half - thickness / 2.0f, length, thickness);
+  }
+
   // Axis-aligned box obstacle
   void addBox(float cx, float cy, float w, float h)
   {

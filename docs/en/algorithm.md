@@ -134,6 +134,12 @@ They are not probabilistic or universal claims about untested environments.
 - A commanded goal ORIENTATION under `diff_drive` or `ackermann`: a model that steers with yaw cannot choose its
   orientation independently of its direction of travel, so the final heading is whatever the path tangent leaves
   behind. The holonomic model does honour it
+- **Avoiding a THIN wall entered almost parallel to it.** BAC sees only the points it is given. Rays cast nearly
+  tangentially at a surface with no thickness can pass between beams, so the very edge the body is about to touch
+  may never appear as a point, and what cannot be measured cannot be avoided. At 0.5 degrees of angular
+  resolution (720 beams over 360 degrees) this miss is reproducible against a zero-thickness wall. Real walls
+  present a face, so that configuration is a modelling degeneracy rather than a scenario: the regressions use
+  walls with thickness. Raising the resolution (2880 beams or more) or giving the wall thickness both remove it
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
   regressions only
 - Reaching a rear goal with a forward-only Ackermann configuration (`limits.v_min = 0`). BAC stops and leaves the
