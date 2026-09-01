@@ -15,6 +15,10 @@ English | [日本語](../release_review_history.md)
 - R14 (reviewing `112eb35` on `feature/ackermann-motion-model`) has had its 1 High and 10 Medium findings
   addressed. The verdict is **Conditional Go** and merging to main was concluded to be permissible. The 9 Low
   findings move to the next cycle (L5, L7 and L9 were partly closed)
+- R15 (reviewing `616746b` on `feature/omni-motion-model`) is **Hold** and unaddressed: it must not be merged.
+  The geometry and the effect on the two existing models are sound, but four High findings are breaks of
+  safety-relevant invariants. The `Evaluated package` and the validation contract in this section describe
+  `main` (`2488248`), which does not contain `616746b`
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
@@ -58,6 +62,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R12 | Shipped Ackermann config failed the regression suite, abandoned-design wording in the public header, replaced differential-drive adapter coverage | Retuned the example weight and added a shipped-configuration scenario, corrected the header, restored the default-configuration test and split the Ackermann one out | [Findings, ja](../reviews/r12-2026-09-01-findings.md) / [Response, ja](../reviews/r12-2026-09-01-response.md) |
 | R13 | Shipped-configuration guard not tied to the yaml, thresholds fitted to one trajectory, speed governor uncovered closed-loop, wrong scenario count | The scenario now reads the yaml, thresholds re-derived from a perturbation band (the one with no separating value was dropped), clearance assertions added, count corrected to 11 | [Findings, ja](../reviews/r13-2026-09-01-findings.md) / [Response, ja](../reviews/r13-2026-09-01-response.md) |
 | R14 | Merge-readiness for main. Unpinned behaviour change in the differential-drive output stage, shipped-configuration guard bound per key rather than per file, bands behind the two new thresholds, the `limits.w_max` term never exercised, documentation that misstates the tests | Output-stage semantics pinned by a unit regression, guard bound to the file, two non-separating thresholds removed with their coverage moved to unit tests, a `w_max`-binding fixture added, documentation corrected | [Findings, ja](../reviews/r14-2026-09-01-findings.md) / [Response, ja](../reviews/r14-2026-09-01-response.md) |
+| R15 | Merge-readiness for the holonomic model. `vy` never reached the four places that decide the direction of travel, so contact checking, the stop-before-contact test and the emergency layer do not hold for a purely lateral command; one corridor-entry contact; six measured claims did not reproduce | Open (verdict **Hold**) | [Findings, ja](../reviews/r15-2026-09-02-findings.md) |
 
 ## Current validation contract
 
