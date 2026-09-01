@@ -61,12 +61,16 @@ The linked findings and responses are preserved in Japanese as the original audi
 
 ## Current validation contract
 
-- Plain CMake Release build and eight CTest entries; nine CTest entries in ROS 2 Jazzy/Nav2 with the adapter
+- Plain CMake Release build and ten CTest entries; eleven CTest entries in ROS 2 Jazzy/Nav2 with the adapter
   tests, which run the default (differential-drive) configuration while a separate test covers the Ackermann
   parameter plumbing. The two assert opposite halves of the same tick, so a misresolved `motion_model.type`
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
+- Nine holonomic unit tests and eight closed-loop scenarios. Three of the scenarios run the same world under a
+  differential-drive reference and assert on the difference - whether avoidance uses lateral velocity or yaw,
+  whether a rear goal is preceded by an alignment phase, and how tightly the corridor centerline is held - and
+  one runs the shipped holonomic configuration itself
 - Core unit/property tests, 17 closed-loop scenarios, and 13 Ackermann closed-loop scenarios. The Ackermann set
   includes a run of the shipped example configuration; its narrow-corridor scenario bounds lateral error,
   curvature sign changes and stop ticks, its clutter scenario bounds clearance and stop ticks, and per-cycle

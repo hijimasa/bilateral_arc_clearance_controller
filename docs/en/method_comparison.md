@@ -7,7 +7,7 @@ English | [日本語](../method_comparison.md)
 
 ## Scope of comparison
 
-BAC addresses local path following and obstacle response for a differential-drive or Ackermann robot with a
+BAC addresses local path following and obstacle response for a differential-drive, Ackermann, or holonomic robot with a
 rectangular footprint using 2D LiDAR or costmap points. This document compares it with velocity-space sampling,
 trajectory optimization, strict path tracking, and reactive navigation methods designed for constrained spaces.
 
@@ -36,10 +36,10 @@ Nav2 MPPI rolls out many control sequences from sampled control noise and update
 model and multiple critics. It supports differential-drive, holonomic, and Ackermann models, and can represent
 smooth multi-step avoidance using a longer control sequence.
 
-BAC selects one constant-curvature arc per control tick, with differential-drive or Ackermann candidate policy.
-Its computation and tuning surface are smaller, and bilateral-clearance terms are easier to inspect in logs. In
-exchange, it does not represent an S-shaped control sequence, predict dynamic-obstacle motion, or support
-holonomic lateral motion.
+BAC selects one constant body motion per control tick, with a differential-drive, Ackermann, or holonomic
+candidate policy. Its computation and tuning surface are smaller, and bilateral-clearance terms are easier to
+inspect in logs. In exchange, it does not represent an S-shaped control sequence or predict dynamic-obstacle
+motion, and its published matched-condition benchmark covers the differential-drive model only.
 
 ### Regulated Pure Pursuit (RPP)
 
@@ -69,7 +69,7 @@ path as continuous intent. It does not implement ND-style discrete situation cla
 | MPPI | Time sequence of controls | Costmap and critics | Depends on trajectory cost | Multiple motion models and smooth multi-step trajectories | Higher computation and configuration complexity |
 | RPP | Path-tracking curvature | Collision time and proximity regulation | Depends on the path | Fast, strict path tracking | Local path departure is not its primary avoidance mechanism |
 | VFH / ND | Steering direction or situation-specific strategy | Polar histogram or nearness diagram | Explicit openings and narrow regions | Reactivity and established narrow-space strategies | Integration with paths and body dynamics depends on the implementation |
-| BAC | Constant-curvature `(v,w)` arc | Bilateral arc clearance | Directly penalizes the left–right difference | Geometric passage centering; differential-drive and Ackermann policies | Static points and no holonomic motion; steering/angular transients remain unevaluated |
+| BAC | Constant body motion `(v, vy, w)` | Bilateral arc clearance | Directly penalizes the left–right difference | Geometric passage centering; differential-drive, Ackermann, and holonomic policies | Static points only; steering/angular transients remain unevaluated, and the matched benchmark covers differential drive only |
 
 BAC is not intended as a general replacement for DWA or DWB. It is specialized for narrow openings, lateral path
 offset, and obstacles not yet reflected in the path. This implementation alone does not establish academic

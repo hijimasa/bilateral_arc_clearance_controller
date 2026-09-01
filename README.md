@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-Bilateral Arc Clearance (BAC) is a Nav2 local controller for differential-drive and Ackermann robots. It evaluates the
+Bilateral Arc Clearance (BAC) is a Nav2 local controller for differential-drive, Ackermann, and holonomic robots. It evaluates the
 free space remaining on the left and right sides of candidate arcs. Building on DWA-style velocity candidates
 and stopping admissibility, BAC balances observed bilateral clearance in narrow openings and gives global-path
 tracking priority in open space.
@@ -135,7 +135,8 @@ temporary container.
 Minimal configuration follows. Adjust the footprint, braking capability, and rear sensor coverage for the robot.
 Installable examples are provided for
 [differential drive](config/bac_controller.yaml) and
-[Ackermann steering](config/bac_controller_ackermann.yaml).
+[Ackermann steering](config/bac_controller_ackermann.yaml), and
+[holonomic drive](config/bac_controller_omni.yaml).
 
 ```yaml
 controller_server:
@@ -163,7 +164,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The 17 differential-drive closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator,
-and unicycle kinematics. A separate 13-scenario Ackermann regression drives a plant whose speed is
+and unicycle kinematics. A separate 13-scenario Ackermann regression, and an 8-scenario holonomic one, drive a plant whose speed is
 acceleration-limited and whose curvature slews at a bounded rate, so the commands are checked against a vehicle
 that cannot change its steering instantly. It includes the shipped example configuration, so the file users copy
 is the file the suite defends.
@@ -305,15 +306,23 @@ obstacles just in front of the bumper.
 
 ## Limitations
 
-- BAC supports 2D differential-drive and Ackermann vehicles through constant-curvature arcs; it does not yet
-  support holonomic lateral motion.
+- BAC supports 2D differential-drive, Ackermann, and holonomic vehicles as constant body motions. Under the
+  holonomic model the body still travels on an arc, with a constant offset between the direction of travel and
+  where the body points.
 - In Ackermann mode, the Nav2 command remains body forward speed plus yaw rate, and the vehicle model is a single
   minimum turning radius — the same granularity as the `AckermannConstraints` of Nav2 MPPI. The downstream vehicle
   controller must map the twist to road-wheel steering, for example
   `delta = atan(wheelbase * angular.z / linear.x)`. BAC does not model wheelbase, road-wheel angle, or steering
   rate, and does not read measured steering-joint feedback.
-- A forward-only Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind the vehicle. BAC brakes
-  instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery.
+- A forward-only differential-drive or Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind
+  the vehicle. BAC brakes instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery. The
+  holonomic model reaches it by translating.
+- The holonomic model avoids with lateral velocity and uses yaw to regulate the body onto the local path tangent,
+  so a goal ORIENTATION cannot be commanded: the path `BacCore` receives is a list of positions and carries no
+  orientation, and the final heading converges on the direction of the last path segment. A specific goal yaw
+  would need an API extension.
+- Holonomic lateral motion presumes sensor coverage abeam the body. A front-only lidar cannot see where a
+  crabbing robot is going.
 - It does not estimate obstacle velocity or future obstacle positions.
 - The output yaw rate is limited to a value reachable after one control cycle, but swept motion during the
   corresponding angular-acceleration or steering transient and jerk have not been evaluated.

@@ -55,11 +55,14 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 
 ## 現在の検証contract
 
-- plain CMake Release buildとCTest 8件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 9件。
+- plain CMake Release buildとCTest 10件、ROS 2 Jazzy/Nav2環境ではadapter結合試験を加えたCTest 11件。
   adapter結合試験は既定設定（差動二輪）で実行し、Ackermannのパラメータ配線は独立した試験で検査する。
   両者は同一tickの表と裏を検査するため、`motion_model.type`の誤解決は必ずどちらかが検出する。
   Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
   実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
+- 全方向モデルの単体試験9件と閉ループ8件。閉ループのうち3件は同一世界を差動二輪参照設定でも走らせ、
+  差分を検査する（回避手段が横速度かヨーか、後方goalで整列を挟むか、狭路centeringの精度）。同梱の
+  全方向設定例そのものを走らせる試験を含む。
 - core unit / property testと17 closed-loop scenarios、Ackermann 13 closed-loop scenarios。Ackermann側は
   同梱設定例そのものを走らせる試験を含み、狭路centeringでは横偏差・曲率符号反転・停止tickを、
   clutterではクリアランスと停止tickを閾値検査する。1周期あたりの曲率変化はoffset通路と同梱設定走行で

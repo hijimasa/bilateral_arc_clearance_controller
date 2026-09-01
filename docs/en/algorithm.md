@@ -93,6 +93,17 @@ The published benchmark observations below use the differential-drive model.
 - In a one-run opening-width sweep, it completed openings down to 1.25 m but timed out at 1.15 m after reaching
   0.050 m minimum clearance. The other three controllers completed that 1.15 m trial, so BAC showed no advantage
   at this boundary condition.
+- The holonomic policy avoids with lateral velocity and uses yaw to regulate pose. Its candidate lattice is
+  forward speed × lateral speed, the same size as the differential-drive forward speed × yaw rate lattice, and
+  the yaw rate is fixed before candidate generation so the trajectory that is scored is the trajectory that is
+  driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
+  rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
+  degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is gated to passages — bounded on both
+  sides and open straight ahead. Measured mean lateral error at an entry offset of 0.30 m, for corridor widths
+  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, is 0.013 / 0.014 / 0.012 / 0.012 / 0.016 m against 0.025 / 0.026 / 0.027 /
+  0.037 / 0.035 m for differential drive in the same corridors; at 1.0 m it stops at the mouth. Rounding an
+  isolated obstacle it commands a peak |yaw rate| of 0.036 rad/s where differential drive needs 0.313. It passes
+  seventeen deterministic tests, nine unit and eight closed-loop.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle
   detour, dead-end stop, rear goal, turning-radius binding, yaw-rate-limit binding, clearance-probe reach, the
   shipped example configuration, safety stop (forward-only), safety stop (reverse escape), narrow-corridor
@@ -113,8 +124,11 @@ They are not probabilistic or universal claims about untested environments.
 - Independence from arbitrary failures in the map, TF, plan, odometry, or other upstream components
 - The swept trajectory and jerk during angular-acceleration or steering transients
 - Stop-before-contact behavior including slip, downstream control delay, or control-period overruns
-- Holonomic lateral motion
 - The downstream mapping from body twist to road-wheel steering, and its steering rate and tracking error
+- A commanded goal ORIENTATION under the holonomic model: the path `BacCore` receives carries no orientation, so
+  the final heading converges on the direction of the last path segment
+- Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
+  regressions only
 - Reaching a rear goal with a forward-only Ackermann configuration (`limits.v_min = 0`). BAC stops and leaves the
   multi-point turn to a Nav2 recovery
 

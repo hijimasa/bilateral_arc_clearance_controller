@@ -28,9 +28,11 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 
 | パラメータ | 既定値 | 説明 |
 |---|---:|---|
-| `motion_model.type` | `diff_drive` | 運動学policy。`diff_drive`または`ackermann` |
+| `motion_model.type` | `diff_drive` | 運動学policy。`diff_drive`、`ackermann`、`omni` |
 
-どちらのモデルもNav2標準の車体指令`(linear.x, angular.z)`、すなわち前進速度とヨーレートを出力する。
+`diff_drive`と`ackermann`はNav2標準の車体指令`(linear.x, angular.z)`、すなわち前進速度とヨーレートを
+出力する（`linear.y`は常に0）。`omni`は`linear.y`も出力するため、下位の車両controllerがこれを honor
+する必要がある。
 車両モデルの粒度はnav2 MPPIの`AckermannConstraints`に合わせてあり、追加のパラメータは持たない。
 Ackermannを規定するのは最小旋回半径`turn_radius_min`だけであり、wheelbaseや実舵角、操舵速度といった
 road-wheel kinematicsは下位の車両controllerの責務とする。
@@ -47,6 +49,29 @@ road-wheel kinematicsは下位の車両controllerの責務とする。
 自転車モデルなら`delta = atan(L * angular.z / linear.x)`である。BACは操舵jointの実測値を読まないため、
 実機の操舵追従と操舵速度制限の実行は下位系の責務であり、別途検証する。
 
+`omni`では**回避を担うのは横速度であり、ヨーレートではない**。全方向車体は向きを変えずに障害物を
+横へ避けられるため、ヨーを探索しても回避には寄与しない。したがって候補格子は
+「前進速度 × 横速度」であり、差動二輪の「前進速度 × ヨーレート」と**同じ大きさ**である。三次元格子には
+ならない。
+
+ヨーレートは探索の自由度ではなく姿勢規範として決まる。局所経路接線への比例制御（利得`heading_gain`）
+であり、**候補生成の前に確定して全候補で共通の値を持つ**。この順序に意味がある。ヨーを先に決めるため、
+採点し接触判定する軌道と実際に走る軌道が一致する。
+
+狭所ではさらに、左右クリアランスの不均衡を姿勢規範へ加える。斜行する矩形は直進する矩形より広い幅を
+掃引するため（0.7 × 0.5 mの車体が55°で0.86 m、直進なら0.5 m）、横方向の余裕が最も乏しい場所でこそ
+斜行は高くつく。機体を隙間へ向ければ、車体が既に占めている幅のまま同じ場所へ到達できる。この項は
+`tightness`で重み付けされ、かつ「両側がcap以内**かつ**正面が塞がっていない」通路条件でのみ働く。
+孤立障害物では左右クリアランスが障害物自身の両縁を指すため、均衡させると障害物へ突っ込む。
+
+速度上限は軸ごとではなく**速度ベクトル**に掛かる。軸ごとなら`hypot(limits.v_max, limits.vy_max)`まで
+出てしまう。近接速度ガバナのcapも同じくベクトルに掛かる。前進軸だけに掛けると、障害物の手前で前進は
+減速しながら横滑りは`limits.vy_max`のまま続き、掃引幅が最大になる方向だけが減速対象外になる。
+
+`omni`では`limits.vy_max`が正でなければならない。0のままモデルを選ぶと、操舵できない差動二輪へ黙って
+degradeするため、configure時にthrowする。**横移動は車体の側方に対するセンサ被覆を要求する。**
+これは`limits.v_min`が後退について負うのと同じ注意である。
+
 ## 速度・候補生成
 
 | パラメータ | 既定値 | 説明 |
@@ -62,6 +87,9 @@ road-wheel kinematicsは下位の車両controllerの責務とする。
 | `w_samples` | 25 | 差動二輪のヨーレート、またはAckermannの車体曲率の粗サンプル数 |
 | `w_refine_steps` | 3 | 粗い最良ヨーレート／曲率候補の片側をこの本数だけ細分再評価。0で無効 |
 | `turn_radius_min` | 0.25 | 最小旋回半径 [m]。`diff_drive`では並進候補（前進・後退とも）のclearance評価が退化しないための下限、`ackermann`では候補曲率そのものを縛る運動学制約であり正の値が必須 |
+| `limits.vy_max` | 0.0 | `omni`のみ。横速度の権限 [m/s]。正でなければならない。側方のセンサ被覆が前提 |
+| `heading_gain` | 1.5 | `omni`のみ。姿勢規範の比例利得 [1/s]。0で機体方位を固定する（360°センシングを持つ車体向け） |
+| `vy_samples` | 15 | `omni`のみ。前進速度1行あたりの横速度サンプル数。`w_samples`の対応物で、3以上 |
 | `velocity_min` | 0.005 | これ未満の出力速度を 0 に丸める [m/s]。Ackermannでは速度なしのヨーレートが実現不能なため`angular.z`も同時に0にする |
 | `angvel_min` | 0.01 | 差動二輪のみ。これ未満の出力角速度を0に丸める [rad/s]。Ackermannでは低速でも小さなヨーレートが有意な曲率を表すため適用せず、曲率が0とみなせるときだけ`angular.z`を0にする |
 
@@ -87,7 +115,7 @@ road-wheel操舵速度を保証するものではない。加速・操舵過渡�
 | `weights.balance` | 4.0 | 狭所での左右差ペナルティ |
 | `weights.path_dist` | 1.0 | 経路追従コスト（残り射影弧長＋横偏差）の重み |
 | `weights.heading` | 0.15 | 終端方位誤差 |
-| `weights.hysteresis` | 0.6 | 前回の出力指令（到達可能性クランプとdeadband適用後）との差。差動二輪ではヨーレート差 [score per rad/s]、Ackermannでは曲率差 [score per 1/m] |
+| `weights.hysteresis` | 0.6 | 前回の出力指令（到達可能性クランプとdeadband適用後）との差。差動二輪ではヨーレート差 [score per rad/s]、Ackermannでは曲率差 [score per 1/m]、`omni`では横速度差 [score per m/s] |
 | `weights.squeeze` | 0.5 | 側方余裕が小さいときの速度ペナルティ |
 
 `weights.hysteresis`の単位はモデルで異なる。差動二輪では[score per rad/s]でヨーレート差に、

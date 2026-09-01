@@ -4,6 +4,30 @@ Changelog for package bilateral_arc_clearance_controller
 
 Forthcoming
 -----------
+* Add a holonomic (omnidirectional) motion model, ``motion_model.type: omni``.
+  Lateral velocity is the avoidance dimension, not yaw rate: the candidate
+  lattice is forward speed x lateral speed, the same size as the
+  differential-drive forward speed x yaw rate lattice. The yaw rate regulates
+  the body onto the local path tangent and is fixed before candidate
+  generation, so the trajectory that is scored and contact-checked is the one
+  that is driven. In a passage the regulator also points the body into the gap
+  rather than crabbing towards it, because a crabbing rectangle sweeps wider
+  than a straight one. Requires a positive ``limits.vy_max`` and sensor
+  coverage abeam the body, and it publishes ``cmd_vel.linear.y``, which the
+  downstream base controller must honour. A goal ORIENTATION cannot be
+  commanded: the path ``BacCore`` receives carries no orientation.
+* Generalise the swept-trajectory evaluator from "velocity is along body +x" to
+  an arbitrary constant body twist. The centre of rotation moves from
+  ``(0, v / w)`` to ``(-vy / w, v / w)`` and the footprint's leading, trailing
+  and lateral extents become support functions of the direction of travel.
+  Substituting ``vy = 0`` reproduces the previous closed forms exactly, so
+  differential drive and Ackermann run the generalised code with byte-identical
+  output rather than a preserved special case.
+* ``Twist2D`` gains a ``vy`` field defaulting to zero, and the scorer and output
+  stage carry a full body twist instead of a ``(v, w)`` scalar pair. Every
+  non-holonomic model produces and consumes ``vy == 0``.
+* Add deterministic holonomic unit and closed-loop regression tests plus an
+  installable holonomic Nav2 configuration.
 * Add an Ackermann motion model that samples body curvature within
   ``turn_radius_min``, never offers in-place rotation, and preserves the Nav2
   forward-speed/yaw-rate command contract. The vehicle model is described at

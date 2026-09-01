@@ -27,10 +27,11 @@ the safety margin. The default is zero with raw scans and half the cell resoluti
 
 | Parameter | Default | Description |
 |---|---:|---|
-| `motion_model.type` | `diff_drive` | Kinematic policy: `diff_drive` or `ackermann` |
+| `motion_model.type` | `diff_drive` | Kinematic policy: `diff_drive`, `ackermann`, or `omni` |
 
-Both models expose the Nav2-standard body command `(linear.x, angular.z)`, interpreted here as forward speed and
-yaw rate. The vehicle model is described at the same granularity as the `AckermannConstraints` of Nav2 MPPI and
+`diff_drive` and `ackermann` expose the Nav2-standard body command `(linear.x, angular.z)`, interpreted here as
+forward speed and yaw rate, and always publish `linear.y` as zero. `omni` also publishes `linear.y`, which the
+downstream base controller must honour. The vehicle model is described at the same granularity as the `AckermannConstraints` of Nav2 MPPI and
 takes no parameters of its own: the minimum turning radius `turn_radius_min` is the entire Ackermann
 specification. Road-wheel kinematics — wheelbase, steering angle, steering rate — belong to the downstream
 vehicle controller.
@@ -49,6 +50,32 @@ of wheelbase `L`, `delta = atan(L * angular.z / linear.x)`. BAC does not read me
 physical steering tracking and steering-rate enforcement are the downstream controller's responsibility and
 require separate validation.
 
+With `omni`, **lateral velocity is the avoidance dimension, not yaw rate**. A holonomic body can side-step an
+obstacle without changing where it points, so searching over yaw would spend the candidate budget on a degree of
+freedom that avoids nothing. The candidate lattice is therefore forward speed × lateral speed — the **same size**
+as the differential-drive forward speed × yaw rate lattice, not a three-dimensional one.
+
+The yaw rate is not a searched dimension but a regulator output: proportional on the heading error to the local
+path tangent, with gain `heading_gain`, **decided before candidate generation and shared by every candidate**.
+That ordering is the point. Because yaw is fixed first, the trajectory that is scored and contact-checked is the
+trajectory that is driven.
+
+In a passage the regulator also takes the bilateral clearance imbalance into account, pointing the body INTO the
+gap. A crabbing rectangle sweeps wider than a straight one — 0.86 m at 55 degrees for a 0.7 × 0.5 m body against
+0.5 m going straight — so exactly where lateral room is scarce, crabbing is the expensive way to use it. Turning
+reaches the same place through the width the body already occupies. The term is scaled by `tightness` and gated
+to passages: bounded on both sides **and** open straight ahead. Around an isolated obstacle the two clearances
+are the obstacle's own edges, so balancing them would steer into it.
+
+The speed limit applies to the velocity **vector**, not per axis; a per-axis cap would admit
+`hypot(limits.v_max, limits.vy_max)`. The proximity speed governor's cap applies to the vector as well: bounding
+only the forward axis would slow the vehicle in front of an obstacle while it still slid sideways at full
+`limits.vy_max`, leaving the direction of largest swept width unmoderated.
+
+`omni` requires a positive `limits.vy_max`; selecting the model with zero lateral authority would silently
+degrade it to a drive that cannot steer, so the controller throws during configuration. **Sideways motion needs
+sensor coverage abeam the body** — the same caveat `limits.v_min` carries for reverse.
+
 ## Velocity and candidate generation
 
 | Parameter | Default | Description |
@@ -64,6 +91,9 @@ require separate validation.
 | `w_samples` | 25 | Number of coarse yaw-rate samples for differential drive or body-curvature samples for Ackermann |
 | `w_refine_steps` | 3 | Fine samples added on each side of the best coarse yaw-rate/curvature candidate; 0 disables refinement |
 | `turn_radius_min` | 0.25 | Minimum turn radius [m]. For `diff_drive` it is the lower bound that keeps clearance scoring of translating candidates from degenerating; for `ackermann` it is the kinematic constraint that bounds candidate curvature itself and must be positive |
+| `limits.vy_max` | 0.0 | `omni` only. Lateral speed authority [m/s]; must be positive, and presumes sensor coverage abeam the body |
+| `heading_gain` | 1.5 | `omni` only. Proportional gain of the pose regulator [1/s]. 0 holds the heading fixed, which suits a body with 360-degree sensing |
+| `vy_samples` | 15 | `omni` only. Lateral-velocity samples per forward-speed row, the counterpart of `w_samples`; at least 3 |
 | `velocity_min` | 0.005 | Output linear speeds below this value are rounded to zero [m/s]. Ackermann zeroes the whole command, since a yaw rate without speed is not realizable |
 | `angvel_min` | 0.01 | Differential drive only: output angular speeds below this value are rounded to zero [rad/s]. Ackermann does not apply it, because a small yaw rate at low speed can still represent material curvature; it zeroes `angular.z` only when the curvature itself is negligible |
 
@@ -91,7 +121,7 @@ executing those limits.
 | `weights.balance` | 4.0 | Left–right difference penalty in tight spaces |
 | `weights.path_dist` | 1.0 | Weight for path cost: remaining projected arc length plus lateral offset |
 | `weights.heading` | 0.15 | Endpoint heading-error weight |
-| `weights.hysteresis` | 0.6 | Weight for change from the previous output command, after the reachability clamp and deadband: yaw rate for differential drive [score per rad/s], curvature for Ackermann [score per 1/m] |
+| `weights.hysteresis` | 0.6 | Weight for change from the previous output command, after the reachability clamp and deadband: yaw rate for differential drive [score per rad/s], curvature for Ackermann [score per 1/m], lateral velocity for `omni` [score per m/s] |
 | `weights.squeeze` | 0.5 | Speed penalty under small lateral clearance |
 
 `weights.hysteresis` carries different units per model: [score per rad/s] against yaw-rate change for

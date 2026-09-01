@@ -94,6 +94,25 @@ controllerの責務である。`turn_radius_min`は幾何的な最小値では�
 停止するため、標準behavior treeの`BackUp`などNav2側のrecoveryを設定するか、後方センサcoverageを
 確保したうえで`limits.v_min < 0`で後退を許可する。
 
+## 全方向指令contract
+
+`motion_model.type: omni`とともに、横速度の権限`limits.vy_max`を正の値で設定する。0のままだと
+configureに失敗する。全体は install対象の[全方向設定例](../config/bac_controller_omni.yaml)に示す。
+
+**このモデルは`cmd_vel`の`linear.y`を出力する。** 下位の車両controllerがこれをhonorしなければ、BACが
+避けたつもりの障害物へ直進する。`diff_drive`と`ackermann`では`linear.y`は常に0であり、既存の利用者は
+影響を受けない。同様に、現在速度の入力も`linear.y`を読む。odometryのtwistに横速度が埋まっていない
+全方向platformでは、加速度窓の起点が常に0になり、横方向の応答が実際より鈍く見積もられる。
+
+回避を担うのは横速度であり、ヨーレートではない。ヨーレートは局所経路接線への姿勢規範として決まり、
+候補生成の前に確定して全候補で共通である。したがって**goal姿勢は指定できない**。`BacCore`が受け取る
+経路は位置列であり向きを持たないため、終端姿勢は最終経路セグメントの向きに収束する。
+`heading_gain: 0.0`とすれば機体方位を固定したまま並進する（360°センシングを持つplatform向け）。
+
+**横移動は車体側方のセンサ被覆を要求する。** これは`limits.v_min < 0`が後方について負うのと同じ注意で
+あり、前方のみのLiDARでは斜行先が見えない。`limits.vy_max`はdrivetrainの能力ではなく、実際に観測できて
+いる範囲から決める。
+
 ## Collision Monitorとの併用
 
 [Collision Monitor](https://docs.nav2.org/rolling/configuration_and_development/configuration_guide/core_servers/collision_monitor/)

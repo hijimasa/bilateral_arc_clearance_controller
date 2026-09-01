@@ -98,6 +98,27 @@ A forward-only Ackermann configuration (`limits.v_min = 0`) cannot reach a goal 
 rather than fabricating a spin, so configure a Nav2 recovery — the standard behavior tree's `BackUp` — for that
 case, or enable reverse with `limits.v_min < 0` and adequate rear sensor coverage.
 
+## Holonomic command contract
+
+Set `motion_model.type: omni` together with a positive `limits.vy_max`; configuration fails with zero lateral
+authority. The installed [holonomic example](../../config/bac_controller_omni.yaml) shows the whole block.
+
+**This model publishes `cmd_vel.linear.y`.** A downstream base controller that ignores it will drive straight
+into the obstacle BAC believed it had avoided. `diff_drive` and `ackermann` always publish zero there, so
+existing users are unaffected. The current-velocity input reads `linear.y` as well: on a holonomic platform whose
+odometry twist leaves it unfilled, the acceleration window always starts from zero and the lateral response is
+under-estimated.
+
+Lateral velocity does the avoiding, not yaw. The yaw rate is a pose regulator onto the local path tangent,
+decided before candidate generation and shared by every candidate, so a goal ORIENTATION cannot be commanded: the
+path `BacCore` receives is a list of positions and carries no orientation, and the final heading converges on the
+direction of the last path segment. `heading_gain: 0.0` holds the heading fixed while translating, which suits a
+platform with 360-degree sensing.
+
+**Sideways motion needs sensor coverage abeam the body** — the same caveat `limits.v_min < 0` carries for the
+rear. A front-only lidar cannot see where a crabbing robot is going, so set `limits.vy_max` from the observed
+field of view, not from the drivetrain.
+
 ## Using Collision Monitor
 
 [Collision Monitor](https://docs.nav2.org/rolling/configuration_and_development/configuration_guide/core_servers/collision_monitor/)

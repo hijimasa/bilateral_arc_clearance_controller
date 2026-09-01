@@ -3,7 +3,7 @@
 [English](README.md) | 日本語
 
 Bilateral Arc Clearance（BAC、左右分離円弧クリアランス）は、候補円弧の左右に残る自由幅を直接評価する、
-差動二輪・Ackermann車両向けのNav2ローカルcontrollerです。DWAの速度候補と停止可能性判定を基礎に、狭い開口では
+差動二輪・Ackermann・全方向車両向けのNav2ローカルcontrollerです。DWAの速度候補と停止可能性判定を基礎に、狭い開口では
 実観測上の左右クリアランスを釣り合わせ、広い場所ではグローバル経路の追従を優先します。
 
 ![BACが候補円弧の左右クリアランスを評価する幾何](docs/images/bac_geometry.svg)
@@ -126,7 +126,7 @@ checkoutはread-onlyでmountされ、ビルド生成物は一時コンテナ内�
 
 最小構成例です。車体寸法、制動能力、後方視野は実機に合わせて変更してください。
 install対象の例は[差動二輪](config/bac_controller.yaml)と
-[Ackermann操舵](config/bac_controller_ackermann.yaml)に分けて用意しています。
+[Ackermann操舵](config/bac_controller_ackermann.yaml)、[全方向](config/bac_controller_omni.yaml)に分けて用意しています。
 
 ```yaml
 controller_server:
@@ -154,7 +154,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 差動二輪の17本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を
-含みます。別のAckermann回帰試験13本では、速度が加速度制限され曲率が有限速度でしか変化しないplantを使い、
+含みます。別のAckermann回帰試験13本と全方向回帰試験8本では、速度が加速度制限され曲率が有限速度でしか変化しないplantを使い、
 操舵を即座に変えられない車両に対して指令を検証します。同梱の設定例そのものを走らせる試験を含むため、
 利用者がコピーするファイルが試験の対象になります。
 
@@ -283,13 +283,18 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
 
 ## 制約
 
-- 2Dの差動二輪とAckermann車両を定曲率円弧として扱います。holonomicな横移動は未対応です。
+- 2Dの差動二輪・Ackermann・全方向車両を、定曲率の車体運動として扱います。全方向モデルでは進行方向と
+  機体方位が一定角だけずれた円弧になります。
 - AckermannモードでもNav2への出力は車体前進速度とヨーレートであり、車両モデルは最小旋回半径1つです。
   これはnav2 MPPIの`AckermannConstraints`と同じ粒度です。下位の車両controllerで、たとえば
   `delta = atan(wheelbase * angular.z / linear.x)`により実舵角へ変換する必要があります。BACはwheelbase、
   実舵角、操舵速度をモデル化せず、操舵jointの実測feedbackも読みません。
-- 前進のみの設定（`limits.v_min = 0`）では車体後方のgoalに到達できません。BACはその場旋回を捏造せず
-  停止し、切り返しはNav2側のrecoveryに委ねます。
+- 前進のみの設定（`limits.v_min = 0`）では、差動二輪とAckermannは車体後方のgoalに到達できません。BACは
+  その場旋回を捏造せず停止し、切り返しはNav2側のrecoveryに委ねます。全方向モデルは横移動で到達できます。
+- 全方向モデルは回避を横速度で行い、ヨーレートは経路接線への姿勢規範として使います。したがって
+  goal姿勢の指定はできません。`BacCore`が受け取る経路は位置列であり向きを持たないためで、終端姿勢は
+  最終経路セグメントの向きに収束します。特定のgoal姿勢が要る場合はAPI拡張が必要です。
+- 全方向モデルの横移動は車体側方のセンサ被覆を前提とします。前方のみのLiDARでは、斜行先が見えません。
 - 動的障害物の速度・将来位置は推定しません。
 - 出力ヨーレートを1制御周期後に到達可能な範囲へ制限しますが、角加速度・操舵過渡中の掃引軌道とjerkは
   未評価です。

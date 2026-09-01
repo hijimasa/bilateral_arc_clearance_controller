@@ -124,4 +124,53 @@ if run_filter_node "${RADIUS_LOG}" \
 fi
 echo "Ackermann installed-configuration checks passed."
 
+readonly OMNI_LOG="${WORK_DIR}/omni-tests.log"
+if ! ctest --test-dir "${WORK_DIR}/build/${PACKAGE_NAME}" \
+    --label-regex omni --output-on-failure >"${OMNI_LOG}" 2>&1; then
+  echo "Holonomic labelled tests failed:" >&2
+  cat "${OMNI_LOG}" >&2
+  exit 4
+fi
+OMNI_TEST_COUNT=$(sed -n 's/^.*tests passed, .* out of \([0-9][0-9]*\).*$/\1/p' \
+    "${OMNI_LOG}" | tail -n 1)
+readonly OMNI_TEST_COUNT
+if [[ -z "${OMNI_TEST_COUNT}" || "${OMNI_TEST_COUNT}" -lt 2 ]]; then
+  echo "Expected at least 2 tests labelled 'omni', found '${OMNI_TEST_COUNT:-0}'" >&2
+  cat "${OMNI_LOG}" >&2
+  exit 4
+fi
+echo "Holonomic labelled tests: ${OMNI_TEST_COUNT} passed."
+
+readonly OMNI_CONFIG="${PACKAGE_PREFIX}/share/${PACKAGE_NAME}/config/bac_controller_omni.yaml"
+if [[ ! -f "${OMNI_CONFIG}" ]]; then
+  echo "Installed holonomic configuration was not found: ${OMNI_CONFIG}" >&2
+  exit 5
+fi
+if ! grep -q 'motion_model.type: omni' "${OMNI_CONFIG}"; then
+  echo "Installed holonomic configuration does not select the holonomic model" >&2
+  exit 5
+fi
+
+readonly OMNI_VALID_LOG="${WORK_DIR}/omni-node-valid.log"
+OMNI_VALID_STATUS=0
+run_filter_node "${OMNI_VALID_LOG}" \
+  -p motion_model.type:=omni -p limits.vy_max:=0.3 || OMNI_VALID_STATUS=$?
+readonly OMNI_VALID_STATUS
+if [[ "${OMNI_VALID_STATUS}" -ne 124 ]]; then
+  echo "Holonomic filter node exited with ${OMNI_VALID_STATUS} instead of running:" >&2
+  cat "${OMNI_VALID_LOG}" >&2
+  exit 6
+fi
+
+# Selecting the holonomic model without lateral authority would silently
+# degrade it to a drive that cannot steer, so it must be refused.
+readonly OMNI_VY_LOG="${WORK_DIR}/omni-node-vy.log"
+if run_filter_node "${OMNI_VY_LOG}" \
+    -p motion_model.type:=omni -p limits.vy_max:=0.0; then
+  echo "A holonomic configuration with zero limits.vy_max was accepted:" >&2
+  cat "${OMNI_VY_LOG}" >&2
+  exit 6
+fi
+echo "Holonomic installed-configuration checks passed."
+
 echo "ROS 2 Jazzy/Nav2 plugin build and tests passed."
