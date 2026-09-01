@@ -148,6 +148,44 @@ testSpeedCapAppliesToTheVector()
              std::to_string(limited.vy / limited.v) + " vs 0.75)");
 }
 
+/// The proximity speed governor hands down a cap below limits.v_max. It has to
+/// bound the velocity VECTOR: if it bound only the forward axis, the vehicle
+/// would slow down in front of an obstacle while still sliding sideways at full
+/// authority, in the direction whose swept width is largest.
+void
+testGovernorCapBoundsTheVector()
+{
+  bac::Params params = omniParams();
+  params.limits.acc_v = 100.0f;  // the acceleration window must not be what binds
+  const bac::detail::OmniMotionModel model(params);
+
+  const float governor_cap = 0.15f;  // well below limits.v_max = 0.4
+  const bac::detail::CandidateBatch batch =
+      model.sampleCandidates(bac::Twist2D(0.4f, 0.0f, 0.0f), governor_cap, 0.0f);
+
+  float worst_speed = 0.0f;
+  float worst_lateral = 0.0f;
+  int lateral_candidates = 0;
+  for (const bac::Twist2D &command : batch.commands)
+  {
+    worst_speed = std::max(worst_speed, command.speed());
+    worst_lateral = std::max(worst_lateral, std::fabs(command.vy));
+    if (std::fabs(command.vy) > 1e-3f)
+    {
+      ++lateral_candidates;
+    }
+  }
+  expect(worst_speed <= governor_cap + 1e-4f,
+         "no candidate outruns the governor's cap (worst " + std::to_string(worst_speed) +
+             " vs " + std::to_string(governor_cap) + " m/s)");
+  expect(worst_lateral <= governor_cap + 1e-4f,
+         "the cap reaches the lateral axis too (worst |vy| " + std::to_string(worst_lateral) +
+             " vs " + std::to_string(governor_cap) + " m/s)");
+  expect(lateral_candidates > 0,
+         "lateral candidates still exist under the cap, so the checks above are not "
+         "vacuous (" + std::to_string(lateral_candidates) + ")");
+}
+
 /// Lateral velocity is acceleration-limited like the forward axis: the same
 /// wheels drive both.
 void
@@ -359,6 +397,7 @@ main()
   testYawIsNotSearched();
   testLatticeOffersBothLateralDirections();
   testSpeedCapAppliesToTheVector();
+  testGovernorCapBoundsTheVector();
   testLateralAccelerationWindow();
   testHysteresisMeasuresLateralVelocity();
   testDecelerationPreservesTrajectoryGeometry();

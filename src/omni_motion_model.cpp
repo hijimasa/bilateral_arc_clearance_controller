@@ -89,14 +89,27 @@ OmniMotionModel::sampleCandidates(const Twist2D &current, float linear_speed_cap
     }
   }
 
+  // The cap the caller passes is the proximity speed governor's, already
+  // moderated for what is close by. It has to bound the velocity VECTOR, not
+  // just the forward axis. Capping only the forward component leaves the
+  // lateral samples at full authority, so the governor slows the vehicle
+  // FORWARD while it still slides sideways at up to limits.vy_max - and the
+  // sideways direction is the one whose swept width is largest. Measured in a
+  // 1.1-1.3 m corridor: with the cap on the forward axis alone the vehicle
+  // leaves the corridor mouth sideways and strands itself against the outer
+  // wall at |y| ~ 1.2 m; with the cap on the vector it stops cleanly at the
+  // mouth instead. (The set of crab ANGLES is the same either way - capSpeed
+  // scales the vector and preserves its direction - what changes is how fast
+  // the vehicle commits to one.)
+  const float speed_cap = std::max(std::fabs(linear_speed_cap), std::fabs(params_.limits.v_min));
+
   CandidateBatch batch;
   batch.commands.reserve(forward_speeds.size() * lateral_speeds.size());
   for (float v : forward_speeds)
   {
     for (float vy : lateral_speeds)
     {
-      batch.commands.push_back(
-          capSpeed(Twist2D(v, yaw_reference, vy), params_.limits.v_max));
+      batch.commands.push_back(capSpeed(Twist2D(v, yaw_reference, vy), speed_cap));
     }
   }
   return batch;
@@ -125,8 +138,11 @@ OmniMotionModel::refinementCandidates(const Twist2D &coarse_best) const
     {
       if (vy >= -params_.limits.vy_max && vy <= params_.limits.vy_max)
       {
+        // Refinement adjusts the direction of travel, never the speed: capping
+        // to the coarse winner's own speed keeps the refined candidates inside
+        // the envelope the governor already admitted.
         commands.push_back(
-            capSpeed(Twist2D(coarse_best.v, coarse_best.w, vy), params_.limits.v_max));
+            capSpeed(Twist2D(coarse_best.v, coarse_best.w, vy), coarse_best.speed()));
       }
     }
   }

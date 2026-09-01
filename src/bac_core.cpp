@@ -707,6 +707,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // lateral authority).
   float tightness  = 0.0f;
   float probe_best = 0.0f;
+  // Bilateral imbalance seen by the straight probe when it is threading a
+  // passage. Used below to bias the pose regulator of a model that does not
+  // search over yaw.
+  float probe_center_bias = 0.0f;
   {
     float v_probe    = std::max(v_cap, 0.1f);
     float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
@@ -719,8 +723,27 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       {
         dist_clear = std::min(dist_clear, (v_probe / std::fabs(wp)) * params_.eval_angle_max);
       }
-      ArcEvaluation eval = evaluateArcWindows(filtered_points, v_probe, wp, dist_clear, probe_dist);
+      // The probe command carries the model's own shape - a holonomic model
+      // probes crabbed directions - so it is evaluated whole, not as (v, w).
+      const Twist2D probe_command(v_probe, wp, probe.vy);
+      ArcEvaluation eval =
+          evaluateArcWindows(filtered_points, probe_command, dist_clear, probe_dist);
       probe_best = std::max(probe_best, std::min(eval.clearance_left, eval.clearance_right));
+      // A PASSAGE, not an obstacle: bounded on both sides within the cap, and
+      // open straight ahead. The second half is what separates a corridor from
+      // a box in the road - for a box, the two "sides" are the obstacle's own
+      // edges, so balancing them steers into it. Measured without this gate:
+      // the detour run stops 3.8 m short of the goal and yaws MORE than the
+      // differential-drive reference (0.443 vs 0.313 rad/s).
+      if (std::fabs(wp) <= 1e-4f && std::fabs(probe.vy) <= 1e-4f &&
+          eval.blocking_s >= FLT_MAX && eval.clearance_left < clearance_cap &&
+          eval.clearance_right < clearance_cap)
+      {
+        const float total = eval.clearance_left + eval.clearance_right;
+        probe_center_bias = (total > 1e-3f)
+                                ? (eval.clearance_left - eval.clearance_right) / total
+                                : 0.0f;
+      }
     }
     float cap_floor_probe = params_.footprint.width / 2.0f + params_.safety_margin.side;
     float probe_clamped   = std::max(cap_floor_probe, std::min(probe_best, clearance_cap));
@@ -755,9 +778,18 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // this tick. Proportional on the heading error to the local path tangent,
   // saturated at the configured yaw limit; the output stage still applies the
   // one-cycle acceleration bound. Non-holonomic models ignore it.
+  // In a passage, point the body INTO the gap rather than crabbing towards it.
+  // Both reach the same place, but a crabbing rectangle sweeps wider than a
+  // straight one - 0.86 m at 55 degrees for a 0.7 x 0.5 m body against 0.5 m
+  // going straight - so exactly where lateral room is scarce, crabbing is the
+  // expensive way to use it. Scaled by tightness, and gated to passages at the
+  // probe, this is inactive in the open and inactive in front of an obstacle,
+  // where the candidate search does the avoiding.
+  constexpr float kCenteringHeading = 0.6f;  // [rad] at full imbalance
+  const float heading_error =
+      relative_path_heading + tightness * kCenteringHeading * probe_center_bias;
   const float yaw_reference =
-      std::min(std::max(params_.heading_gain * relative_path_heading,
-                        -params_.limits.w_max),
+      std::min(std::max(params_.heading_gain * heading_error, -params_.limits.w_max),
                params_.limits.w_max);
 
   const detail::CandidateBatch candidate_batch =
