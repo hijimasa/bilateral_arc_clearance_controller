@@ -138,9 +138,42 @@ testGoalHeadingIsRefused()
          "differential drive does not accept a commanded goal orientation");
 }
 
+/// `withLinearSpeed` takes a SPEED and the model recovers the direction of
+/// travel. R16 H5: when the sign moved out of the caller and into the model,
+/// nothing checked that the model recovers it - a mutation that always resolved
+/// forward flipped a reversing command while ctest stayed green.
+void
+testWithLinearSpeedKeepsTheDirectionOfTravel()
+{
+  bac::Params params;
+  params.limits.v_min = -0.2f;
+  const bac::detail::DiffDriveMotionModel model(params);
+
+  const bac::Twist2D forward(0.30f, 0.20f);
+  const bac::Twist2D slower_forward = model.withLinearSpeed(forward, 0.12f);
+  expect(slower_forward.v > 0.0f,
+         "a forward command stays forward when slowed (v " +
+             std::to_string(slower_forward.v) + ")");
+  expect(std::fabs(slower_forward.v - 0.12f) < 1e-5f,
+         "and reaches the requested speed");
+  expect(std::fabs(slower_forward.w / slower_forward.v - forward.w / forward.v) < 1e-4f,
+         "preserving the curvature");
+
+  const bac::Twist2D reverse(-0.18f, 0.10f);
+  const bac::Twist2D slower_reverse = model.withLinearSpeed(reverse, 0.09f);
+  expect(slower_reverse.v < 0.0f,
+         "a reversing command stays reversing when slowed (v " +
+             std::to_string(slower_reverse.v) + ")");
+  expect(std::fabs(std::fabs(slower_reverse.v) - 0.09f) < 1e-5f,
+         "and reaches the requested speed");
+  expect(std::fabs(slower_reverse.w / slower_reverse.v - reverse.w / reverse.v) < 1e-4f,
+         "preserving the curvature");
+}
+
 int
 main()
 {
+  testWithLinearSpeedKeepsTheDirectionOfTravel();
   testGoalHeadingIsRefused();
   testTranslatingTurnRadiusGuard();
   testCandidateOrderingAndReachability();

@@ -499,6 +499,123 @@ testEmittedCommandCanAlwaysStop()
              std::to_string(violations) + " violations; first: " + worst + ")");
 }
 
+/// The same invariant as above, but with acceleration limits that BIND, so the
+/// output reachability stage and the emergency fallback are the code deciding
+/// what gets published. R16 H4 found that the R15 fix to the fallback ladder
+/// was never executed by any test, because the sweep above deliberately raises
+/// the acceleration limits to isolate the candidate stage. Measured over this
+/// grid the fallback is entered 318 times and its gate actually rejects the
+/// combined twist 67 times, so the ladder is exercised rather than merely
+/// reached.
+///
+/// This pass is also what caught R16 H2: before the deadband was re-checked,
+/// it left 7 published twists that could not stop, every one of them a crab
+/// whose yaw rate had been zeroed after the arc was checked.
+void
+testEmittedCommandCanStopWhenAccelerationBinds()
+{
+  unsigned seed = 7u;
+  const auto next = [&seed]() {
+    seed = seed * 1664525u + 1013904223u;
+    return static_cast<float>((seed >> 8) & 0xFFFFu) / 65535.0f;
+  };
+
+  int checked = 0;
+  int violations = 0;
+  std::string worst;
+  for (int trial = 0; trial < 40000; ++trial)
+  {
+    bac::Params params;
+    params.motion_model.type = bac::MotionModelType::OMNI;
+    params.limits.v_max = 0.2f + next() * 0.6f;
+    params.limits.vy_max = 0.1f + next() * 0.6f;
+    params.limits.v_min = 0.0f;
+    params.limits.w_max = 0.5f + next() * 1.5f;
+    // Low enough that one control period cannot cancel the current velocity.
+    params.limits.acc_v = 0.1f + next() * 0.5f;
+    params.limits.acc_w = 0.2f + next() * 1.0f;
+    params.control_period = 0.05f;
+    params.stop_decel = 0.4f + next() * 1.6f;
+    params.brake_reaction_time = next() * 0.25f;
+    params.footprint.front = 0.2f + next() * 0.3f;
+    params.footprint.rear = -(0.2f + next() * 0.3f);
+    params.footprint.width = 0.3f + next() * 0.5f;
+    params.safety_margin.front = 0.05f + next() * 0.3f;
+    params.safety_margin.rear = params.safety_margin.front;
+    params.safety_margin.side = 0.05f + next() * 0.3f;
+    params.avoid_margin.side = 0.4f + next() * 0.6f;
+    params.sim_time = 1.5f + next() * 2.0f;
+    params.heading_gain = next() * 3.0f;
+    bac::BacCore core(params);
+
+    std::vector<bac::Point2D> points;
+    const float bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    const float distance = 0.35f + next() * 1.0f;
+    for (int k = -14; k <= 14; ++k)
+    {
+      const float spread = 0.05f * static_cast<float>(k);
+      points.push_back({ distance * std::cos(bearing) - spread * std::sin(bearing),
+                         distance * std::sin(bearing) + spread * std::cos(bearing) });
+    }
+    const float path_bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    std::vector<bac::Point2D> path;
+    for (int i = 1; i <= 20; ++i)
+    {
+      const float r = 0.25f * static_cast<float>(i);
+      path.push_back({ r * std::cos(path_bearing), r * std::sin(path_bearing) });
+    }
+    const bac::Twist2D current(next() * params.limits.v_max,
+                               (next() * 2.0f - 1.0f) * params.limits.w_max,
+                               (next() * 2.0f - 1.0f) * params.limits.vy_max);
+
+    const bac::Result result = core.process(points, path, current);
+    const bac::Twist2D out = result.output;
+    const float speed = out.speed();
+    if (speed <= 1e-3f)
+    {
+      continue;
+    }
+    const float horizon = std::max(speed * params.sim_time, params.min_eval_distance);
+    const bac::ArcEvaluation eval = core.evaluateArcWindows(points, out, horizon, horizon);
+    if (eval.blocking_s >= 1e9f)
+    {
+      continue;
+    }
+    const float ux = out.v / speed;
+    const float uy = out.vy / speed;
+    const float margin =
+        ((ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux) +
+        params.safety_margin.side * std::fabs(uy);
+    const float free_run = eval.blocking_s - margin;
+    if (free_run <= 0.0f)
+    {
+      continue;  // the escape regime, as above
+    }
+    ++checked;
+    const float decel = std::max(params.stop_decel, 0.1f);
+    const float needed = speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+    if (free_run <= needed - 1e-4f)
+    {
+      if (violations == 0)
+      {
+        worst = "trial " + std::to_string(trial) + " out (" + std::to_string(out.v) + ", " +
+                std::to_string(out.w) + ", " + std::to_string(out.vy) + ") free run " +
+                std::to_string(free_run) + ", needs " + std::to_string(needed);
+      }
+      ++violations;
+    }
+  }
+
+  expect(checked > 2000,
+         "the binding-acceleration sweep reached the invariant often enough to matter (" +
+             std::to_string(checked) + ")");
+  // Measured: 0 here, against 32 with the fallback gate removed and 7 with the
+  // deadband left unchecked. Both bands are far from the bound.
+  expect(violations == 0,
+         "what the output stage and the fallback publish can stop before contact (" +
+             std::to_string(violations) + " violations; first: " + worst + ")");
+}
+
 /// The v = 0 ROW of the lattice still translates - sideways - so it has to be
 /// contact-checked like any other candidate. R15 H1 found it scored as a
 /// turn-then-go rotation instead, which routed every pure-crab candidate around
@@ -911,6 +1028,7 @@ main()
   testRearGoalWithoutAligningFirst();
   testHeadingRegulatorTracksTheTangent();
   testEmittedCommandCanAlwaysStop();
+  testEmittedCommandCanStopWhenAccelerationBinds();
   testLateralRowIsContactChecked();
   testEmergencyLayerSeesLateralMotion();
   testGoalOrientationIsHeld();

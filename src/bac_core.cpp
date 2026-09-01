@@ -1306,10 +1306,29 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
     }
   }
+  // The deadband runs AFTER every admissibility check, so left alone it can
+  // publish a twist nobody checked: zeroing a yaw rate below angvel_min
+  // straightens a crabbing arc into a different trajectory, and for a
+  // holonomic body that rewrites 30% of ticks (R16 H2). Re-check what is
+  // actually published and brake if the deadband changed it into something
+  // that can no longer stop. Non-holonomic commands are unaffected - zeroing a
+  // sub-deadband yaw rate on a straight-line command does not change its arc.
   const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
-  out_v = finalized.v;
-  out_w = finalized.w;
-  out_vy = finalized.vy;
+  const bool deadband_changed = std::fabs(finalized.v - out_v) > 1e-6f ||
+                                std::fabs(finalized.w - out_w) > 1e-6f ||
+                                std::fabs(finalized.vy - out_vy) > 1e-6f;
+  if (deadband_changed && !stoppable(finalized))
+  {
+    out_v = 0.0f;
+    out_w = 0.0f;
+    out_vy = 0.0f;
+  }
+  else
+  {
+    out_v = finalized.v;
+    out_w = finalized.w;
+    out_vy = finalized.vy;
+  }
   prev_selected_command_ = out_command();
   result.output         = out_command();
   result.best_clearance = best_clearance;

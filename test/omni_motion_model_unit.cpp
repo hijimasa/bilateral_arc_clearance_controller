@@ -248,6 +248,14 @@ testDecelerationPreservesTrajectoryGeometry()
   expect(std::fabs(slower.w - command.w * scale) < 1e-4f,
          "the yaw rate scales with it, so the arc keeps its radius (" +
              std::to_string(slower.w) + " vs " + std::to_string(command.w * scale) + ")");
+
+  // With no direction of travel to preserve, braking is a standstill rather
+  // than a fabricated forward command (R16 L-A6).
+  const bac::Twist2D degenerate = model.withLinearSpeed(bac::Twist2D(0.0f, 0.6f, 0.0f), 0.2f);
+  expect(degenerate.speed() <= 1e-6f && std::fabs(degenerate.w) <= 1e-6f,
+         "a standstill rotation has no direction of travel, so slowing it yields zero (" +
+             std::to_string(degenerate.v) + ", " + std::to_string(degenerate.w) + ", " +
+             std::to_string(degenerate.vy) + ")");
 }
 
 /// The rollout has to agree with the swept geometry it is scored against, so

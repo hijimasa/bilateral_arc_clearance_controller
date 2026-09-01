@@ -540,9 +540,38 @@ testCoreValueSemantics()
 
 }  // namespace
 
+/// Same contract for the steered model (R16 H5). A reversing Ackermann command
+/// keeps reversing when the reachability stage slows it down.
+void
+testWithLinearSpeedKeepsTheDirectionOfTravel()
+{
+  bac::Params params = ackermannParams();
+  params.limits.v_min = -0.2f;
+  const bac::detail::AckermannMotionModel model(params);
+
+  const bac::Twist2D forward(0.30f, 0.20f);
+  const bac::Twist2D slower_forward = model.withLinearSpeed(forward, 0.12f);
+  expect(slower_forward.v > 0.0f,
+         "a forward Ackermann command stays forward when slowed (v " +
+             std::to_string(slower_forward.v) + ")");
+
+  const bac::Twist2D reverse(-0.18f, -0.09f);
+  const bac::Twist2D slower_reverse = model.withLinearSpeed(reverse, 0.09f);
+  expect(slower_reverse.v < 0.0f,
+         "a reversing Ackermann command stays reversing when slowed (v " +
+             std::to_string(slower_reverse.v) + ")");
+  // Curvature, not yaw rate, is what this model preserves.
+  const float k_before = reverse.w / reverse.v;
+  const float k_after = slower_reverse.w / slower_reverse.v;
+  expect(std::fabs(k_after - k_before) < 1e-4f,
+         "preserving the curvature (" + std::to_string(k_after) + " vs " +
+             std::to_string(k_before) + ")");
+}
+
 int
 main()
 {
+  testWithLinearSpeedKeepsTheDirectionOfTravel();
   testYawRateLimitBinds();
   testCurvatureCandidateLattice();
   testProjectionAndRefinement();
