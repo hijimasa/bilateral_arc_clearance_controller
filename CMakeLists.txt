@@ -13,7 +13,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Framework-free algorithm core
-add_library(bac_core STATIC src/bac_core.cpp src/adapter_utils.cpp)
+add_library(bac_core STATIC
+    src/adapter_utils.cpp
+    src/arc_trajectory_evaluator.cpp
+    src/bac_core.cpp
+    src/diff_drive_motion_model.cpp
+)
 target_include_directories(bac_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -91,6 +96,12 @@ if(BUILD_TESTING)
   target_link_libraries(bac_core_unit bac_core)
   target_compile_options(bac_core_unit PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacCoreUnit COMMAND bac_core_unit)
+
+  add_executable(bac_diff_drive_motion_model_unit test/diff_drive_motion_model_unit.cpp)
+  target_include_directories(bac_diff_drive_motion_model_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bac_diff_drive_motion_model_unit bac_core)
+  target_compile_options(bac_diff_drive_motion_model_unit PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME BacDiffDriveMotionModelUnit COMMAND bac_diff_drive_motion_model_unit)
 
   add_executable(bac_adapter_utils_unit test/adapter_utils_unit.cpp)
   target_link_libraries(bac_adapter_utils_unit bac_core)

@@ -118,6 +118,17 @@ colcon test --packages-select bilateral_arc_clearance_controller
 colcon test-result --verbose
 ```
 
+For the same clean ROS 2 Jazzy/Nav2 build used by CI, including the controller
+plugin and ROS adapter tests, use the Docker verification environment:
+
+```bash
+./docker/nav2-jazzy/verify.sh
+```
+
+See [ROS 2 Jazzy / Nav2 build verification](docker/nav2-jazzy/README.md) for
+details. It mounts the checkout read-only and leaves build artifacts inside the
+temporary container.
+
 Minimal configuration follows. Adjust the footprint, braking capability, and rear sensor coverage for the robot.
 An installable, fuller example is provided in [`config/bac_controller.yaml`](config/bac_controller.yaml).
 
@@ -303,6 +314,7 @@ obstacles just in front of the bumper.
 - [Parameter reference](docs/en/parameters.md)
 - [Method comparison and evaluation](docs/en/method_comparison.md)
 - [BAC ablation and matched-condition evaluation](docs/en/ablation_and_matched_evaluation.md)
+- [ROS 2 Jazzy / Nav2 build verification](docker/nav2-jazzy/README.md)
 - [Reproducible Gazebo evidence](examples/gazebo/README.md)
 - [Release review history](docs/en/release_review_history.md)
 - [Public-release readiness checklist](docs/en/public_release_checklist.md)

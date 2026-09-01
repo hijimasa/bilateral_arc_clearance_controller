@@ -19,6 +19,9 @@
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 
+#include "arc_trajectory_evaluator.hpp"
+#include "diff_drive_motion_model.hpp"
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -76,100 +79,6 @@ filterObstaclePoints(const std::vector<Point2D> &points, const Params &params)
     reduced.push_back(filtered[static_cast<size_t>(i * stride)]);
   }
   return reduced;
-}
-
-/// Exact first contact between the rectangular body moving on a constant-
-/// curvature arc and a static point. The rigid motion with constant (v, w)
-/// is a pure rotation about the turn center c = (0, v/w); in BODY
-/// coordinates the point therefore traces the circle
-///   q(rho) = Rot(-sgn(w) * rho) * (p - c) + c,   rho = |w| * t >= 0,
-/// and the first contact is the smallest rho at which q enters the
-/// footprint rectangle. All entries happen on an edge crossing, so it
-/// suffices to enumerate the circle/edge-line intersection angles and take
-/// the smallest one whose crossing point lies on the rectangle. Returns the
-/// arc length s = |v| * rho / |w| of first contact, or FLT_MAX if there is
-/// no contact within rho_max. Exact for every quadrant, both travel
-/// directions and both turn directions (review finding: the offset-band
-/// approximation missed side-scrape contacts when |R| < width/2).
-float
-firstContactArcLength(const Point2D &point, float v, float w, const Footprint &body,
-                      float s_limit)
-{
-  const float R     = v / w;           // signed turn radius, center c = (0, R)
-  const float sigma = (w > 0.0f) ? 1.0f : -1.0f;
-  const float ux = point.x, uy = point.y - R;
-  const float r  = std::sqrt(ux * ux + uy * uy);
-  const float half = body.width / 2.0f;
-
-  if (r < 1e-6f)
-  {
-    // Point at the turn center: stationary in the body frame.
-    const bool inside = std::fabs(R) <= half && body.rear <= 0.0f && body.front >= 0.0f;
-    return inside ? 0.0f : FLT_MAX;
-  }
-
-  const float psi0    = std::atan2(uy, ux);
-  const float rho_max = std::fabs(w) * s_limit / std::max(std::fabs(v), 1e-6f);
-
-  // Angles theta = psi0 - sigma * rho at which the circle crosses each edge
-  // line; convert each to the smallest non-negative rho and keep crossings
-  // that actually lie on the rectangle.
-  float best_rho = FLT_MAX;
-  auto consider = [&](float theta) {
-    // Normalize the advance angle into [0, 2*pi): theta candidates from
-    // asin/acos can put sigma * (psi0 - theta) anywhere in (-2.5*pi, 2.5*pi),
-    // and a positive value above 2*pi is the SAME crossing one revolution
-    // early - leaving it unnormalized rejected near contacts on
-    // reverse/right-turn arcs (re-re-review Critical 1).
-    float rho = std::fmod(sigma * (psi0 - theta), 2.0f * kPi);
-    if (rho < 0.0f)
-    {
-      rho += 2.0f * kPi;
-    }
-    if (rho > rho_max + 1e-6f)
-    {
-      return;
-    }
-    const float qx = r * std::cos(theta);
-    const float qy = R + r * std::sin(theta);
-    const float tol = 1e-4f;
-    if (qx >= body.rear - tol && qx <= body.front + tol && std::fabs(qy) <= half + tol)
-    {
-      best_rho = std::min(best_rho, rho);
-    }
-  };
-  // Start already inside?
-  if (point.x >= body.rear && point.x <= body.front && std::fabs(point.y) <= half)
-  {
-    return 0.0f;
-  }
-  // Horizontal edges y = +-half: R + r sin(theta) = y_e
-  for (float y_e : { half, -half })
-  {
-    const float sv = (y_e - R) / r;
-    if (std::fabs(sv) <= 1.0f)
-    {
-      const float a = std::asin(sv);
-      consider(a);
-      consider(kPi - a);
-    }
-  }
-  // Vertical edges x = front / rear: r cos(theta) = x_e
-  for (float x_e : { body.front, body.rear })
-  {
-    const float cv = x_e / r;
-    if (std::fabs(cv) <= 1.0f)
-    {
-      const float a = std::acos(cv);
-      consider(a);
-      consider(-a);
-    }
-  }
-  if (best_rho == FLT_MAX)
-  {
-    return FLT_MAX;
-  }
-  return std::fabs(v) * best_rho / std::max(std::fabs(w), 1e-6f);
 }
 
 struct ProximityResult
@@ -409,173 +318,8 @@ ArcEvaluation
 BacCore::evaluateArcWindows(const std::vector<Point2D> &points, float v, float w, float dist_clear,
                             float dist_block) const
 {
-  ArcEvaluation eval{ FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, 1.0f };
-
-  const Footprint &body = params_.footprint;
-  // Body extent in the direction of travel (rear is negative)
-  float lead_length  = (v >= 0.0f) ? body.front : -body.rear;
-  float trail_length = (v >= 0.0f) ? -body.rear : body.front;
-  float half_width   = body.width / 2.0f;
-  float side_margin  = std::max(params_.safety_margin.side, 1e-3f);
-  float s_max_clear  = dist_clear + lead_length;
-  float s_max        = std::max(dist_block, dist_clear) + lead_length;
-
-  // On an arc the rectangle's leading corners sweep OUTSIDE the constant
-  // half-width tube: the outer swept boundary is the corner radius
-  // sqrt((R + w/2)^2 + L^2), not R + w/2. Widen the body-hit band on the
-  // radially outer side by that excess (the inner boundary stays R - w/2:
-  // the side edge itself is the closest sweep). Straight motion has no
-  // excess, so corridor cruising is untouched.
-  float outer_excess = 0.0f;
-  float sweep_r_min = 0.0f, sweep_r_max = FLT_MAX;  // swept annulus about the turn center
-  if (std::fabs(w) > 1e-4f && std::fabs(v) > 1e-3f)
-  {
-    const float turn_r   = std::fabs(v / w);
-    const float corner_l = std::max(body.front, -body.rear);
-    const float outer_r  = turn_r + half_width;
-    outer_excess = std::sqrt(outer_r * outer_r + corner_l * corner_l) - outer_r;
-    // The body sweeps the annulus [max(R - w/2, 0), sqrt(L^2 + (R + w/2)^2)]
-    // about the turn center: points outside it can never be contacted, so
-    // the exact first-contact computation is skipped for them.
-    sweep_r_min = std::max(turn_r - half_width, 0.0f);
-    sweep_r_max = std::sqrt(outer_r * outer_r + corner_l * corner_l);
-  }
-
-  for (const Point2D &point : points)
-  {
-    float s;            // longitudinal distance along the path, in travel direction
-    float left_offset;  // signed lateral offset from the path centerline (+ = left of travel)
-
-    if (std::fabs(w) < 1e-4f)
-    {
-      float direction = (v >= 0.0f) ? 1.0f : -1.0f;
-      s           = point.x * direction;
-      left_offset = point.y * direction;
-    }
-    else
-    {
-      // Arc around center C = (0, R), R = v / w. Outside/inside of the circle
-      // maps to travel-left/right via sgn(w) (holds for backward motion too).
-      float turn_radius     = v / w;
-      float abs_turn_radius = std::fabs(turn_radius);
-      float radial = std::sqrt(point.x * point.x + (point.y - turn_radius) * (point.y - turn_radius));
-      left_offset  = (abs_turn_radius - radial) * ((w > 0.0f) ? 1.0f : -1.0f);
-
-      float alpha  = std::atan2(point.y - turn_radius, point.x);
-      float alpha0 = (turn_radius >= 0.0f) ? -kPi / 2.0f : kPi / 2.0f;
-      float delta  = alpha - alpha0;
-      while (delta > kPi) delta -= 2.0f * kPi;
-      while (delta <= -kPi) delta += 2.0f * kPi;
-      s = std::fabs(v) * (delta / w);
-
-      // BLOCKING is computed exactly and INDEPENDENTLY of the tube's arc
-      // coordinate: the point's own s can fall outside the longitudinal
-      // window even though the yawing body physically reaches it (side and
-      // rear-corner sweeps) - rejecting on s first is how the old
-      // approximation missed contacts.
-      const float rux = point.x, ruy = point.y - turn_radius;
-      const float r_p = std::sqrt(rux * rux + ruy * ruy);
-      if (r_p >= sweep_r_min - 1e-3f && r_p <= sweep_r_max + 1e-3f)
-      {
-        // The contact search is capped at eval_angle_max of body rotation:
-        // a slow tight arc would otherwise be checked across a huge heading
-        // sweep and read every corridor wall as "eventually hit" - the same
-        // over-extrapolation eval_angle_max exists to prevent (the planner
-        // re-decides ~20x before such a rotation completes; the euclidean
-        // blocked_near/far poison covers genuinely close threats).
-        const float s_angle_cap = std::fabs(v / w) * params_.eval_angle_max;
-        const float s_hit =
-            firstContactArcLength(point, v, w, body, std::min(s_max, s_angle_cap));
-        if (s_hit < eval.blocking_s)
-        {
-          eval.blocking_s = s_hit;
-        }
-      }
-    }
-
-    if (s < -trail_length || s > s_max)
-    {
-      continue;  // outside the swept longitudinal window
-    }
-
-    float abs_offset = std::fabs(left_offset);
-    bool  body_hit;
-    if (std::fabs(w) < 1e-4f)
-    {
-      body_hit = abs_offset < half_width;
-      // blocking_s is the BODY-ORIGIN travel distance at first contact
-      // (unified with the exact curved computation): the leading edge
-      // reaches the point after s - lead_length of travel.
-      const float s_contact = s - lead_length;
-      if (body_hit && s_contact < eval.blocking_s)
-      {
-        eval.blocking_s = std::max(s_contact, 0.0f);
-      }
-    }
-    else
-    {
-      // Approximate tube membership (used only for the clearance/poison
-      // bookkeeping below); blocking was computed exactly above.
-      const float inward = left_offset * ((w > 0.0f) ? 1.0f : -1.0f);  // + = towards turn center
-      body_hit = (inward < half_width) && (inward > -(half_width + outer_excess));
-    }
-
-    if (s > s_max_clear)
-    {
-      // Beyond the clearance window: a body-hit point still poisons the
-      // clearance when it is euclidean-near (see Params::blocked_near/far).
-      if (body_hit)
-      {
-        float d_e  = std::sqrt(point.x * point.x + point.y * point.y);
-        float fade = (d_e - params_.blocked_near) /
-                     std::max(params_.blocked_far - params_.blocked_near, 1e-3f);
-        fade = std::max(0.0f, std::min(1.0f, fade));
-        if (fade < 1.0f)
-        {
-          float cap_ref = half_width + params_.avoid_margin.side;
-          float pseudo  = abs_offset + fade * (cap_ref - abs_offset);
-          if (left_offset >= 0.0f)
-          {
-            eval.clearance_left = std::min(eval.clearance_left, pseudo);
-          }
-          else
-          {
-            eval.clearance_right = std::min(eval.clearance_right, pseudo);
-          }
-        }
-      }
-      continue;  // clearance/squeeze aggregation uses the (angle-capped) window
-    }
-
-    if (left_offset >= 0.0f)
-    {
-      eval.clearance_left = std::min(eval.clearance_left, left_offset);
-      if (s > lead_length)
-      {
-        eval.far_left = std::min(eval.far_left, left_offset);
-      }
-    }
-    else
-    {
-      eval.clearance_right = std::min(eval.clearance_right, -left_offset);
-      if (s > lead_length)
-      {
-        eval.far_right = std::min(eval.far_right, -left_offset);
-      }
-    }
-
-    if (abs_offset >= half_width)
-    {
-      // Non-hitting squeeze: intrusion into the safety side margin
-      float fraction = (abs_offset - half_width) / side_margin;
-      if (fraction < eval.lateral_fraction)
-      {
-        eval.lateral_fraction = std::min(1.0f, fraction);
-      }
-    }
-  }
-
-  return eval;
+  const detail::ArcTrajectoryEvaluator evaluator(params_);
+  return evaluator.evaluate(points, Twist2D(v, w), dist_clear, dist_block);
 }
 
 Result
@@ -916,64 +660,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                                 std::max(moderation, params_.creep_fraction));
   }
 
-  // Dynamic window (accel-limited around the current velocity)
-  float window_dv = params_.limits.acc_v * params_.window_time;
-  float v_lo      = std::max(params_.limits.v_min, current.v - window_dv);
-  float v_hi      = std::min(v_cap, current.v + window_dv);
-  if (v_hi < v_lo)
-  {
-    v_lo = v_hi = std::max(params_.limits.v_min, v_hi);
-  }
-  float w_lo = -params_.limits.w_max;
-  float w_hi = params_.limits.w_max;
+  const detail::DiffDriveMotionModel motion_model(params_);
+  const detail::CandidateBatch candidate_batch = motion_model.sampleCandidates(current, v_cap);
 
-  std::vector<float> v_values;
-  v_values.push_back(0.0f);  // rotation / stop row
-  int v_samples = std::max(2, params_.v_samples);
-  for (int i = 0; i < v_samples; i++)
-  {
-    float v = v_lo + (v_hi - v_lo) * static_cast<float>(i) / static_cast<float>(v_samples - 1);
-    if (v > 1e-3f)
-    {
-      v_values.push_back(v);
-    }
-  }
-  // Reverse is offered only when accel-reachable (near standstill). It is
-  // retained below only when no safe forward candidate advances the ordered
-  // path, so normal forward tracking still wins categorically.
-  float v_rev = std::max(params_.limits.v_min, current.v - window_dv);
-  if (v_rev < -1e-3f)
-  {
-    v_values.push_back(v_rev);
-    v_values.push_back(v_rev / 2.0f);
-  }
-
-  std::vector<float> w_values;
-  int w_samples = std::max(3, params_.w_samples);
-  for (int i = 0; i < w_samples; i++)
-  {
-    w_values.push_back(w_lo + (w_hi - w_lo) * static_cast<float>(i) / static_cast<float>(w_samples - 1));
-  }
-  if (w_lo < 0.0f && w_hi > 0.0f)
-  {
-    w_values.push_back(0.0f);  // always offer the straight arc
-  }
-
-  // Rotation admissibility: a full in-place rotation sweeps the disk of the
-  // circumscribed radius. Conservative: forbid rotation candidates when any
-  // point lies inside that disk (they are still allowed to stop).
-  float circumscribed = std::sqrt(std::max(params_.footprint.front, -params_.footprint.rear) *
-                                      std::max(params_.footprint.front, -params_.footprint.rear) +
-                                  (params_.footprint.width / 2.0f) * (params_.footprint.width / 2.0f));
-  bool rotation_admissible = true;
-  for (const Point2D &point : filtered_points)
-  {
-    if (std::sqrt(point.x * point.x + point.y * point.y) < circumscribed + 0.02f)
-    {
-      rotation_admissible = false;
-      break;
-    }
-  }
+  // Rotation admissibility remains deliberately conservative: a full
+  // in-place rotation sweeps the disk of the circumscribed radius.
+  const bool rotation_admissible =
+      motion_model.isInPlaceRotationAdmissible(filtered_points);
 
   // A geometric path alone does not say that any collision-free forward
   // motion is useful. When the ordered path initially points almost behind
@@ -1049,19 +742,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       // Endpoint pose and the point-free score parts first: they give an
       // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
       // skip the expensive arc evaluation for candidates that cannot win.
-      float end_th_pre = w * params_.sim_time;
-      float end_x_pre, end_y_pre;
-      if (std::fabs(w) < 1e-4f)
-      {
-        end_x_pre = v * params_.sim_time;
-        end_y_pre = 0.0f;
-      }
-      else
-      {
-        float radius = v / w;
-        end_x_pre    = radius * std::sin(end_th_pre);
-        end_y_pre    = radius * (1.0f - std::cos(end_th_pre));
-      }
+      const detail::ProjectedPose2D projected =
+          motion_model.projectConstantCommand(Twist2D(v, w), params_.sim_time);
+      float end_th_pre = projected.theta;
+      float end_x_pre = projected.x;
+      float end_y_pre = projected.y;
       float gd_pre, bearing_pre, heading_scale_pre, candidate_progress;
       gd_pre = station_goal_cost(
           end_x_pre, end_y_pre, bearing_pre, heading_scale_pre, candidate_progress);
@@ -1237,12 +922,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       }
   };
 
-  for (float v : v_values)
+  for (const Twist2D &command : candidate_batch.commands)
   {
-    for (float w : w_values)
-    {
-      evaluate_candidate(v, w);
-    }
+    evaluate_candidate(command.v, command.w);
   }
 
   // Coarse-to-fine steering: re-sample w around the coarse winner at a finer
@@ -1252,7 +934,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // tick-scale zigzag in narrow passages.
   if (params_.w_refine_steps > 0 && std::fabs(best_cmd.v) > 1e-3f)
   {
-    float w_step   = (w_hi - w_lo) / static_cast<float>(std::max(w_samples - 1, 1));
+    float w_step   = candidate_batch.coarse_angular_step;
     float w_center = best_cmd.w;
     float v_center = best_cmd.v;
     for (int i = 1; i <= params_.w_refine_steps; ++i)
@@ -1261,7 +943,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                  static_cast<float>(params_.w_refine_steps + 1);
       for (float w : { w_center - dw, w_center + dw })
       {
-        if (w >= w_lo && w <= w_hi)
+        if (w >= candidate_batch.angular_min && w <= candidate_batch.angular_max)
         {
           evaluate_candidate(v_center, w);
         }

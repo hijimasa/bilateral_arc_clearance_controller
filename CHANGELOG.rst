@@ -2,6 +2,16 @@
 Changelog for package bilateral_arc_clearance_controller
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Extract differential-drive candidate generation, constant-command rollout,
+  and in-place rotation policy from ``BacCore`` as a motion-model boundary.
+* Extract constant-curvature bilateral-clearance and exact swept-footprint
+  evaluation so it can be reused by future non-differential-drive policies.
+* Add focused regression tests for the differential-drive motion-model seam.
+* Add a reproducible ROS 2 Jazzy/Nav2 Docker build that verifies the complete
+  controller plugin and ROS adapter tests without writing into the checkout.
+
 0.1.0 (2026-08-27)
 ------------------
 * Add the framework-independent BAC core, Nav2 controller plugin, and ROS 2

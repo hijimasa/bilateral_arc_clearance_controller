@@ -111,6 +111,16 @@ colcon test --packages-select bilateral_arc_clearance_controller
 colcon test-result --verbose
 ```
 
+CIと同じクリーンなROS 2 Jazzy/Nav2環境でcontroller pluginとROS adapter testまで
+検証する場合は、Docker環境を使用できます。
+
+```bash
+./docker/nav2-jazzy/verify.sh
+```
+
+詳細は[ROS 2 Jazzy / Nav2ビルド検証](docker/nav2-jazzy/README.md)を参照してください。
+checkoutはread-onlyでmountされ、ビルド生成物は一時コンテナ内だけに残ります。
+
 最小構成例です。車体寸法、制動能力、後方視野は実機に合わせて変更してください。
 install対象のより完全な例は [`config/bac_controller.yaml`](config/bac_controller.yaml) にあります。
 
@@ -280,6 +290,7 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
 - [パラメータリファレンス](docs/parameters.md)
 - [既存手法との比較と評価](docs/method_comparison.md)
 - [BACアブレーションと公平条件比較](docs/ablation_and_matched_evaluation.md)
+- [ROS 2 Jazzy / Nav2ビルド検証](docker/nav2-jazzy/README.md)
 - [再現可能なGazebo evidence](examples/gazebo/README.md)
 - [リリースレビュー履歴](docs/release_review_history.md)
 - [Public 公開準備チェックリスト](docs/public_release_checklist.md)
