@@ -4,10 +4,12 @@ English | [日本語](../release_review_history.md)
 
 ## Current state
 
-- Checked: 2026-09-01
-- Evaluated package: `3bd88cb`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
+- Checked: 2026-09-01 (through R14)
+- Evaluated package: `13b3d16`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
   `5951e0b` (documentation) and `24466ae` (review record); R12 reviewed those three commits and its response
-  landed in `3521226`; R13 reviewed through `3bd88cb` (the scenario expansion closing R11 L5)
+  landed in `3521226`; R13 reviewed through `3bd88cb` (the scenario expansion closing R11 L5) and its response
+  landed in `112eb35`; R14 reviewed the whole branch through `112eb35`, recorded in `0586253` with its response
+  in `13b3d16`
 - Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); neither R11 nor R12 re-ran the benchmark
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 - R14 (reviewing `112eb35` on `feature/ackermann-motion-model`) has had its 1 High and 10 Medium findings
