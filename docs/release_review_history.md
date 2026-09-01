@@ -16,7 +16,8 @@
   **Conditional Go**で、main統合そのものは可と結論した。Low 9件は次cycleへ送る（L5・L7・L9は部分的に閉じた）
 - R15（`feature/omni-motion-model`、`616746b` を対象）はHigh 4件と統合前条件のMedium、および修正を
   守るためのMediumに対応済み。判定は対応前が **Hold**。残るMedium 6件とLow全件は次cycleへ送る。
-  この節が記載する `評価対象package` は `main`（`2488248`）のものであり、全方向モデルはまだ入っていない
+  この節が記載する `評価対象package` は `main`（`2488248`）のものであり、全方向モデルはまだ入っていない。
+  R15の記録commitは `a1d25f3`、対応commitは `433068a` である
 
 全13回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、
 第11回のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、

@@ -18,7 +18,8 @@ English | [日本語](../release_review_history.md)
 - R15 (reviewing `616746b` on `feature/omni-motion-model`) has had its four High findings addressed, along with
   the Medium ones that blocked the merge and those needed to defend the fixes; the verdict before the response
   was **Hold**. Six Medium findings and all Low ones move to the next cycle. The `Evaluated package` named in
-  this section is `main` (`2488248`); the holonomic model is not in it yet
+  this section is `main` (`2488248`); the holonomic model is not in it yet. R15 is recorded in `a1d25f3` and
+  its response landed in `433068a`
 
 All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
