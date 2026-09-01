@@ -1,6 +1,6 @@
 /**
- * @file diff_drive_motion_model.hpp
- * @brief Internal differential-drive candidate generation and rollout geometry
+ * @file omni_motion_model.hpp
+ * @brief Internal holonomic candidate generation and rollout geometry
  * @copyright Copyright (c) 2026 Masaaki Hijikata
  */
 
@@ -12,17 +12,23 @@ namespace bac::detail
 {
 
 /**
- * Differential-drive policy used by BacCore.
+ * Holonomic (omnidirectional) vehicle model.
  *
- * This class intentionally owns no controller state. It isolates the parts
- * that differ by vehicle kinematics while preserving BacCore's public API and
- * current candidate ordering. Ackermann and holonomic policies can therefore
- * be introduced without teaching the clearance scorer how commands are made.
+ * The avoidance dimension is LATERAL VELOCITY, not yaw rate. A holonomic body
+ * can side-step an obstacle without changing where it points, so searching
+ * over yaw would spend the candidate budget on a degree of freedom that does
+ * not avoid anything. The yaw rate instead regulates the body onto the local
+ * path tangent, and is fixed across the candidate set for one tick, so the
+ * trajectory that is scored is the trajectory that is driven.
+ *
+ * The candidate set is therefore (forward speed x lateral speed) at a single
+ * yaw rate - the same lattice size as the differential-drive (v x w) set, not
+ * a three-dimensional one.
  */
-class DiffDriveMotionModel : public MotionModel
+class OmniMotionModel : public MotionModel
 {
 public:
-  explicit DiffDriveMotionModel(const Params &params);
+  explicit OmniMotionModel(const Params &params);
 
   CandidateBatch sampleCandidates(const Twist2D &current, float linear_speed_cap,
                                   float yaw_reference) const override;
@@ -30,7 +36,7 @@ public:
   std::vector<Twist2D> clearanceProbeCommands(float linear_speed) const override;
 
   ProjectedPose2D projectConstantCommand(const Twist2D &command,
-                                         float duration) const override;
+                                          float duration) const override;
   bool isCommandKinematicallyValid(const Twist2D &command) const override;
 
   bool supportsInPlaceRotation() const override;
@@ -42,6 +48,7 @@ public:
                                 const Twist2D &desired) const override;
   Twist2D withLinearSpeed(const Twist2D &command, float linear_speed) const override;
   Twist2D applyCommandDeadband(const Twist2D &command) const override;
+
 private:
   const Params &params_;
 };

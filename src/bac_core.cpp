@@ -750,13 +750,28 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                                 std::max(moderation, params_.creep_fraction));
   }
 
+  // Pose regulation. A holonomic model does not search over yaw - lateral
+  // velocity does the avoiding - so it needs the yaw rate the body should hold
+  // this tick. Proportional on the heading error to the local path tangent,
+  // saturated at the configured yaw limit; the output stage still applies the
+  // one-cycle acceleration bound. Non-holonomic models ignore it.
+  const float yaw_reference =
+      std::min(std::max(params_.heading_gain * relative_path_heading,
+                        -params_.limits.w_max),
+               params_.limits.w_max);
+
   const detail::CandidateBatch candidate_batch =
-      motion_model->sampleCandidates(current, v_cap);
+      motion_model->sampleCandidates(current, v_cap, yaw_reference);
 
   // Rotation admissibility remains deliberately conservative: a full
   // in-place rotation sweeps the disk of the circumscribed radius.
   const bool rotation_admissible = motion_model->supportsInPlaceRotation() &&
                                    motion_model->isInPlaceRotationAdmissible(filtered_points);
+  // Rotating onto the tangent before translating is a differential-drive
+  // manoeuvre. A holonomic body can rotate on the spot but never needs to
+  // align first, so the two predicates are asked separately.
+  const bool alignment_available =
+      motion_model->usesRotateBeforeTranslate() && rotation_admissible;
 
   // A geometric path alone does not say that any collision-free forward
   // motion is useful. When the ordered path initially points almost behind
@@ -780,19 +795,19 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   }
   else if (alignment_mode_)
   {
-    if (abs_path_heading < kAlignExitAngle || !rotation_admissible)
+    if (abs_path_heading < kAlignExitAngle || !alignment_available)
     {
       alignment_mode_ = false;
     }
   }
-  else if (rotation_admissible &&
+  else if (alignment_available &&
            ((local_goal_distance < kAlignNearDistance &&
              abs_path_heading > kAlignNearEnterAngle) ||
             abs_path_heading > kAlignRearEnterAngle))
   {
     alignment_mode_ = true;
   }
-  const bool alignment_required = alignment_mode_ && rotation_admissible;
+  const bool alignment_required = alignment_mode_ && alignment_available;
 
   // Reusable buffer for turn-then-go evaluation of the v=0 row
   std::vector<Point2D> rotated_points;

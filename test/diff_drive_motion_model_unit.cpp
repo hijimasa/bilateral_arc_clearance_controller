@@ -38,7 +38,7 @@ testCandidateOrderingAndReachability()
   bac::detail::DiffDriveMotionModel model(params);
 
   const bac::detail::CandidateBatch moving =
-      model.sampleCandidates(bac::Twist2D(0.2f, 0.1f), 0.4f);
+      model.sampleCandidates(bac::Twist2D(0.2f, 0.1f), 0.4f, 0.0f);
   expect(moving.commands.size() == 5 * 26,
          "moving batch keeps five linear rows by 26 angular samples");
   expect(near(moving.commands.front().v, 0.0f) && near(moving.commands.front().w, -1.0f),
@@ -57,7 +57,7 @@ testCandidateOrderingAndReachability()
          "tightness probes preserve their former order and yaw rates");
 
   const bac::detail::CandidateBatch standstill =
-      model.sampleCandidates(bac::Twist2D(), 0.4f);
+      model.sampleCandidates(bac::Twist2D(), 0.4f, 0.0f);
   expect(standstill.commands.size() == 6 * 26,
          "standstill batch keeps positive samples and two reverse escape rows");
   expect(near(standstill.commands[4 * 26].v, -0.1f) &&

@@ -87,7 +87,7 @@ testYawRateLimitBinds()
   // 1. Candidate generation. Without the w_max term the fastest rows would be
   //    sampled out to |w| = 2.4 rad/s.
   const bac::detail::CandidateBatch batch =
-      model.sampleCandidates(bac::Twist2D(1.0f, 0.0f), params.limits.v_max);
+      model.sampleCandidates(bac::Twist2D(1.0f, 0.0f), params.limits.v_max, 0.0f);
   bool sampled_a_binding_speed = false;
   for (const bac::Twist2D &command : batch.commands)
   {
@@ -139,7 +139,7 @@ testCurvatureCandidateLattice()
   const bac::Params params = ackermannParams();
   const bac::detail::AckermannMotionModel model(params);
   const bac::detail::CandidateBatch batch =
-      model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.4f);
+      model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.4f, 0.0f);
 
   expect(batch.commands.size() == 1U + 2U * 6U,
          "stop plus two speed rows by five curvature samples and straight");
@@ -197,7 +197,7 @@ testCurvatureCandidateLattice()
   // provide before R14 M3 measured it as a tripwire - it is deterministic and
   // needs no threshold, and it fails 12 times on that mutation.
   const bac::detail::CandidateBatch capped =
-      model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.1f);
+      model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.1f, 0.0f);
   for (const bac::Twist2D &command : capped.commands)
   {
     expect(command.v <= 0.1f + 1e-5f, "a lowered speed cap lowers the lattice");
@@ -206,7 +206,7 @@ testCurvatureCandidateLattice()
   // current 0.4 m/s + acc_v * window_time (0.2) is 0.6, and limits.v_max is
   // 0.4, but the caller only allows 0.15.
   const bac::detail::CandidateBatch hard_capped =
-      model.sampleCandidates(bac::Twist2D(0.4f, 0.0f), 0.15f);
+      model.sampleCandidates(bac::Twist2D(0.4f, 0.0f), 0.15f, 0.0f);
   for (const bac::Twist2D &command : hard_capped.commands)
   {
     expect(command.v <= 0.15f + 1e-5f,
@@ -220,7 +220,7 @@ testCurvatureCandidateLattice()
   even_params.w_samples = 4;
   const bac::detail::AckermannMotionModel even_model(even_params);
   const bac::detail::CandidateBatch even_batch =
-      even_model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.4f);
+      even_model.sampleCandidates(bac::Twist2D(0.2f, 0.0f), 0.4f, 0.0f);
   int straight_rows = 0;
   for (const bac::Twist2D &command : even_batch.commands)
   {

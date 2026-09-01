@@ -37,8 +37,17 @@ class MotionModel
 public:
   virtual ~MotionModel() = default;
 
+  /**
+   * @param yaw_reference Yaw rate the pose regulator wants this tick [rad/s],
+   *   derived from the local path tangent. Non-holonomic models ignore it:
+   *   for them the yaw rate IS the searched avoidance dimension. A holonomic
+   *   model avoids with lateral velocity instead, so it fixes the yaw rate at
+   *   this reference and searches (v, vy) - which keeps the trajectory that is
+   *   scored and contact-checked the one that is actually driven.
+   */
   virtual CandidateBatch sampleCandidates(const Twist2D &current,
-                                          float linear_speed_cap) const = 0;
+                                          float linear_speed_cap,
+                                          float yaw_reference) const = 0;
   virtual std::vector<Twist2D> refinementCandidates(const Twist2D &coarse_best) const = 0;
   virtual std::vector<Twist2D> clearanceProbeCommands(float linear_speed) const = 0;
 
@@ -46,7 +55,14 @@ public:
                                                   float duration) const = 0;
   virtual bool isCommandKinematicallyValid(const Twist2D &command) const = 0;
 
+  /// The model can emit a standstill rotation `(0, w)` at all.
   virtual bool supportsInPlaceRotation() const = 0;
+
+  /// The model needs to rotate onto the path tangent BEFORE it can translate
+  /// along it. True for differential drive; false for Ackermann, which cannot
+  /// rotate on the spot, and false for holonomic models, which can translate
+  /// in any direction and would only add pointless yaw motion.
+  virtual bool usesRotateBeforeTranslate() const = 0;
   virtual bool isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const = 0;
 
   virtual float commandChange(const Twist2D &command,

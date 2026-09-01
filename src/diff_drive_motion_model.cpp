@@ -18,7 +18,8 @@ DiffDriveMotionModel::DiffDriveMotionModel(const Params &params)
 }
 
 CandidateBatch
-DiffDriveMotionModel::sampleCandidates(const Twist2D &current, float linear_speed_cap) const
+DiffDriveMotionModel::sampleCandidates(const Twist2D &current, float linear_speed_cap,
+                                        float /*yaw_reference*/) const
 {
   const float window_dv = params_.limits.acc_v * params_.window_time;
   float v_lo = std::max(params_.limits.v_min, current.v - window_dv);
@@ -140,6 +141,14 @@ DiffDriveMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
 bool
 DiffDriveMotionModel::supportsInPlaceRotation() const
 {
+  return true;
+}
+
+bool
+DiffDriveMotionModel::usesRotateBeforeTranslate() const
+{
+  // A differential-drive body cannot translate sideways, so a path tangent
+  // far off the current heading is reached by rotating first.
   return true;
 }
 

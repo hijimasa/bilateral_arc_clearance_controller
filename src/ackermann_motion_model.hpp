@@ -22,8 +22,8 @@ class AckermannMotionModel : public MotionModel
 public:
   explicit AckermannMotionModel(const Params &params);
 
-  CandidateBatch sampleCandidates(const Twist2D &current,
-                                  float linear_speed_cap) const override;
+  CandidateBatch sampleCandidates(const Twist2D &current, float linear_speed_cap,
+                                  float yaw_reference) const override;
   std::vector<Twist2D> refinementCandidates(const Twist2D &coarse_best) const override;
   std::vector<Twist2D> clearanceProbeCommands(float linear_speed) const override;
 
@@ -32,6 +32,7 @@ public:
   bool isCommandKinematicallyValid(const Twist2D &command) const override;
 
   bool supportsInPlaceRotation() const override;
+  bool usesRotateBeforeTranslate() const override;
   bool isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const override;
 
   float commandChange(const Twist2D &command, const Twist2D &previous) const override;

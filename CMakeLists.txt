@@ -20,6 +20,7 @@ add_library(bac_core STATIC
     src/bac_core.cpp
     src/diff_drive_motion_model.cpp
     src/motion_model.cpp
+    src/omni_motion_model.cpp
 )
 target_include_directories(bac_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

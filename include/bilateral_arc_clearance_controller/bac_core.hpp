@@ -150,6 +150,12 @@ struct Limits
   /// is limited from the measured yaw rate and re-checked. This is not an
   /// Ackermann road-wheel steering-rate guarantee. 0 disables.
   float acc_w = 2.5f;  // [rad/s^2]
+  /// Lateral speed authority, holonomic models only [m/s]. 0 for every
+  /// non-holonomic model, and a holonomic configuration with 0 here is
+  /// rejected: it would select a model that cannot use its own avoidance
+  /// dimension. Sideways motion needs sensor coverage abeam the body, the
+  /// same caveat `v_min` carries for reverse.
+  float vy_max = 0.0f;  // [m/s]
 };
 
 /// Scoring weights. Balance rationale (see the harness scenarios):
@@ -222,6 +228,15 @@ struct Params
   /// Ackermann: the kinematic minimum turning radius, which bounds candidate
   /// curvature itself. Must be positive.
   float turn_radius_min = 0.25f;  // [m]
+  /// Holonomic models only: proportional gain from body heading error to the
+  /// commanded yaw rate [1/s]. A holonomic model does not search over yaw -
+  /// lateral velocity does the avoiding - so the yaw rate regulates the body
+  /// onto the local path tangent while (v, vy) is searched. Must be finite
+  /// and non-negative; 0 holds the heading fixed.
+  float heading_gain = 1.5f;  // [1/s]
+  /// Holonomic models only: lateral-velocity samples per forward-speed row,
+  /// the counterpart of `w_samples`. Must be at least 3.
+  int vy_samples = 15;
   /// Curved candidates are never evaluated beyond this arc angle: the planner
   /// re-decides every tick, so extrapolating a turn much past ~60 degrees
   /// mis-scores recovery arcs as "hitting the far wall eventually".

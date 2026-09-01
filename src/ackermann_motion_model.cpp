@@ -65,8 +65,8 @@ AckermannMotionModel::commandFromCurvature(float linear_speed, float command_cur
 }
 
 CandidateBatch
-AckermannMotionModel::sampleCandidates(const Twist2D &current,
-                                       float linear_speed_cap) const
+AckermannMotionModel::sampleCandidates(const Twist2D &current, float linear_speed_cap,
+                                       float /*yaw_reference*/) const
 {
   CandidateBatch batch;
   batch.commands.emplace_back(0.0f, 0.0f);  // Ackermann stop; never a rotation row
@@ -198,6 +198,14 @@ AckermannMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
 bool
 AckermannMotionModel::supportsInPlaceRotation() const
 {
+  return false;
+}
+
+bool
+AckermannMotionModel::usesRotateBeforeTranslate() const
+{
+  // A steered vehicle cannot rotate on the spot at all, so it never aligns
+  // before translating; it steers onto the tangent while moving.
   return false;
 }
 
