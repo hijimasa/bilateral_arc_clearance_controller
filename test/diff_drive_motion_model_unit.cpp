@@ -127,9 +127,21 @@ testTranslatingTurnRadiusGuard()
          "in-place rotation is exempt from the turning-radius guard");
 }
 
+/// A model that steers with yaw cannot choose its orientation independently of
+/// its direction of travel, so a commanded goal orientation cannot be honoured.
+void
+testGoalHeadingIsRefused()
+{
+  bac::Params params;
+  const bac::detail::DiffDriveMotionModel model(params);
+  expect(!model.acceptsGoalHeading(),
+         "differential drive does not accept a commanded goal orientation");
+}
+
 int
 main()
 {
+  testGoalHeadingIsRefused();
   testTranslatingTurnRadiusGuard();
   testCandidateOrderingAndReachability();
   testConstantCommandProjection();

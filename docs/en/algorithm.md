@@ -125,8 +125,9 @@ They are not probabilistic or universal claims about untested environments.
 - The swept trajectory and jerk during angular-acceleration or steering transients
 - Stop-before-contact behavior including slip, downstream control delay, or control-period overruns
 - The downstream mapping from body twist to road-wheel steering, and its steering rate and tracking error
-- A commanded goal ORIENTATION under the holonomic model: the path `BacCore` receives carries no orientation, so
-  the final heading converges on the direction of the last path segment
+- A commanded goal ORIENTATION under `diff_drive` or `ackermann`: a model that steers with yaw cannot choose its
+  orientation independently of its direction of travel, so the final heading is whatever the path tangent leaves
+  behind. The holonomic model does honour it
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
   regressions only
 - Reaching a rear goal with a forward-only Ackermann configuration (`limits.v_min = 0`). BAC stops and leaves the

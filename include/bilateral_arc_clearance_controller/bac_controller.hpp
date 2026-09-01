@@ -59,7 +59,13 @@ private:
   std::optional<std::vector<Point2D>> collectScanPoints();
 
   /// The current plan transformed into the robot frame
-  std::vector<Point2D> transformPlan(const geometry_msgs::msg::PoseStamped &pose) const;
+  /// Transforms the plan into the base frame and prunes it. `goal_heading`
+  /// receives the orientation of the LAST plan pose, in the base frame, but
+  /// only when that pose survived pruning - otherwise the far end of `path` is
+  /// a waypoint rather than the goal, and its orientation is not a goal
+  /// orientation.
+  std::vector<Point2D> transformPlan(const geometry_msgs::msg::PoseStamped &pose,
+                                     std::optional<float> *goal_heading) const;
 
   /// Publish the active obstacle source and selected-candidate diagnostics
   void publishDiagnostics(const Result &result, bool using_scan);

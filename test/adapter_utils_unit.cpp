@@ -85,6 +85,51 @@ void testTransformAndPrunePath()
          "plan-to-base rigid transform is applied");
 }
 
+
+/// Nav2 carries the goal orientation on the last plan pose. It is a goal
+/// orientation only while that pose is still on the pruned path, and it has to
+/// be rotated into the base frame - a sign error here would aim the vehicle at
+/// a mirrored heading, which no closed-loop scenario run in the base frame can
+/// see, because the scenarios never exercise a plan frame offset from it.
+void
+testGoalHeadingInBase()
+{
+  const bac::Point2D plan_end(3.0f, 1.0f);
+
+  {
+    const std::vector<bac::Point2D> local_path = { { 1.0f, 0.0f }, { 3.0f, 1.0f } };
+    const auto heading = bac::goalHeadingInBase(plan_end, local_path, 0.0f, 0.0f, 0.0f, 0.7f);
+    expect(heading.has_value(), "an unpruned goal yields a goal heading");
+    expect(heading && near(*heading, 0.7f),
+           "an identity transform passes the plan orientation through");
+  }
+
+  {
+    const float yaw = 0.5f;
+    const float cs = std::cos(yaw), sn = std::sin(yaw);
+    const bac::Point2D end_in_base(2.0f + cs * plan_end.x - sn * plan_end.y,
+                                   -1.0f + sn * plan_end.x + cs * plan_end.y);
+    const std::vector<bac::Point2D> local_path = { { 0.0f, 0.0f }, end_in_base };
+    const auto heading = bac::goalHeadingInBase(plan_end, local_path, 2.0f, -1.0f, yaw, 0.7f);
+    expect(heading.has_value(), "a rotated frame still yields a goal heading");
+    expect(heading && near(*heading, 0.7f + yaw),
+           "the plan orientation gains the transform rotation (got " +
+               std::to_string(heading ? *heading : 0.0f) + ", expected " +
+               std::to_string(0.7f + yaw) + ")");
+  }
+
+  {
+    const std::vector<bac::Point2D> local_path = { { 1.0f, 0.0f }, { 2.0f, 0.5f } };
+    const auto heading = bac::goalHeadingInBase(plan_end, local_path, 0.0f, 0.0f, 0.0f, 0.7f);
+    expect(!heading.has_value(), "a pruned plan end is a waypoint and yields no goal heading");
+  }
+
+  {
+    const auto heading = bac::goalHeadingInBase(plan_end, {}, 0.0f, 0.0f, 0.0f, 0.7f);
+    expect(!heading.has_value(), "an empty path yields no goal heading");
+  }
+}
+
 }  // namespace
 
 int main()
@@ -92,6 +137,7 @@ int main()
   testScanValidityAndProjection();
   testScanDownsampleAndExtrinsics();
   testTransformAndPrunePath();
+  testGoalHeadingInBase();
 
   if (failures != 0)
   {

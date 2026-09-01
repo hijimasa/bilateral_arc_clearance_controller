@@ -109,11 +109,23 @@ existing users are unaffected. The current-velocity input reads `linear.y` as we
 odometry twist leaves it unfilled, the acceleration window always starts from zero and the lateral response is
 under-estimated.
 
-Lateral velocity does the avoiding, not yaw. The yaw rate is a pose regulator onto the local path tangent,
-decided before candidate generation and shared by every candidate, so a goal ORIENTATION cannot be commanded: the
-path `BacCore` receives is a list of positions and carries no orientation, and the final heading converges on the
-direction of the last path segment. `heading_gain: 0.0` holds the heading fixed while translating, which suits a
-platform with 360-degree sensing.
+Lateral velocity does the avoiding, not yaw. The yaw rate is a pose regulator, decided before candidate
+generation and shared by every candidate.
+
+**A goal orientation can be commanded.** Nav2 carries the requested goal pose on the last plan pose, and the
+adapter transforms its orientation into the base frame and passes it to the core. The pose reference fades from
+the path tangent to the goal orientation over the last 1.5 m and is fully governed by it within 0.5 m. Because
+yaw is not the steering input, the vehicle **arrives holding the requested orientation while lateral velocity
+closes the remaining position error**. Measured yaw error for goal orientations of 0.0, -1.2, 1.5, 2.5, -2.8 and
+3.0 rad is 0.009-0.102 rad, inside the 0.25 rad `yaw_goal_tolerance` that Nav2's `SimpleGoalChecker` defaults to.
+
+The orientation is passed on only when the goal itself survives pruning: pruning stops at `max_range`, and the
+orientation of an intermediate waypoint is a path tangent, not a goal. `heading_gain: 0.0` holds the heading
+fixed while translating, which suits a platform with 360-degree sensing.
+
+`diff_drive` and `ackermann` steer with yaw and cannot choose their orientation independently of their direction
+of travel, so they ignore a commanded goal orientation and follow the path tangent as before. A specific goal yaw
+for those models needs a Nav2 recovery or a controller switch.
 
 **Sideways motion needs sensor coverage abeam the body** — the same caveat `limits.v_min < 0` carries for the
 rear. A front-only lidar cannot see where a crabbing robot is going, so set `limits.vy_max` from the observed

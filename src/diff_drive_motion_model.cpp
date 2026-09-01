@@ -139,6 +139,14 @@ DiffDriveMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
 }
 
 bool
+DiffDriveMotionModel::acceptsGoalHeading() const
+{
+  // This model steers with yaw: its orientation is not free to be chosen,
+  // so a commanded goal orientation cannot be honoured.
+  return false;
+}
+
+bool
 DiffDriveMotionModel::supportsInPlaceRotation() const
 {
   return true;

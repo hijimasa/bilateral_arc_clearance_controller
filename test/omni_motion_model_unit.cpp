@@ -294,6 +294,9 @@ testRotationPredicatesAreSeparate()
          "a holonomic body can hold station and yaw onto the tangent");
   expect(!model.usesRotateBeforeTranslate(),
          "a holonomic body never has to align before translating");
+  expect(model.acceptsGoalHeading(),
+         "a holonomic body can hold a commanded orientation: yaw is a regulator here, not "
+         "the steering input");
 
   // The sweep is still checked: an obstacle inside the circumscribed disk
   // makes the standstill rotation inadmissible.

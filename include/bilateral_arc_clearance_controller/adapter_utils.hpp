@@ -11,6 +11,7 @@
 #define BILATERAL_ARC_CLEARANCE_CONTROLLER__ADAPTER_UTILS_HPP_
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
@@ -37,6 +38,24 @@ ScanProjection projectScan(const std::vector<float> &ranges, float angle_min,
                            float obstacle_range_max, int downsample, bool inf_is_valid,
                            float sensor_x = 0.0f, float sensor_y = 0.0f,
                            float sensor_yaw = 0.0f);
+
+/**
+ * @brief Goal orientation in the base frame, when the goal is still on the plan.
+ *
+ * Nav2 carries the requested goal orientation on the LAST plan pose. It is a
+ * goal orientation only while that pose is still in the pruned path: pruning
+ * stops at max_range, and the orientation of an intermediate waypoint is a path
+ * tangent. Returns nullopt when the plan end did not survive pruning, so a
+ * caller cannot mistake a waypoint heading for a goal heading.
+ *
+ * @param plan_end       Last plan pose position, in the PLAN frame.
+ * @param local_path     Pruned path, already in the BASE frame.
+ * @param plan_goal_yaw  Orientation of the last plan pose, in the PLAN frame.
+ */
+std::optional<float> goalHeadingInBase(const Point2D &plan_end,
+                                       const std::vector<Point2D> &local_path,
+                                       float transform_x, float transform_y,
+                                       float transform_yaw, float plan_goal_yaw);
 
 /**
  * @brief Apply a 2D rigid transform, prune before the robot-nearest point,

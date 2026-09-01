@@ -33,6 +33,7 @@ public:
                                          float duration) const override;
   bool isCommandKinematicallyValid(const Twist2D &command) const override;
 
+  bool acceptsGoalHeading() const override;
   bool supportsInPlaceRotation() const override;
   bool usesRotateBeforeTranslate() const override;
   bool isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const override;

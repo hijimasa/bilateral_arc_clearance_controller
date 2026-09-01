@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -130,7 +131,8 @@ diffDriveReferenceParams()
 OmniRun
 runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &start,
         const bac_sim::PathSource &path_source, float goal_x, float goal_y,
-        float simulation_time, const LateralWindow &window = LateralWindow{})
+        float simulation_time, const LateralWindow &window = LateralWindow{},
+        std::optional<float> goal_heading_world = std::nullopt)
 {
   constexpr float dt = 0.05f;
   OmniRun run;
@@ -148,7 +150,16 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     const std::vector<bac::Point2D> points =
         bac_sim::simulateLidar(world, pose, 720, params.max_range);
     const std::vector<bac::Point2D> path = path_source(pose, t);
-    const bac::Result result = core.process(points, path, bac::Twist2D(vx, w, vy));
+    // Nav2 carries the goal orientation on the last plan pose; the adapter
+    // hands it to the core in the CURRENT body frame, which is what this
+    // reproduces.
+    std::optional<float> goal_heading;
+    if (goal_heading_world)
+    {
+      goal_heading = wrapAngle(*goal_heading_world - pose.th);
+    }
+    const bac::Result result =
+        core.process(points, path, bac::Twist2D(vx, w, vy), goal_heading);
     const bac::Twist2D command = result.output;
 
     run.total_ticks++;
@@ -342,6 +353,44 @@ testHeadingRegulatorTracksTheTangent()
          "the regulator actually commanded yaw, so the check above is not vacuous (max |w| " +
              std::to_string(run.max_abs_w) + " rad/s)");
   expectLimitsRespected(run, "off-axis goal");
+}
+
+/// Nav2 asks for a goal POSE, not a goal position. A model that steers with yaw
+/// cannot honour the orientation - its heading is whatever direction it had to
+/// travel in - but a holonomic body can hold the requested orientation while
+/// lateral velocity closes the remaining position error. Asserted against the
+/// differential-drive reference in the same world, which ignores it.
+void
+testGoalOrientationIsHeld()
+{
+  bac_sim::World world;
+  const bac_sim::PathSource path = bac_sim::gotoPointPath(4.0f, 2.0f);
+  const float goal_yaw = -1.2f;  // deliberately unlike the approach direction
+
+  bac::BacCore reference(diffDriveReferenceParams());
+  const OmniRun diff_run = runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f,
+                                   90.0f, LateralWindow{}, goal_yaw);
+  bac::BacCore core(omniParams());
+  const OmniRun run =
+      runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f, 90.0f, LateralWindow{}, goal_yaw);
+
+  expect(run.reached_goal, "the holonomic vehicle still reaches the goal position (closest " +
+                               std::to_string(run.min_goal_distance) + " m)");
+  const float error = std::fabs(wrapAngle(run.final_pose.th - goal_yaw));
+  const float diff_error = std::fabs(wrapAngle(diff_run.final_pose.th - goal_yaw));
+  // The bound is Nav2's own SimpleGoalChecker default yaw_goal_tolerance of
+  // 0.25 rad - the tolerance the goal actually has to pass - not a number
+  // picked here. Measured over goal orientations 0.0, -1.2, 1.5, 2.5, -2.8 and
+  // 3.0 rad, the holonomic error spans 0.009-0.102 rad while the
+  // differential-drive reference spans 0.959-1.741 rad: it ends at whatever
+  // heading the approach left it with, 0.541 rad, whatever was asked for.
+  expect(error < 0.25f,
+         "the holonomic vehicle arrives within Nav2's default yaw_goal_tolerance of the "
+         "requested orientation (error " + std::to_string(error) + " rad)");
+  expect(diff_error > error,
+         "the differential-drive reference does not hold it, so the check above is "
+         "discriminating (its error " + std::to_string(diff_error) + " rad)");
+  expectLimitsRespected(run, "goal orientation");
 }
 
 /// heading_gain = 0 holds the heading fixed. A platform with 360 degree
@@ -607,6 +656,7 @@ main()
   testSidestepsInsteadOfYawing();
   testRearGoalWithoutAligningFirst();
   testHeadingRegulatorTracksTheTangent();
+  testGoalOrientationIsHeld();
   testZeroGainHoldsHeadingAndStillArrives();
   testNarrowCorridorCentering();
   testSafetyStopHoldsPosition();

@@ -412,7 +412,7 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, const Twist2D &c
 
 Result
 BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
-                 const Twist2D &current)
+                 const Twist2D &current, std::optional<float> goal_heading)
 {
   Result result;
 
@@ -786,8 +786,31 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // probe, this is inactive in the open and inactive in front of an obstacle,
   // where the candidate search does the avoiding.
   constexpr float kCenteringHeading = 0.6f;  // [rad] at full imbalance
-  const float heading_error =
-      relative_path_heading + tightness * kCenteringHeading * probe_center_bias;
+  float pose_reference = relative_path_heading + tightness * kCenteringHeading * probe_center_bias;
+
+  // Arriving in the orientation the goal asks for. A model that steers with
+  // yaw cannot choose its orientation independently of where it is going, so
+  // this is the one thing a holonomic body can do that the others cannot: hold
+  // the goal heading while lateral velocity closes the remaining position
+  // error. Faded in over the last kGoalHeadingFade metres so the tangent still
+  // governs the approach; blending the two ERRORS is well defined because both
+  // are expressed in the current body frame.
+  if (goal_heading && motion_model->acceptsGoalHeading())
+  {
+    // Full authority over the last kGoalHeadingFull metres, faded in from
+    // kGoalHeadingFade. The vehicle has to ARRIVE in the goal orientation, not
+    // reach the goal and then turn: a controller that still had to rotate on
+    // arrival would sit outside Nav2's yaw_goal_tolerance while the goal
+    // checker waited for it.
+    constexpr float kGoalHeadingFade = 1.5f;  // [m] where the goal starts to matter
+    constexpr float kGoalHeadingFull = 0.5f;  // [m] where it fully governs
+    const float blend =
+        1.0f - std::max(0.0f, std::min(1.0f, (local_goal_distance - kGoalHeadingFull) /
+                                                 (kGoalHeadingFade - kGoalHeadingFull)));
+    pose_reference =
+        wrapAngle(pose_reference + blend * wrapAngle(*goal_heading - pose_reference));
+  }
+  const float heading_error = pose_reference;
   const float yaw_reference =
       std::min(std::max(params_.heading_gain * heading_error, -params_.limits.w_max),
                params_.limits.w_max);

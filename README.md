@@ -317,10 +317,9 @@ obstacles just in front of the bumper.
 - A forward-only differential-drive or Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind
   the vehicle. BAC brakes instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery. The
   holonomic model reaches it by translating.
-- The holonomic model avoids with lateral velocity and uses yaw to regulate the body onto the local path tangent,
-  so a goal ORIENTATION cannot be commanded: the path `BacCore` receives is a list of positions and carries no
-  orientation, and the final heading converges on the direction of the last path segment. A specific goal yaw
-  would need an API extension.
+- Only the holonomic model honours the goal ORIENTATION Nav2 carries on the last plan pose. `diff_drive` and
+  `ackermann` steer with yaw and cannot choose their orientation independently of their direction of travel, so
+  they follow the path tangent instead.
 - Holonomic lateral motion presumes sensor coverage abeam the body. A front-only lidar cannot see where a
   crabbing robot is going.
 - It does not estimate obstacle velocity or future obstacle positions.

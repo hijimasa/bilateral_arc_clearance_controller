@@ -55,6 +55,11 @@ public:
                                                   float duration) const = 0;
   virtual bool isCommandKinematicallyValid(const Twist2D &command) const = 0;
 
+  /// The model can hold a commanded orientation independently of its direction
+  /// of travel. False for anything that steers with yaw: for those the final
+  /// heading is whatever the path tangent leaves behind.
+  virtual bool acceptsGoalHeading() const = 0;
+
   /// The model can emit a standstill rotation `(0, w)` at all.
   virtual bool supportsInPlaceRotation() const = 0;
 

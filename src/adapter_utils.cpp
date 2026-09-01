@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <limits>
 
 namespace bac
@@ -98,6 +99,30 @@ transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
     local_path.push_back(transformed[i]);
   }
   return local_path;
+}
+
+std::optional<float>
+goalHeadingInBase(const Point2D &plan_end, const std::vector<Point2D> &local_path,
+                  float transform_x, float transform_y, float transform_yaw,
+                  float plan_goal_yaw)
+{
+  if (local_path.empty())
+  {
+    return std::nullopt;
+  }
+  const float cs = std::cos(transform_yaw);
+  const float sn = std::sin(transform_yaw);
+  const Point2D end_in_base(transform_x + cs * plan_end.x - sn * plan_end.y,
+                            transform_y + sn * plan_end.x + cs * plan_end.y);
+  const float dx = end_in_base.x - local_path.back().x;
+  const float dy = end_in_base.y - local_path.back().y;
+  if (std::sqrt(dx * dx + dy * dy) >= 1e-3f)
+  {
+    return std::nullopt;  // the plan end was pruned away; this is a waypoint
+  }
+  // The transform rotates the plan frame into the base frame, so the plan-frame
+  // orientation gains that same rotation.
+  return plan_goal_yaw + transform_yaw;
 }
 
 }  // namespace bac

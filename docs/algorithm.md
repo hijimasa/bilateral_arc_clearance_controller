@@ -117,8 +117,8 @@ score = 2.0 * min(clearance, adaptive_cap)
 - 角加速度・操舵過渡中のswept trajectoryとjerk
 - 滑り、下位速度制御遅れ、制御周期超過を含むstop-before-contact
 - 車体twistからroad-wheel操舵への下位変換と、その操舵速度・追従誤差
-- 全方向モデルのgoal姿勢指定。`BacCore`が受け取る経路は向きを持たないため、終端姿勢は最終経路
-  セグメントの向きに収束する
+- `diff_drive`・`ackermann`でのgoal姿勢指定。ヨーで操舵するモデルは方位を進行方向と独立に選べないため、
+  終端姿勢は経路接線が残した向きになる。全方向モデルはgoal姿勢に従う
 - 全方向モデルの実車evidence。検証は決定論的な単体検査と閉ループ回帰のみである
 - 前進のみ設定（`limits.v_min = 0`）のAckermannで後方goalが与えられた場合の到達。BACは停止し、
   切り返しはNav2側のrecoveryに委ねる

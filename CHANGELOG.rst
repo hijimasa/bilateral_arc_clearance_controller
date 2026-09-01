@@ -14,8 +14,18 @@ Forthcoming
   rather than crabbing towards it, because a crabbing rectangle sweeps wider
   than a straight one. Requires a positive ``limits.vy_max`` and sensor
   coverage abeam the body, and it publishes ``cmd_vel.linear.y``, which the
-  downstream base controller must honour. A goal ORIENTATION cannot be
-  commanded: the path ``BacCore`` receives carries no orientation.
+  downstream base controller must honour.
+* Honour the goal ORIENTATION Nav2 carries on the last plan pose. The adapter
+  transforms it into the base frame and ``BacCore::process`` takes it as an
+  optional argument; the pose reference fades from the path tangent to the goal
+  orientation over the last 1.5 m and is fully governed by it within 0.5 m.
+  Only the holonomic model can act on it - a model that steers with yaw cannot
+  choose its orientation independently of its direction of travel - so
+  differential drive and Ackermann ignore it and follow the path tangent
+  exactly as before. Measured yaw error over goal orientations 0.0, -1.2, 1.5,
+  2.5, -2.8 and 3.0 rad is 0.009-0.102 rad, inside the 0.25 rad
+  ``yaw_goal_tolerance`` that Nav2's ``SimpleGoalChecker`` defaults to; the
+  differential-drive reference spans 0.959-1.741 rad in the same runs.
 * Generalise the swept-trajectory evaluator from "velocity is along body +x" to
   an arbitrary constant body twist. The centre of rotation moves from
   ``(0, v / w)`` to ``(-vy / w, v / w)`` and the footprint's leading, trailing

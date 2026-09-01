@@ -192,6 +192,14 @@ OmniMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
 }
 
 bool
+OmniMotionModel::acceptsGoalHeading() const
+{
+  // Yaw is a regulator here, not the steering input, so the body can hold
+  // the goal orientation while lateral velocity closes the position error.
+  return true;
+}
+
+bool
 OmniMotionModel::supportsInPlaceRotation() const
 {
   // A holonomic body can yaw while holding station, and the pose regulator

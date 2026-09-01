@@ -196,6 +196,14 @@ AckermannMotionModel::isCommandKinematicallyValid(const Twist2D &command) const
 }
 
 bool
+AckermannMotionModel::acceptsGoalHeading() const
+{
+  // This model steers with yaw: its orientation is not free to be chosen,
+  // so a commanded goal orientation cannot be honoured.
+  return false;
+}
+
+bool
 AckermannMotionModel::supportsInPlaceRotation() const
 {
   return false;

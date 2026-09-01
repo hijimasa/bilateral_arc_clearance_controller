@@ -37,6 +37,7 @@
 
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace bac
@@ -404,8 +405,19 @@ public:
    *                empty path means "no intent": the output is (0, 0).
    * @param current Current (measured) robot velocity
    */
+  /**
+   * @param goal_heading Orientation the vehicle should hold AT the goal,
+   *   relative to the current body frame, i.e. the same frame as `path`
+   *   [rad]. Nav2 carries this on the last plan pose; supply it only when the
+   *   goal itself is inside `path`, since it is faded in by proximity to
+   *   `path.back()`. Only a holonomic model can act on it: a model that steers
+   *   with yaw cannot choose its orientation independently of its direction of
+   *   travel, so for those the value is ignored and the final heading follows
+   *   the path tangent as before.
+   */
   Result process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
-                 const Twist2D &current);
+                 const Twist2D &current,
+                 std::optional<float> goal_heading = std::nullopt);
 
   /// Evaluate a single candidate arc (exposed for tests and tuning tools)
   ArcEvaluation evaluateArc(const std::vector<Point2D> &points, float v, float w, float horizon) const;

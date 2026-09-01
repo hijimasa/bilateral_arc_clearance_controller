@@ -314,8 +314,13 @@ BacController::publishDiagnostics(const Result &result, bool using_scan)
 }
 
 std::vector<Point2D>
-BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/) const
+BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/,
+                             std::optional<float> *goal_heading) const
 {
+  if (goal_heading != nullptr)
+  {
+    *goal_heading = std::nullopt;
+  }
   // The plan lives in its own frame (typically map) while the controller runs
   // in the costmap/base frames - subtracting coordinates across frames would
   // silently cancel exactly the localization error this controller is
@@ -348,10 +353,23 @@ BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/) c
     plan_points.emplace_back(static_cast<float>(p.pose.position.x),
                              static_cast<float>(p.pose.position.y));
   }
-  return transformAndPrunePath(
-      plan_points, static_cast<float>(tf_msg.transform.translation.x),
-      static_cast<float>(tf_msg.transform.translation.y),
-      static_cast<float>(tf2::getYaw(tf_msg.transform.rotation)), core_.params().max_range);
+  const float tf_x = static_cast<float>(tf_msg.transform.translation.x);
+  const float tf_y = static_cast<float>(tf_msg.transform.translation.y);
+  const float tf_yaw = static_cast<float>(tf2::getYaw(tf_msg.transform.rotation));
+  std::vector<Point2D> local_path =
+      transformAndPrunePath(plan_points, tf_x, tf_y, tf_yaw, core_.params().max_range);
+
+  // Nav2 carries the requested goal orientation on the last plan pose. Pass it
+  // on only when that pose is still in the pruned path: pruning stops at
+  // max_range, and the orientation of an intermediate waypoint is a path
+  // tangent, not a goal.
+  if (goal_heading != nullptr)
+  {
+    *goal_heading = goalHeadingInBase(
+        plan_points.back(), local_path, tf_x, tf_y, tf_yaw,
+        static_cast<float>(tf2::getYaw(plan_.poses.back().pose.orientation)));
+  }
+  return local_path;
 }
 
 geometry_msgs::msg::TwistStamped
@@ -383,11 +401,12 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
   {
     points = collectObstaclePoints(pose);
   }
-  std::vector<Point2D> path = transformPlan(pose);
+  std::optional<float> goal_heading;
+  std::vector<Point2D> path = transformPlan(pose, &goal_heading);
   Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z),
                   static_cast<float>(velocity.linear.y));
 
-  Result result = core_.process(points, path, current);
+  Result result = core_.process(points, path, current, goal_heading);
   publishDiagnostics(result, using_scan);
 
   geometry_msgs::msg::TwistStamped cmd;
