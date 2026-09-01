@@ -3,7 +3,7 @@
 [English](README.md) | 日本語
 
 Bilateral Arc Clearance（BAC、左右分離円弧クリアランス）は、候補円弧の左右に残る自由幅を直接評価する、
-差動二輪向けのNav2ローカルcontrollerです。DWAの速度候補と停止可能性判定を基礎に、狭い開口では
+差動二輪・Ackermann車両向けのNav2ローカルcontrollerです。DWAの速度候補と停止可能性判定を基礎に、狭い開口では
 実観測上の左右クリアランスを釣り合わせ、広い場所ではグローバル経路の追従を優先します。
 
 ![BACが候補円弧の左右クリアランスを評価する幾何](docs/images/bac_geometry.svg)
@@ -37,6 +37,9 @@ BACは、地図上の経路だけに障害物回避を委ねず、robot frameの
 に整理しています。
 
 ## 評価結果
+
+公開済みの公平条件benchmarkは現在のところ差動二輪モデルのみです。Ackermannのcoverageは後述する
+決定論的な単体検査と閉ループ回帰試験に限られます。
 
 ROS 2 Jazzyで、同一車体・NavFn・1 Hz再計画・world・10 Hz local costmap入力・controller候補は
 前進のみ・共通0.4 m/s上限・共通actuator加速度制限を使い、公平条件評価として18シナリオ × 3 run × 4 controller = 216 episodeを
@@ -122,7 +125,8 @@ CIと同じクリーンなROS 2 Jazzy/Nav2環境でcontroller pluginとROS adapt
 checkoutはread-onlyでmountされ、ビルド生成物は一時コンテナ内だけに残ります。
 
 最小構成例です。車体寸法、制動能力、後方視野は実機に合わせて変更してください。
-install対象のより完全な例は [`config/bac_controller.yaml`](config/bac_controller.yaml) にあります。
+install対象の例は[差動二輪](config/bac_controller.yaml)と
+[Ackermann操舵](config/bac_controller_ackermann.yaml)に分けて用意しています。
 
 ```yaml
 controller_server:
@@ -131,6 +135,7 @@ controller_server:
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "bac::BacController"
+      motion_model.type: diff_drive
       scan_topic: /scan
       footprint.front: 0.5
       footprint.rear: -0.5
@@ -148,7 +153,9 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-17本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を含みます。
+差動二輪の17本の閉ループシナリオはLiDARレイキャスト、加速度制限アクチュエータ、ユニサイクル運動学を
+含みます。別のAckermann回帰試験では、速度が加速度制限され曲率が有限速度でしか変化しないplantを使い、
+操舵を即座に変えられない車両に対して指令を検証します。
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces
@@ -275,12 +282,20 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
 
 ## 制約
 
-- 2Dの差動二輪と定曲率円弧を前提とし、holonomic / Ackermann motion modelは持ちません。
+- 2Dの差動二輪とAckermann車両を定曲率円弧として扱います。holonomicな横移動は未対応です。
+- AckermannモードでもNav2への出力は車体前進速度とヨーレートであり、車両モデルは最小旋回半径1つです。
+  これはnav2 MPPIの`AckermannConstraints`と同じ粒度です。下位の車両controllerで、たとえば
+  `delta = atan(wheelbase * angular.z / linear.x)`により実舵角へ変換する必要があります。BACはwheelbase、
+  実舵角、操舵速度をモデル化せず、操舵jointの実測feedbackも読みません。
+- 前進のみの設定（`limits.v_min = 0`）では車体後方のgoalに到達できません。BACはその場旋回を捏造せず
+  停止し、切り返しはNav2側のrecoveryに委ねます。
 - 動的障害物の速度・将来位置は推定しません。
-- 角速度目標は1制御周期後に到達可能な範囲へ制限しますが、角加速度過渡中の掃引軌道とjerkは未評価です。
+- 出力ヨーレートを1制御周期後に到達可能な範囲へ制限しますが、角加速度・操舵過渡中の掃引軌道とjerkは
+  未評価です。
 - 後退は後方観測範囲が十分な場合だけ有効にしてください。
 - 生スキャン異常時はcostmapへfallbackします。完全なfail-stopはCollision Monitor等の独立層で構成してください。
-- 0.1.0はシミュレーション中心です。実機の遅延、滑り、外れ値、周期超過は別途評価が必要です。
+- 0.1.0はシミュレーション中心です。Ackermannの検証は決定論的な閉ループ試験であり、実車evidence
+  ではありません。実機の遅延、滑り、外れ値、操舵追従、周期超過は別途評価が必要です。
 
 ## ドキュメント
 

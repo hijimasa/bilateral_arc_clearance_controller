@@ -4,6 +4,27 @@ Changelog for package bilateral_arc_clearance_controller
 
 Forthcoming
 -----------
+* Add an Ackermann motion model that samples body curvature within
+  ``turn_radius_min``, never offers in-place rotation, and preserves the Nav2
+  forward-speed/yaw-rate command contract. The vehicle model is described at
+  the granularity of the Nav2 MPPI ``AckermannConstraints``; road-wheel
+  kinematics belong to the downstream vehicle controller.
+* Add deterministic Ackermann unit and closed-loop regression tests plus an
+  installable Ackermann Nav2 configuration.
+* Preserve constant-command curvature when contact rechecking lowers speed,
+  then reapply yaw reachability and contact checks when needed.
+* Bind the motion model once per configuration instead of per control tick, so
+  an unusable kinematic configuration is rejected by ``setParams`` and
+  ``process`` neither allocates nor throws.
+* Validate a motion-model configuration before committing it. A rejected
+  ``setParams`` previously left the surviving model reading the rejected
+  parameters, where a non-positive ``turn_radius_min`` turned the Ackermann
+  steering clamp into a full-lock command instead of a clean failure.
+* Differential drive no longer emits an in-place rotation that was never
+  checked for admissibility when the output stage brakes to zero speed. Such a
+  tick now reports ``STOP`` rather than ``AVOIDING``; subscribers of
+  ``avoid_status`` may observe the changed value. The 17-scenario harness
+  output is unchanged.
 * Extract differential-drive candidate generation, constant-command rollout,
   and in-place rotation policy from ``BacCore`` as a motion-model boundary.
 * Extract constant-curvature bilateral-clearance and exact swept-footprint

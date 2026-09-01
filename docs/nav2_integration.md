@@ -39,6 +39,7 @@ controller_server:
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "bac::BacController"
+      motion_model.type: diff_drive
       scan_topic: /scan       # 空ならcostmapのLETHAL cellを使用
       scan_timeout: 0.5
       scan_downsample: 1
@@ -70,6 +71,28 @@ fallbackする。costmap入力ではcell中心の量子化を`costmap_margin_com
 supervisor / Collision Monitorでfail-stopを構成する。BACは `raw_scan`、設定された `costmap`、または
 `costmap_fallback` を報告し、fallback時はWARN levelで理由を含める。周期は
 `diagnostics_publish_period` で設定し、0以下で無効になる。
+
+## Ackermann指令contract
+
+`motion_model.type: ackermann`とともに、実測した最小旋回半径`turn_radius_min`を設定する。車両モデルは
+この2つで尽きており、粒度はnav2 MPPIの`AckermannConstraints`と同じである。install対象の
+[Ackermann設定例](../config/bac_controller_ackermann.yaml)に全体を示す。`turn_radius_min`が正でない
+場合はconfigureに失敗する。
+
+Nav2への出力は`TwistStamped`のままで、`linear.x`が車体前進速度、`angular.z`がヨーレートである。BACは
+候補を車体曲率でsampleし、常に
+`|angular.z| <= min(limits.w_max, |linear.x| / turn_radius_min)`を満たす指令のみを出すため、選ばれた
+円弧は必ず幾何的には追従可能である。その場旋回指令は出さず、その場旋回候補は候補格子にも現れない。
+
+下位のAckermann controllerは、このbody twistを自身の操舵interfaceへ変換する必要がある。wheelbase `L`の
+自転車モデルなら`delta = atan(L * angular.z / linear.x)`である。BACは操舵jointの実測値を読まず、
+road-wheelの操舵速度もモデル化しないため、操舵速度制限・操舵追従誤差・停止中の中立復帰などは下位
+controllerの責務である。`turn_radius_min`は幾何的な最小値ではなく、この追従誤差を含めた実際の
+旋回円を覆う値を選ぶ。
+
+前進のみの設定（`limits.v_min = 0`）では、車体後方のgoalには到達できない。BACはその場旋回を捏造せず
+停止するため、標準behavior treeの`BackUp`などNav2側のrecoveryを設定するか、後方センサcoverageを
+確保したうえで`limits.v_min < 0`で後退を許可する。
 
 ## Collision Monitorとの併用
 
@@ -120,6 +143,8 @@ filter nodeはTFを参照しない。LaserScanがbase frameでなければ`senso
 - footprintとsensor extrinsicsを実測する。
 - `stop_decel`を実機が全条件で達成できる減速度以下へ設定する。
 - `control_period`とController Server frequencyを一致させる。
+- Ackermannでは実際の旋回円を実測し、下位のbody twist→操舵変換を検証する。
+- 前進のみ設定で後方goalが与えられたときの停止挙動と、Nav2側recoveryの発火を確認する。
 - 後方coverageがなければ`limits.v_min=0.0`にする。
 - scan / odom / TF timeoutとfallback方針を決める。
 - Velocity Smootherと下位controllerの加速度制限をBACの仮定と一致させる。

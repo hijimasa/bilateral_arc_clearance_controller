@@ -24,6 +24,29 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 安全余裕から控除する。生スキャン入力時の既定値は 0、コストマップのみの場合はセル解像度の
 半分である。
 
+## 運動モデル
+
+| パラメータ | 既定値 | 説明 |
+|---|---:|---|
+| `motion_model.type` | `diff_drive` | 運動学policy。`diff_drive`または`ackermann` |
+
+どちらのモデルもNav2標準の車体指令`(linear.x, angular.z)`、すなわち前進速度とヨーレートを出力する。
+車両モデルの粒度はnav2 MPPIの`AckermannConstraints`に合わせてあり、追加のパラメータは持たない。
+Ackermannを規定するのは最小旋回半径`turn_radius_min`だけであり、wheelbaseや実舵角、操舵速度といった
+road-wheel kinematicsは下位の車両controllerの責務とする。
+
+`ackermann`では候補を車体曲率`kappa = angular.z / linear.x`で生成する。sample・refineする範囲は
+後退を含む各速度について`|kappa| <= min(1 / turn_radius_min, limits.w_max / |linear.x|)`であり、
+`angular.z = linear.x * kappa`へ変換する。すなわち`limits.w_max`は結果のヨーレートを抑えるだけでなく、
+`|linear.x| > limits.w_max * turn_radius_min`となる速度域では候補曲率の範囲自体を狭める。実効的な
+ヨーレート上限は`min(limits.w_max, |linear.x| / turn_radius_min)`である。停止中に非ゼロのヨーレートは生成せず、
+その場旋回候補は候補格子にも現れない。`ackermann`では`turn_radius_min`が正でなければならず、
+満たさない場合はcontrollerのconfigure時にthrowする。
+
+下位の車両controllerは、このbody twistを自身の操舵interfaceへ変換する必要がある。wheelbase `L`の
+自転車モデルなら`delta = atan(L * angular.z / linear.x)`である。BACは操舵jointの実測値を読まないため、
+実機の操舵追従と操舵速度制限の実行は下位系の責務であり、別途検証する。
+
 ## 速度・候補生成
 
 | パラメータ | 既定値 | 説明 |
@@ -32,21 +55,24 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `limits.v_min` | -0.1 | 脱出用の最低後退速度 [m/s]。前方センサのみなら 0 を推奨 |
 | `limits.w_max` | 1.0 | 最大角速度絶対値 [rad/s] |
 | `limits.acc_v` | 0.8 | 並進 dynamic window の加速度 [m/s²] |
-| `limits.acc_w` | 2.5 | 実機の角加速度。出力 `w` を実測角速度から 1 制御周期で到達可能な範囲に制限し、クランプ後円弧の停止可能性を再検証(0 で無効) |
-| `control_period` | 0.05 | 角速度出力制限が仮定する制御周期 [s] |
+| `limits.acc_w` | 2.5 | 出力ヨーレート制限に使う実機の車体角加速度。0で無効 [rad/s²] |
+| `control_period` | 0.05 | ヨーレート出力制限が仮定する制御周期 [s] |
 | `window_time` | 0.25 | 並進 dynamic window の時間幅 [s] |
-| `v_samples` | 5 | 並進速度サンプル数（停止・回頭行は別途追加） |
-| `w_samples` | 25 | `[-w_max, w_max]` の角速度サンプル数 |
-| `w_refine_steps` | 3 | 粗い最良候補の角速度近傍を片側この本数だけ細分再評価。0 で無効 |
-| `turn_radius_min` | 0.25 | 前進候補の最小旋回半径 [m] |
-| `velocity_min` | 0.005 | これ未満の出力速度を 0 に丸める [m/s] |
-| `angvel_min` | 0.01 | これ未満の出力角速度を 0 に丸める [rad/s] |
+| `v_samples` | 5 | 並進速度サンプル数（停止行は別途追加。回頭行は`diff_drive`のみ） |
+| `w_samples` | 25 | 差動二輪のヨーレート、またはAckermannの車体曲率の粗サンプル数 |
+| `w_refine_steps` | 3 | 粗い最良ヨーレート／曲率候補の片側をこの本数だけ細分再評価。0で無効 |
+| `turn_radius_min` | 0.25 | 最小旋回半径 [m]。`diff_drive`では並進候補（前進・後退とも）のclearance評価が退化しないための下限、`ackermann`では候補曲率そのものを縛る運動学制約であり正の値が必須 |
+| `velocity_min` | 0.005 | これ未満の出力速度を 0 に丸める [m/s]。Ackermannでは速度なしのヨーレートが実現不能なため`angular.z`も同時に0にする |
+| `angvel_min` | 0.01 | 差動二輪のみ。これ未満の出力角速度を0に丸める [rad/s]。Ackermannでは低速でも小さなヨーレートが有意な曲率を表すため適用せず、曲率が0とみなせるときだけ`angular.z`を0にする |
 
-角速度候補は、狭所で必要な修正円弧を常に残すため現在角速度まわりの加速度窓ではなく全範囲を
-評価する（原 DWA からの意図的な逸脱）。出力段では `limits.acc_w` により実測角速度から到達可能な
-範囲へクランプし、クランプ後の定曲率円弧で停止可能性を再検証する。**保証されるのは「出力角速度の
-目標値が 1 制御周期後に到達可能」であることまで**であり、角加速度過渡中の掃引軌道や jerk は
-未評価（残項目）。実機の角加速度・jerk 制限の実行は下位速度制御器の責務とする。
+差動二輪のヨーレート候補とAckermannの曲率候補は、狭所で必要な修正円弧を常に残すため、現在値
+まわりの加速度窓ではなく全設定範囲を評価する（原DWAからの意図的な逸脱）。出力段ではどちらのモデルも
+`limits.acc_w`と`control_period`から1制御周期で到達可能なヨーレートへクランプし、Ackermannでは
+その後さらに`turn_radius_min`の曲率上限を再適用する。クランプ後の定曲率円弧で停止可能性を再検証し、
+追加減速が必要なら`v`と`w`を同率で下げて曲率を保存する。比例後の`w`が角減速度範囲を外れる場合は
+到達可能範囲へ再制限してその円弧を再検証する。`limits.acc_w`は車体ヨー加速度であり、Ackermannの
+road-wheel操舵速度を保証するものではない。加速・操舵過渡中の掃引軌道とjerkは未評価であり、各制限の
+実行は下位controllerの責務とする。
 
 ## 評価と重み
 
@@ -61,8 +87,15 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `weights.balance` | 4.0 | 狭所での左右差ペナルティ |
 | `weights.path_dist` | 1.0 | 経路追従コスト（残り射影弧長＋横偏差）の重み |
 | `weights.heading` | 0.15 | 終端方位誤差 |
-| `weights.hysteresis` | 0.6 | 前回選択角速度との差 |
+| `weights.hysteresis` | 0.6 | 前回の出力指令（到達可能性クランプとdeadband適用後）との差。差動二輪ではヨーレート差 [score per rad/s]、Ackermannでは曲率差 [score per 1/m] |
 | `weights.squeeze` | 0.5 | 側方余裕が小さいときの速度ペナルティ |
+
+`weights.hysteresis`の単位はモデルで異なる。差動二輪では[score per rad/s]でヨーレート差に、
+Ackermannでは[score per 1/m]で曲率差にかかるため、同じ重み値でも実効的な強さは変わる。Ackermann側の
+項の大きさは概ね`2 / turn_radius_min`に比例し、差動二輪側は`2 * w_max`に比例する。同梱の
+Ackermann設定例（`turn_radius_min` 1.0、`w_max` 0.8）では両者がほぼ一致するが、`turn_radius_min`を
+小さくすると`weights.hysteresis`が`weights.clearance`を圧倒しうるので、モデルを変えたら重みは
+評価し直す。
 
 重みを変更するときは `bac_scenario_harness --strict` を必ず再実行する。特に
 `weights.balance` と `weights.hysteresis` は狭路中心収束と操舵振動の交換になる。

@@ -41,6 +41,7 @@ controller_server:
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "bac::BacController"
+      motion_model.type: diff_drive
       scan_topic: /scan       # Empty: use LETHAL cells from the costmap
       scan_timeout: 0.5
       scan_downsample: 1
@@ -73,6 +74,29 @@ raw scans is an operational requirement, monitor the standard `diagnostics` topi
 or Collision Monitor to implement fail-stop behavior. BAC reports `raw_scan`, configured `costmap`, or
 `costmap_fallback`; a fallback is WARN-level and includes its reason. `diagnostics_publish_period` controls the
 publication interval and a non-positive value disables it.
+
+## Ackermann command contract
+
+Set `motion_model.type: ackermann` together with the measured minimum turning radius `turn_radius_min`. Those two
+parameters are the whole vehicle model, at the same granularity as the `AckermannConstraints` of Nav2 MPPI. The
+installable [Ackermann example](../../config/bac_controller_ackermann.yaml) shows the full parameter block.
+Configuration fails if `turn_radius_min` is not positive.
+
+The Nav2 output remains `TwistStamped`: `linear.x` is body-forward speed and `angular.z` is yaw rate. BAC samples
+candidates in body curvature and keeps every command within
+`|angular.z| <= min(limits.w_max, |linear.x| / turn_radius_min)`, so the commanded arc is always
+geometrically drivable by the vehicle. It never emits an in-place yaw command, and no in-place rotation
+candidate exists in the lattice.
+
+The downstream Ackermann controller must map this body twist to its steering interface — for a bicycle model of
+wheelbase `L`, `delta = atan(L * angular.z / linear.x)`. BAC does not read measured steering-joint state and does
+not model road-wheel rate, so the steering rate limit, steering tracking error, and any centering behavior while
+stopped are the downstream controller's responsibility. Choose `turn_radius_min` to cover the vehicle's real
+turning circle including that tracking error, rather than its geometric minimum alone.
+
+A forward-only Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind the vehicle. BAC brakes
+rather than fabricating a spin, so configure a Nav2 recovery — the standard behavior tree's `BackUp` — for that
+case, or enable reverse with `limits.v_min < 0` and adequate rear sensor coverage.
 
 ## Using Collision Monitor
 
@@ -125,6 +149,9 @@ fixed 2D extrinsics.
 - Measure the footprint and sensor extrinsics.
 - Set `stop_decel` no higher than the deceleration the robot can achieve under all relevant conditions.
 - Match `control_period` to the Controller Server frequency.
+- For Ackermann, measure the real turning circle and verify the downstream twist-to-steering conversion.
+- Confirm how the vehicle behaves when a rear goal makes the forward-only configuration stop, and that the
+  Nav2 recovery fires.
 - Use `limits.v_min=0.0` when rear coverage is insufficient.
 - Define scan, odometry, and TF timeouts and the fallback policy.
 - Align Velocity Smoother and downstream acceleration limits with BAC assumptions.

@@ -23,6 +23,32 @@ plugin, prefix them with the plugin namespace, for example `FollowPath.`. All un
 `costmap_margin_compensation` is specific to the Nav2 adapter. It subtracts costmap cell-center quantization from
 the safety margin. The default is zero with raw scans and half the cell resolution with costmap-only input.
 
+## Motion model
+
+| Parameter | Default | Description |
+|---|---:|---|
+| `motion_model.type` | `diff_drive` | Kinematic policy: `diff_drive` or `ackermann` |
+
+Both models expose the Nav2-standard body command `(linear.x, angular.z)`, interpreted here as forward speed and
+yaw rate. The vehicle model is described at the same granularity as the `AckermannConstraints` of Nav2 MPPI and
+takes no parameters of its own: the minimum turning radius `turn_radius_min` is the entire Ackermann
+specification. Road-wheel kinematics — wheelbase, steering angle, steering rate — belong to the downstream
+vehicle controller.
+
+With `ackermann`, candidates are generated in body curvature `kappa = angular.z / linear.x`. For each sampled
+speed, reverse included, the range `|kappa| <= min(1 / turn_radius_min, limits.w_max / |linear.x|)` is sampled
+and refined, then converted through `angular.z = linear.x * kappa`. So `limits.w_max` does not merely bound the
+resulting yaw rate: above `|linear.x| > limits.w_max * turn_radius_min` it narrows the candidate curvature range
+itself. The effective yaw-rate limit is `min(limits.w_max, |linear.x| / turn_radius_min)`. No nonzero-yaw command
+is produced at zero speed, and no
+in-place rotation candidate exists in the lattice at all. `ackermann` requires a positive `turn_radius_min`; the
+controller throws during configuration otherwise.
+
+The downstream vehicle controller must map this body twist to its own steering interface — for a bicycle model
+of wheelbase `L`, `delta = atan(L * angular.z / linear.x)`. BAC does not read measured steering-joint state, so
+physical steering tracking and steering-rate enforcement are the downstream controller's responsibility and
+require separate validation.
+
 ## Velocity and candidate generation
 
 | Parameter | Default | Description |
@@ -31,23 +57,26 @@ the safety margin. The default is zero with raw scans and half the cell resoluti
 | `limits.v_min` | -0.1 | Minimum reverse escape speed [m/s]; use 0 with forward-only sensing |
 | `limits.w_max` | 1.0 | Maximum absolute angular velocity [rad/s] |
 | `limits.acc_v` | 0.8 | Linear acceleration used by the dynamic window [m/s²] |
-| `limits.acc_w` | 2.5 | Physical angular acceleration. Limits output `w` to the value reachable from measured angular velocity in one cycle and rechecks the clamped arc; 0 disables it [rad/s²] |
-| `control_period` | 0.05 | Control cycle assumed by the angular output limit [s] |
+| `limits.acc_w` | 2.5 | Physical body yaw acceleration used to limit the output yaw rate; 0 disables it [rad/s²] |
+| `control_period` | 0.05 | Control cycle assumed by the yaw-rate output limit [s] |
 | `window_time` | 0.25 | Time span of the linear dynamic window [s] |
-| `v_samples` | 5 | Number of linear-velocity samples; stop/rotation rows are added separately |
-| `w_samples` | 25 | Number of angular samples across `[-w_max,w_max]` |
-| `w_refine_steps` | 3 | Fine samples added on each side of the best coarse angular candidate; 0 disables refinement |
-| `turn_radius_min` | 0.25 | Minimum turn radius for translating candidates [m] |
-| `velocity_min` | 0.005 | Output linear speeds below this value are rounded to zero [m/s] |
-| `angvel_min` | 0.01 | Output angular speeds below this value are rounded to zero [rad/s] |
+| `v_samples` | 5 | Number of linear-velocity samples; the stop row is added separately, the rotation row only for `diff_drive` |
+| `w_samples` | 25 | Number of coarse yaw-rate samples for differential drive or body-curvature samples for Ackermann |
+| `w_refine_steps` | 3 | Fine samples added on each side of the best coarse yaw-rate/curvature candidate; 0 disables refinement |
+| `turn_radius_min` | 0.25 | Minimum turn radius [m]. For `diff_drive` it is the lower bound that keeps clearance scoring of translating candidates from degenerating; for `ackermann` it is the kinematic constraint that bounds candidate curvature itself and must be positive |
+| `velocity_min` | 0.005 | Output linear speeds below this value are rounded to zero [m/s]. Ackermann zeroes the whole command, since a yaw rate without speed is not realizable |
+| `angvel_min` | 0.01 | Differential drive only: output angular speeds below this value are rounded to zero [rad/s]. Ackermann does not apply it, because a small yaw rate at low speed can still represent material curvature; it zeroes `angular.z` only when the curvature itself is negligible |
 
-Angular candidates cover the full range rather than an acceleration window around current angular velocity. This
-intentional departure from the original DWA keeps corrective arcs available in narrow passages. At the output,
-`limits.acc_w` clamps the selected command to a value reachable from the measured angular velocity and rechecks
-stopping admissibility on the clamped constant-curvature arc. The only enforced property is that the **target
-angular velocity is reachable after one control cycle**. Swept motion during the angular-acceleration transient
-and jerk remain unevaluated. The downstream controller is responsible for executing angular acceleration and
-jerk limits.
+Differential-drive yaw-rate candidates and Ackermann curvature candidates cover their full configured range
+rather than an acceleration window around the current state. This intentional departure from the original DWA
+keeps corrective arcs available in narrow passages. At the output, both models clamp the chosen command to the
+yaw rate reachable in one cycle from `limits.acc_w` and `control_period`; Ackermann then reapplies its
+`turn_radius_min` curvature bound. BAC rechecks stopping admissibility on the clamped constant-curvature arc. If
+it must reduce speed, both `v` and `w` are scaled to preserve curvature. The yaw-rate reachability bound is
+reapplied and the resulting arc rechecked if that scaling demands excessive angular deceleration. `limits.acc_w`
+is a body yaw acceleration and is not a guarantee about Ackermann road-wheel steering rate. Swept motion during
+the acceleration or steering transient and jerk remain unevaluated. The downstream controller is responsible for
+executing those limits.
 
 ## Evaluation and weights
 
@@ -62,8 +91,15 @@ jerk limits.
 | `weights.balance` | 4.0 | Left–right difference penalty in tight spaces |
 | `weights.path_dist` | 1.0 | Weight for path cost: remaining projected arc length plus lateral offset |
 | `weights.heading` | 0.15 | Endpoint heading-error weight |
-| `weights.hysteresis` | 0.6 | Weight for change from the previously selected angular velocity |
+| `weights.hysteresis` | 0.6 | Weight for change from the previous output command, after the reachability clamp and deadband: yaw rate for differential drive [score per rad/s], curvature for Ackermann [score per 1/m] |
 | `weights.squeeze` | 0.5 | Speed penalty under small lateral clearance |
+
+`weights.hysteresis` carries different units per model: [score per rad/s] against yaw-rate change for
+differential drive, [score per 1/m] against curvature change for Ackermann. The same weight value therefore has a
+different effective strength. The Ackermann term scales roughly with `2 / turn_radius_min` and the
+differential-drive one with `2 * w_max`; they happen to coincide for the shipped Ackermann example
+(`turn_radius_min` 1.0, `w_max` 0.8), but a small `turn_radius_min` can let `weights.hysteresis` dominate
+`weights.clearance`. Re-tune the weights after changing the motion model.
 
 Always re-run `bac_scenario_harness --strict` after changing weights. In particular, `weights.balance` and
 `weights.hysteresis` trade narrow-passage centering against steering oscillation.

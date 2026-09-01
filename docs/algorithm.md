@@ -4,9 +4,12 @@
 
 ## 対象
 
-BACは、矩形footprintを持つ差動二輪ロボットについて、robot frameの障害物点、robot frameへ変換した
-局所path、現在の並進・角速度から、次の定曲率指令`(v,w)`を選ぶ。障害物は1制御周期内では静的点群、
-ロボットはユニサイクル運動学に従うものとして扱う。
+BACは、矩形footprintを持つ差動二輪またはAckermannロボットについて、robot frameの障害物点、robot
+frameへ変換した局所path、現在の並進・角速度から、次の定曲率指令`(v,w)`を選ぶ。障害物は1制御周期内
+では静的点群とする。どちらのモデルも車体は定曲率で運動するものとして扱う。差動二輪は並進候補だけを
+scoring上の下限`turn_radius_min`で縛り、その場旋回は自由である。Ackermannは車体曲率そのものを
+運動学制約として縛り、その場旋回を持たない。nav2 MPPIと同じく、車両モデルの記述はこの車体レベルの
+制約までとし、road-wheel kinematicsは下位controllerの責務とする。
 
 ![候補円弧と左右クリアランス](images/bac_geometry.svg)
 
@@ -14,7 +17,7 @@ BACは、矩形footprintを持つ差動二輪ロボットについて、robot fr
 flowchart LR
   A[robot-frame obstacle points] --> D[filter / point cap]
   B[robot-frame local path] --> E[path station model]
-  C[current velocity] --> F[reachable velocity bounds]
+  C[current velocity] --> F[motion model candidate policy]
   D --> G[emergency envelope]
   D --> H[bilateral arc evaluation]
   E --> I[candidate score]
@@ -33,13 +36,18 @@ flowchart LR
    場合は、後方観測を前提にできなければならない。
 3. 現在の進行方向で衝突コースにある点から並進速度上限を計算する。平行壁のように現在円弧が余裕を
    持って外す点は、この減速判定から除外する。
-4. 並進dynamic window内の`v`と`[-w_max,w_max]`の`w`を組み合わせ、停止、回頭、後退候補も生成する。
+4. 選択したmotion modelで候補を生成する。差動二輪は並進dynamic windowとヨーレートを組み合わせ、
+   その場旋回も追加できる。Ackermannは後退を含む各速度について許容曲率
+   `|kappa| <= min(1 / turn_radius_min, w_max / |v|)`をsampleし`w = v * kappa`へ変換する。
+   その場旋回は候補格子に現れない。後退有効時はどちらも停止近傍の
+   escape候補を追加できる。
 5. 各候補について、定曲率運動中の矩形footprintと障害点の初接触弧長を閉形式で求める。接触前に
    設定した`stop_decel`で停止できない候補は棄却する。
 6. 候補終端をpathへ射影し、進行度、経路接線との方位差、弱い横偏差を計算する。障害物で塞がれた
    path区間では横偏差の引力を無効化する。
-7. 左右クリアランス、狭所での左右差、path項、前回操舵との差、側方圧迫を合成し、最良候補を返す。
-   粗探索後は最良角速度の近傍を細分する。
+7. 左右クリアランス、狭所での左右差、path項、前回操舵との差、側方圧迫を合成する。粗探索後は差動二輪
+   ならヨーレート、Ackermannなら曲率の近傍を細分し、1周期到達可能範囲へ制限して円弧を再検証する。
+   接触により追加減速する場合は`v`と`w`を同率で下げて曲率を保存し、必要なら到達可能性と接触を再検証する。
 
 既定値での概略scoreは次のとおりである。`tightness`は両側が狭い場合だけ1へ近づく。
 
@@ -48,13 +56,14 @@ score = 2.0 * min(clearance, adaptive_cap)
       - 4.0 * tightness * abs(clearance_left - clearance_right)
       - 1.0 * (remaining_path_arclength + 0.3 * path_offset)
       - 0.15 * abs(heading_error_vs_path_tangent)
-      - 0.6 * abs(w - previous_w)
+      - 0.6 * steering_change
       - 0.5 * abs(v) * lateral_squeeze
 ```
 
 低速時も最低`min_eval_distance`まで評価する。ただし遠方まで円弧を外挿して反対側の壁を誤評価しない
-よう、評価角`eval_angle_max`と横変位`eval_lateral_max`で窓を制限する。全パラメータと単位は
-[パラメータリファレンス](parameters.md)を参照する。
+よう、評価角`eval_angle_max`と横変位`eval_lateral_max`で窓を制限する。`steering_change`は差動二輪では
+ヨーレート差、Ackermannでは車体曲率差である。全パラメータと単位は[パラメータリファレンス](parameters.md)
+を参照する。
 
 ## 主張を3段階に分ける
 
@@ -70,11 +79,17 @@ score = 2.0 * min(clearance, adaptive_cap)
 
 ### シミュレーションで観測した性質
 
+以下の公開済みbenchmark観測は差動二輪モデルによる。
+
 - 正準18シナリオ × 3 runでBACは54/54成功、衝突0、最接近0.136 mだった。
 - 1.5 m通路のpath横ずれ0.10〜0.25 mでは8/8成功し、平均到達時間28.8 s、クリアランスは
   0.225〜0.230 mだった。
 - 1 runの開口幅sweepでは1.25 mまで完走したが、1.15 mでは最接近0.050 m、timeoutとなった。
   他の3 controllerは同じ1.15 m試行を完走しており、この境界条件でBACの優位性は観測されなかった。
+- Ackermann policyは、速度が加速度制限され曲率が有限速度で変化するplantに対する決定論的試験
+  6件（前方側方goal、offset通路、障害物迂回、行き止まり停止、後方goal、旋回半径拘束）を通過する。
+  後方goalの試験は、`turn_radius_min`以外を揃えた差動二輪の参照設定がその場旋回するのに対し、
+  Ackermannは旋回しないことを対比して確認する。これは回帰試験であり、実車evidenceではない。
 
 これは[評価条件](method_comparison.md#nav2-system-benchmark)内の観測であり、未試験環境へ
 確率的・普遍的に一般化しない。
@@ -84,8 +99,11 @@ score = 2.0 * min(clearance, adaptive_cap)
 - センサ死角、遅延、外れ値、誤った外部パラメータ下での安全
 - 動的障害物の将来位置予測
 - 地図、TF、plan、odomを含む任意の上流障害からの独立
-- 角加速度過渡中のswept trajectoryとjerk
+- 角加速度・操舵過渡中のswept trajectoryとjerk
 - 滑り、下位速度制御遅れ、制御周期超過を含むstop-before-contact
-- holonomic / Ackermann motion model
+- holonomicな横移動
+- 車体twistからroad-wheel操舵への下位変換と、その操舵速度・追従誤差
+- 前進のみ設定（`limits.v_min = 0`）のAckermannで後方goalが与えられた場合の到達。BACは停止し、
+  切り返しはNav2側のrecoveryに委ねる
 
 実機の最終防護には、センサcoverageとtimeoutを独立に設定したCollision Monitor等を併用する。

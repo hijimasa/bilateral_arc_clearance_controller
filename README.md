@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-Bilateral Arc Clearance (BAC) is a Nav2 local controller for differential-drive robots. It evaluates the
+Bilateral Arc Clearance (BAC) is a Nav2 local controller for differential-drive and Ackermann robots. It evaluates the
 free space remaining on the left and right sides of candidate arcs. Building on DWA-style velocity candidates
 and stopping admissibility, BAC balances observed bilateral clearance in narrow openings and gives global-path
 tracking priority in open space.
@@ -39,6 +39,9 @@ assumptions and evaluation range**, not invariance to arbitrary upstream failure
 observations, and non-guarantees.
 
 ## Evaluation results
+
+A published matched-condition benchmark is currently available only for the differential-drive model. Ackermann
+coverage is limited to the deterministic unit checks and closed-loop regressions described below.
 
 A matched-condition benchmark used ROS 2 Jazzy with a common robot footprint, NavFn, 1 Hz replanning, worlds,
 10 Hz local-costmap input, forward-only controller candidates, a common 0.4 m/s forward cap, and common
@@ -130,7 +133,9 @@ details. It mounts the checkout read-only and leaves build artifacts inside the
 temporary container.
 
 Minimal configuration follows. Adjust the footprint, braking capability, and rear sensor coverage for the robot.
-An installable, fuller example is provided in [`config/bac_controller.yaml`](config/bac_controller.yaml).
+Installable examples are provided for
+[differential drive](config/bac_controller.yaml) and
+[Ackermann steering](config/bac_controller_ackermann.yaml).
 
 ```yaml
 controller_server:
@@ -139,6 +144,7 @@ controller_server:
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "bac::BacController"
+      motion_model.type: diff_drive
       scan_topic: /scan
       footprint.front: 0.5
       footprint.rear: -0.5
@@ -156,8 +162,10 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The 17 closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator, and unicycle
-kinematics.
+The 17 differential-drive closed-loop scenarios include LiDAR ray casting, an acceleration-limited actuator,
+and unicycle kinematics. A separate Ackermann regression drives a plant whose speed is acceleration-limited and
+whose curvature slews at a bounded rate, so the commands are checked against a vehicle that cannot change its
+steering instantly.
 
 ```bash
 ./build/bac_scenario_harness --strict --csv-dir traces
@@ -296,15 +304,24 @@ obstacles just in front of the bumper.
 
 ## Limitations
 
-- BAC assumes a 2D differential-drive robot and constant-curvature arcs; it has no holonomic or Ackermann model.
+- BAC supports 2D differential-drive and Ackermann vehicles through constant-curvature arcs; it does not yet
+  support holonomic lateral motion.
+- In Ackermann mode, the Nav2 command remains body forward speed plus yaw rate, and the vehicle model is a single
+  minimum turning radius — the same granularity as the `AckermannConstraints` of Nav2 MPPI. The downstream vehicle
+  controller must map the twist to road-wheel steering, for example
+  `delta = atan(wheelbase * angular.z / linear.x)`. BAC does not model wheelbase, road-wheel angle, or steering
+  rate, and does not read measured steering-joint feedback.
+- A forward-only Ackermann configuration (`limits.v_min = 0`) cannot reach a goal behind the vehicle. BAC brakes
+  instead of fabricating a spin and leaves the multi-point turn to a Nav2 recovery.
 - It does not estimate obstacle velocity or future obstacle positions.
-- The angular command is limited to a value reachable after one control cycle, but swept motion during angular
-  acceleration transients and jerk have not been evaluated.
+- The output yaw rate is limited to a value reachable after one control cycle, but swept motion during the
+  corresponding angular-acceleration or steering transient and jerk have not been evaluated.
 - Enable reverse motion only when rear sensor coverage is adequate.
 - A raw-scan failure falls back to the costmap. Configure an independent layer such as Collision Monitor when
   fail-stop behavior is required.
-- Version 0.1.0 is evaluated primarily in simulation. Physical-robot latency, slip, outliers, and control-period
-  overruns require separate validation.
+- Version 0.1.0 is evaluated primarily in simulation. Ackermann coverage currently consists of deterministic
+  closed-loop tests, not physical-vehicle evidence. Physical latency, slip, outliers, steering tracking, and
+  control-period overruns require separate validation.
 
 ## Documentation
 
