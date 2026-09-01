@@ -5,14 +5,16 @@ English | [日本語](../release_review_history.md)
 ## Current state
 
 - Checked: 2026-09-01
-- Evaluated package: `24466ae`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
-  `5951e0b` (documentation) and `24466ae` (review record); R12 reviewed those three commits
+- Evaluated package: `3bd88cb`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
+  `5951e0b` (documentation) and `24466ae` (review record); R12 reviewed those three commits and its response
+  landed in `3521226`; R13 reviewed through `3bd88cb` (the scenario expansion closing R11 L5)
 - Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); neither R11 nor R12 re-ran the benchmark
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 
-All Critical, High, and Medium findings across twelve release-review rounds have been addressed, as have the
-three Low findings from R10, the four from R11 (R11 L1 was closed by documentation, with no behaviour change),
-and the three from R12. No release blocker remains. R12 re-verified R11's own work and found that the
+All Critical, High, and Medium findings across thirteen release-review rounds have been addressed, as have the
+three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
+by the 2026-09-01 scenario expansion), the three from R12, and five of the six from R13. R13 L7 - a data race on
+`speed_limit_` that predates this branch - is carried to the next cycle. No release blocker remains. R12 re-verified R11's own work and found that the
 abandoned-design wording R11 considered fixed still survived in the public header, that the Nav2 adapter's
 differential-drive coverage had been replaced rather than added to, and that the shipped Ackermann example
 configuration failed the package's own Ackermann regression suite - R11 L4 had been closed on a false premise. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
@@ -20,8 +22,10 @@ configuration failed the package's own Ackermann regression suite - R11 L4 had b
 model was added, and R11 fixed the exception safety of `setParams` (one High finding). Remaining work includes
 rollout through angular-acceleration transients, physical disturbance evaluation, a Collision Monitor combined
 baseline, decomposition of `BacCore::process()`, and clamping the filter node's virtual path to the turning
-circle (R12 L5). The broader Ackermann scenario suite (R11 L5) was completed on 2026-09-01, adding safety stop
-(forward-only and reverse escape), narrow-corridor centering, and a clutter field. Ackermann
+circle (R12 L5, deprioritised after R13 confirmed it is benign under Ackermann), and a data race on
+`speed_limit_` (R13 L7, predating this branch). The broader Ackermann scenario suite (R11 L5) was completed on
+2026-09-01, adding safety stop (forward-only and reverse escape), narrow-corridor centering, and a clutter
+field. Ackermann
 coverage consists of deterministic unit checks and closed-loop regressions only; there is no vehicle evidence.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
@@ -47,6 +51,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R10 | Reproducible tree hash, manifest identity, reuse terminology, raw archive | Tracked-source hash, set/schema checks, terminology separation, archive tool | [Findings, ja](../reviews/r10-2026-08-28-findings.md) / [Response, ja](../reviews/r10-2026-08-28-response.md) |
 | R11 | Ackermann support: half-applied rejected configuration, documentation diverged from code, vacuous test assertions | Validate-before-commit `setParams`, corrected the abandoned-design documentation, assertions that kill nine mutants | [Findings, ja](../reviews/r11-2026-09-01-findings.md) / [Response, ja](../reviews/r11-2026-09-01-response.md) |
 | R12 | Shipped Ackermann config failed the regression suite, abandoned-design wording in the public header, replaced differential-drive adapter coverage | Retuned the example weight and added a shipped-configuration scenario, corrected the header, restored the default-configuration test and split the Ackermann one out | [Findings, ja](../reviews/r12-2026-09-01-findings.md) / [Response, ja](../reviews/r12-2026-09-01-response.md) |
+| R13 | Shipped-configuration guard not tied to the yaml, thresholds fitted to one trajectory, speed governor uncovered closed-loop, wrong scenario count | The scenario now reads the yaml, thresholds re-derived from a perturbation band (the one with no separating value was dropped), clearance assertions added, count corrected to 11 | [Findings, ja](../reviews/r13-2026-09-01-findings.md) / [Response, ja](../reviews/r13-2026-09-01-response.md) |
 
 ## Current validation contract
 
@@ -56,7 +61,7 @@ The linked findings and responses are preserved in Japanese as the original audi
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Core unit/property tests, 17 closed-loop scenarios, and 10 Ackermann closed-loop scenarios. The Ackermann set
+- Core unit/property tests, 17 closed-loop scenarios, and 11 Ackermann closed-loop scenarios. The Ackermann set
   includes a run of the shipped example configuration, and its narrow-corridor and clutter scenarios bound
   lateral error, curvature sign changes, per-cycle curvature change and stop ticks. The thresholds were chosen
   to separate the measured correct behaviour from the measured broken behaviour

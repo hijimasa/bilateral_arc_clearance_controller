@@ -4,22 +4,25 @@
 
 ## 現在の状態
 
-- 確認日: 2026-09-01
-- 評価対象package: `24466ae`。R11の対象だった作業ツリーは `8fd0d7e`（実装）/ `5951e0b`（文書）/
-  `24466ae`（レビュー記録）としてコミットされ、R12はその3コミットを対象とする
+- 確認日: 2026-09-01（R13まで）
+- 評価対象package: `3bd88cb`。R11の対象だった作業ツリーは `8fd0d7e`（実装）/ `5951e0b`（文書）/
+  `24466ae`（レビュー記録）としてコミットされた。R12はその3コミットを対象とし、その対応は `3521226`
+  に入っている。R13は `3bd88cb`（シナリオ拡充、R11 L5の対応）までを対象とする
 - benchmark: `026a17a`（正準）/ `4fed3d2`（公平条件比較・ablation）。R11・R12ともbenchmarkを再実行していない
 - 判定: コードレビュー **Go**、Public化P0 **完了**。公開操作は所有者判断
 
-全12回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、
-第11回のLow 4件（L1は挙動変更を伴わない文書化で完了）、第12回のLow 3件も対応済みで、release blockerは
-ない。第12回は第11回の対応の再検証であり、第11回がM1を完了と判断した廃案設計記述が公開ヘッダに残存
+全13回のリリースレビューで確認されたCritical / High / Mediumは対応済みである。第10回のLow 3件、
+第11回のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、
+第12回のLow 3件、第13回のLow 6件のうち5件も対応済みで、release blockerはない。第13回L7
+（`speed_limit_` のデータ競合）は本branch以前からの既存項目として次cycleへ残す。第12回は第11回の対応の再検証であり、第11回がM1を完了と判断した廃案設計記述が公開ヘッダに残存
 していたこと、Nav2 adapterの差動二輪coverageが追加ではなく置換されていたこと、および同梱のAckermann
 設定例が自身の回帰試験に通らなかったこと（第11回L4の文書化が誤った前提に立っていた）を検出した。
 2026-08-29にROS adapter testと入力source diagnosticsを追加し、同日に公平条件比較216 episodeとBAC
 ablation 216 episodeを追加した。2026-09-01にはAckermann motion modelを追加し、第11回レビューで
 `setParams`の例外安全（High 1件）を修正した。次cycleへ残す設計・評価項目は、角加速度過渡を積分した
 rollout、実機外乱評価、Collision Monitor併用baseline、`BacCore::process()`の責務分割、
-およびfilter node仮想pathの旋回円clamp（R12 L5）である。Ackermannシナリオの拡充（R11 L5）は
+filter node仮想pathの旋回円clamp（R12 L5、R13がAckermannでは良性と確認したため優先度低）、
+および`speed_limit_`のデータ競合（R13 L7、本branch以前からの既存項目）である。Ackermannシナリオの拡充（R11 L5）は
 2026-09-01に完了し、安全停止（前進のみ／後退退避）、狭路centering、clutter走破を追加した。Ackermannの検証は決定論的な単体検査と閉ループ回帰のみで、
 実車evidenceは無い。
 
@@ -43,6 +46,7 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
 | R10 | tree hash再現性、manifest同一性、reuse用語、raw archive | tracked source hash、集合/schema検査、用語分離、archive tool | [指摘](reviews/r10-2026-08-28-findings.md) / [対応](reviews/r10-2026-08-28-response.md) |
 | R11 | Ackermann対応: 却下設定の半適用、文書と実装の乖離、テストの空振り | 検証先行によるsetParams例外安全、廃案設計記述の訂正、ミューテーション9件を殺すテスト追加 | [指摘](reviews/r11-2026-09-01-findings.md) / [対応](reviews/r11-2026-09-01-response.md) |
 | R12 | 同梱Ackermann設定が回帰試験に不合格、公開ヘッダの廃案設計記述、差動二輪adapter coverageの置換 | 設定例の重み訂正と同梱設定シナリオ追加、ヘッダ訂正、既定設定試験の復帰とAckermann試験の分離 | [指摘](reviews/r12-2026-09-01-findings.md) / [対応](reviews/r12-2026-09-01-response.md) |
+| R13 | 同梱設定ガードがyamlに未接続、単一軌道に合わせた閾値、速度governorの閉ループ未被覆、シナリオ数の誤り | シナリオがyamlを直接読む、閾値を摂動帯から再導出（分離不能な1件は削除）、クリアランス検査追加、11本へ訂正 | [指摘](reviews/r13-2026-09-01-findings.md) / [対応](reviews/r13-2026-09-01-response.md) |
 
 ## 現在の検証contract
 
@@ -51,7 +55,7 @@ artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 e
   両者は同一tickの表と裏を検査するため、`motion_model.type`の誤解決は必ずどちらかが検出する。
   Jazzyコンテナではさらに、`ackermann`ラベル試験の存在と通過、インストール済みAckermann設定、
   実ノードが不正な`motion_model.type`と非正の`turn_radius_min`を拒否することを検査する。
-- core unit / property testと17 closed-loop scenarios、Ackermann 10 closed-loop scenarios。Ackermann側は
+- core unit / property testと17 closed-loop scenarios、Ackermann 11 closed-loop scenarios。Ackermann側は
   同梱設定例そのものを走らせる試験を含み、狭路centeringとclutterでは横偏差・曲率符号反転・1周期あたり
   曲率変化・停止tickを閾値検査する。閾値は正常時と破壊時の実測値を分離するように決めている。
 - 差動二輪とAckermannのmotion model単体試験。Ackermann側は候補格子、旋回半径拘束、refinement、

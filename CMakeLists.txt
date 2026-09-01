@@ -114,6 +114,10 @@ if(BUILD_TESTING)
 
   add_executable(bac_ackermann_scenarios test/ackermann_scenarios.cpp)
   target_include_directories(bac_ackermann_scenarios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  # The suite runs the shipped example configuration itself, so a yaml edit
+  # cannot ship a configuration that fails this suite.
+  target_compile_definitions(bac_ackermann_scenarios PRIVATE
+      BAC_ACKERMANN_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/bac_controller_ackermann.yaml")
   target_link_libraries(bac_ackermann_scenarios bac_core)
   target_compile_options(bac_ackermann_scenarios PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacAckermannScenarios COMMAND bac_ackermann_scenarios)

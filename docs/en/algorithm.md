@@ -93,7 +93,7 @@ The published benchmark observations below use the differential-drive model.
 - In a one-run opening-width sweep, it completed openings down to 1.25 m but timed out at 1.15 m after reaching
   0.050 m minimum clearance. The other three controllers completed that 1.15 m trial, so BAC showed no advantage
   at this boundary condition.
-- The Ackermann policy passes ten deterministic tests — forward lateral goal, offset corridor, obstacle detour,
+- The Ackermann policy passes eleven deterministic tests — forward lateral goal, offset corridor, obstacle detour,
   dead-end stop, rear goal, turning-radius binding, the shipped example configuration, safety stop (forward-only),
   safety stop (reverse escape), narrow-corridor centering, and a clutter field — against a plant whose speed is
   acceleration-limited and whose curvature slews at a bounded rate. The rear-goal test contrasts it with a

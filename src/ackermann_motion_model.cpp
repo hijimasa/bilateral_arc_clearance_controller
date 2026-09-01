@@ -17,10 +17,17 @@ AckermannMotionModel::AckermannMotionModel(const Params &params)
   : params_(params)
 {
   // Also checked by the factory; repeated here so direct construction cannot
-  // produce a model whose curvature bound is negative or infinite.
-  if (!(params.turn_radius_min > 0.0f))
+  // produce a model whose curvature bound is negative or infinite. The bound
+  // is min(w_max, |v| / turn_radius_min), so both terms must be checked.
+  if (!(params.turn_radius_min > 0.0f) || !std::isfinite(params.turn_radius_min))
   {
-    throw std::invalid_argument("bac: Ackermann turn_radius_min must be positive");
+    throw std::invalid_argument(
+        "bac: Ackermann turn_radius_min must be positive and finite");
+  }
+  if (!(params.limits.w_max > 0.0f) || !std::isfinite(params.limits.w_max))
+  {
+    throw std::invalid_argument(
+        "bac: Ackermann limits.w_max must be positive and finite");
   }
 }
 

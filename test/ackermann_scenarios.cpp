@@ -19,7 +19,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -73,6 +75,7 @@ struct AckermannRun
   int curvature_sign_changes = 0;    // steering oscillation
   float mean_abs_lateral = 0.0f;     // vs the corridor centerline, in-window
   float max_abs_lateral = 0.0f;
+  int lateral_samples = 0;           // 0 means the centering metrics are vacuous
 };
 
 AckermannRun
@@ -151,7 +154,10 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
     }
     else
     {
-      commanded_curvature = body_curvature;  // hold the wheels while stopped
+      // Hold the wheels while stopped, and break the per-tick chain: a step
+      // measured across a standstill would not be a per-tick step.
+      commanded_curvature = body_curvature;
+      had_previous_curvature = false;
     }
 
     // --- plant: accel-limited speed, rate-limited body curvature ---
@@ -190,6 +196,7 @@ runAckermann(bac::BacCore &core, const bac_sim::World &world,
       run.max_abs_lateral = std::max(run.max_abs_lateral, lateral);
     }
   }
+  run.lateral_samples = lateral_samples;
   if (lateral_samples > 0)
   {
     run.mean_abs_lateral = static_cast<float>(lateral_sum / lateral_samples);
@@ -292,6 +299,11 @@ testObstacleDetour()
       9.0f, 0.0f, 90.0f);
 
   expect(!run.collided, "Ackermann detour has no body contact");
+  // Not implied by "no contact": a speed governor that ignores its caller's cap
+  // still rounds the obstacle, but at 0.18 m instead of 0.36 m.
+  expect(run.min_clearance > 0.25f,
+         "Ackermann detour keeps physical clearance (" +
+             std::to_string(run.min_clearance) + " m)");
   expect(run.reached_goal,
          "Ackermann vehicle rounds a blocking obstacle (final " +
              std::to_string(run.final_pose.x) + ", " +
@@ -407,6 +419,7 @@ testSafetyStopHoldsPosition()
          "forward-only Ackermann holds position (travelled " +
              std::to_string(run.travelled_distance) + " m)");
   expect(run.stop_ticks > 0, "the safety stop actually commands a standstill");
+  expect(!run.violated_turning_radius, "the safety stop respects minimum turning radius");
   expect(!run.offered_in_place_rotation, "the safety stop never turns on the spot");
   expect(!run.commanded_reverse, "the safety stop respects limits.v_min = 0");
 }
@@ -437,7 +450,11 @@ testSafetyStopReverseEscape()
   expect(!run.violated_turning_radius,
          "the reverse escape respects minimum turning radius (max curvature " +
              std::to_string(run.max_abs_curvature) + ")");
-  expect(run.curvature_sign_changes <= 15,
+  // Measured band: correct behaviour spans 0-17 sign changes over v_max
+  // 0.30-0.60 and plant curvature_rate 0.7-2.0; measuring hysteresis in yaw
+  // rate instead of curvature spans 25-30 at this scenario's v_max. The bound
+  // sits between the two bands, not just above one trajectory.
+  expect(run.curvature_sign_changes <= 22,
          "the reverse escape does not chatter the steering (" +
              std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
 }
@@ -470,6 +487,10 @@ testNarrowCorridorCentering()
   expect(run.stop_ticks == 0,
          "the Ackermann vehicle never stops inside the corridor (" +
              std::to_string(run.stop_ticks) + " stop ticks)");
+  // Without this the centering bounds below would pass on their initialisers
+  // if the vehicle never reached the corridor.
+  expect(run.lateral_samples > 0,
+         "the centering metrics were actually sampled inside the corridor");
   expect(run.mean_abs_lateral < 0.04f,
          "the Ackermann vehicle converges onto the corridor centerline (mean |y| " +
              std::to_string(run.mean_abs_lateral) + ", max " +
@@ -480,6 +501,10 @@ testNarrowCorridorCentering()
   expect(run.curvature_sign_changes <= 12,
          "narrow corridor traverse does not oscillate (" +
              std::to_string(run.curvature_sign_changes) + " curvature sign changes)");
+  expect(!run.offered_in_place_rotation, "narrow corridor traverse never turns on the spot");
+  expect(!run.violated_turning_radius,
+         "narrow corridor traverse respects minimum turning radius (max curvature " +
+             std::to_string(run.max_abs_curvature) + ")");
 }
 
 /// Scattered obstacles that force repeated re-steering, including at the
@@ -514,43 +539,120 @@ testClutterField()
   expect(!run.violated_turning_radius,
          "clutter traverse respects minimum turning radius (max curvature " +
              std::to_string(run.max_abs_curvature) + ")");
-  expect(run.max_curvature_step < 0.45f,
-         "clutter traverse steers continuously (" +
-             std::to_string(run.max_curvature_step) + " 1/m per tick)");
+  // Deliberately no max_curvature_step bound here. Measured over benign
+  // perturbations (plant curvature_rate, v_max, footprint width, sim_time) the
+  // correct trajectory reaches 0.81 1/m per tick while broken variants sit at
+  // 0.51 and 0.83, so no bound separates them: it would be a tripwire on one
+  // trajectory, not a property of correctness. Steering continuity is bounded
+  // where it is robust - the corridor and shipped-configuration runs.
 }
 
-/// The configuration users copy must be the configuration the suite defends.
-/// Mirrors config/bac_controller_ackermann.yaml; keep the two in step.
-bac::Params shippedExampleParams()
+/// The configuration users copy must be the configuration the suite defends,
+/// so this READS config/bac_controller_ackermann.yaml rather than mirroring it.
+/// A hand-copied duplicate would let a yaml edit ship a configuration that
+/// fails this very suite while every test stays green.
+///
+/// Deliberately a minimal `key: value` reader, not a YAML library: the file is
+/// a flat parameter block, and the point is to have no build dependency
+/// between the regression suite and the configuration it defends.
+std::map<std::string, std::string>
+readConfigFile(const std::string &path)
 {
+  std::map<std::string, std::string> values;
+  std::ifstream file(path);
+  if (!file)
+  {
+    return values;
+  }
+  std::string line;
+  while (std::getline(file, line))
+  {
+    const std::size_t comment = line.find('#');
+    if (comment != std::string::npos)
+    {
+      line.erase(comment);
+    }
+    const std::size_t colon = line.find(':');
+    if (colon == std::string::npos)
+    {
+      continue;
+    }
+    std::string key = line.substr(0, colon);
+    std::string value = line.substr(colon + 1);
+    const auto trim = [](std::string &text) {
+      const std::size_t first = text.find_first_not_of(" \t\r\n");
+      const std::size_t last = text.find_last_not_of(" \t\r\n");
+      text = (first == std::string::npos) ? std::string{} : text.substr(first, last - first + 1);
+    };
+    trim(key);
+    trim(value);
+    if (!key.empty() && !value.empty())
+    {
+      values[key] = value;
+    }
+  }
+  return values;
+}
+
+bool g_shipped_config_loaded = false;
+
+bac::Params
+shippedExampleParams()
+{
+  const std::map<std::string, std::string> config = readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
   bac::Params params;
+  if (config.empty())
+  {
+    expect(false, "the shipped Ackermann configuration is readable at "
+                      BAC_ACKERMANN_CONFIG_PATH);
+    return params;
+  }
+
+  bool complete = true;
+  const auto number = [&](const char *key, float &field) {
+    const auto found = config.find(key);
+    if (found == config.end())
+    {
+      expect(false, std::string("the shipped configuration declares ") + key);
+      complete = false;
+      return;
+    }
+    field = std::stof(found->second);
+  };
+
+  const auto model = config.find("motion_model.type");
+  if (model == config.end() || model->second != "ackermann")
+  {
+    expect(false, "the shipped configuration selects the Ackermann model");
+    complete = false;
+  }
   params.motion_model.type = bac::MotionModelType::ACKERMANN;
-  params.turn_radius_min = 1.0f;
 
-  params.footprint.front = 0.7f;
-  params.footprint.rear = -0.3f;
-  params.footprint.width = 0.6f;
-  params.safety_margin.front = 0.2f;
-  params.safety_margin.rear = 0.2f;
-  params.safety_margin.side = 0.2f;
-  params.avoid_margin.side = 0.6f;
+  number("turn_radius_min", params.turn_radius_min);
+  number("footprint.front", params.footprint.front);
+  number("footprint.rear", params.footprint.rear);
+  number("footprint.width", params.footprint.width);
+  number("safety_margin.front", params.safety_margin.front);
+  number("safety_margin.rear", params.safety_margin.rear);
+  number("safety_margin.side", params.safety_margin.side);
+  number("avoid_margin.side", params.avoid_margin.side);
+  number("limits.v_max", params.limits.v_max);
+  number("limits.v_min", params.limits.v_min);
+  number("limits.w_max", params.limits.w_max);
+  number("limits.acc_v", params.limits.acc_v);
+  number("limits.acc_w", params.limits.acc_w);
+  number("control_period", params.control_period);
+  number("stop_decel", params.stop_decel);
+  number("brake_reaction_time", params.brake_reaction_time);
+  number("weights.clearance", params.weights.clearance);
+  number("weights.path_dist", params.weights.path_dist);
+  number("weights.balance", params.weights.balance);
+  number("weights.heading", params.weights.heading);
+  number("weights.hysteresis", params.weights.hysteresis);
+  number("weights.squeeze", params.weights.squeeze);
+  number("sim_time", params.sim_time);
 
-  params.limits.v_max = 0.5f;
-  params.limits.v_min = 0.0f;
-  params.limits.w_max = 0.8f;
-  params.limits.acc_v = 0.8f;
-  params.limits.acc_w = 2.5f;
-  params.control_period = 0.05f;
-  params.stop_decel = 0.8f;
-  params.brake_reaction_time = 0.1f;
-
-  params.weights.clearance = 2.0f;
-  params.weights.path_dist = 1.0f;
-  params.weights.balance = 4.0f;
-  params.weights.heading = 0.15f;
-  params.weights.hysteresis = 0.3f;
-  params.weights.squeeze = 0.5f;
-  params.sim_time = 2.5f;
+  g_shipped_config_loaded = complete;
   return params;
 }
 
@@ -565,11 +667,16 @@ testShippedExampleConfiguration()
   bac_sim::World world;
   world.addBox(4.0f, 0.0f, 1.0f, 1.0f);
   bac::BacCore core(shippedExampleParams());
+  expect(g_shipped_config_loaded,
+         "every value the scenario needs was read from the shipped configuration");
   const AckermannRun run = runAckermann(
       core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(9.0f, 0.0f),
       9.0f, 0.0f, 90.0f);
 
   expect(!run.collided, "the shipped Ackermann example has no body contact");
+  expect(run.min_clearance > 0.20f,
+         "the shipped Ackermann example keeps physical clearance (" +
+             std::to_string(run.min_clearance) + " m)");
   expect(run.reached_goal,
          "the shipped Ackermann example reaches its goal rather than orbiting "
          "(closest " + std::to_string(run.min_goal_distance) + " m, travelled " +
