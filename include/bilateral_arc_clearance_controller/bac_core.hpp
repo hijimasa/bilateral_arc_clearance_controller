@@ -10,10 +10,12 @@
  * the current velocity; output is the next (v, w) command.
  *
  * The differential-drive policy derives from Dynamic Window Approach candidate
- * sampling, while the Ackermann policy samples road-wheel angle. In both cases,
- * traversability evaluation uses the bilateral arc clearance measure: candidate velocities are
- * sampled from an acceleration-limited translational window and the configured
- * steering range, rolled out as constant-curvature arcs, and scored by
+ * sampling; the Ackermann policy samples body curvature bounded by
+ * turn_radius_min, at the granularity of the Nav2 MPPI AckermannConstraints.
+ * In both cases, traversability evaluation uses the bilateral arc clearance
+ * measure: candidate velocities are sampled from an acceleration-limited
+ * translational window and the configured steering range, rolled out as
+ * constant-curvature arcs, and scored by
  *   saturated bilateral clearance + local-goal following (distance / heading)
  *   - hysteresis - lateral squeeze,
  * with DWA admissibility (can the robot stop before the first body hit on the
@@ -156,7 +158,12 @@ struct Weights
   /// grid-quantized, replanned global path) can itself sit off-center.
   float balance    = 4.0f;  // [score per m]
   float heading    = 0.15f; // [score per rad] endpoint heading vs local-goal bearing
-  float hysteresis = 0.6f;  // change in yaw rate (diff) or curvature (Ackermann)
+  /// Change in yaw rate [score per rad/s] for differential drive, or in body
+  /// curvature [score per 1/m] for Ackermann. The units differ, so this value
+  /// does NOT transfer between models: it is tuned for differential drive, and
+  /// the curvature term does not shrink with speed the way the yaw-rate one
+  /// does. Ackermann needs a lower value; see config/bac_controller_ackermann.yaml.
+  float hysteresis = 0.6f;
   float squeeze    = 0.5f;  // [score per m/s] v scaled by (1 - lateral_fraction)
 };
 

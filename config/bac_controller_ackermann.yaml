@@ -51,6 +51,11 @@ controller_server:
       weights.path_dist: 1.0
       weights.balance: 4.0
       weights.heading: 0.15
-      weights.hysteresis: 0.6
+      # NOT the differential-drive default (0.6). The Ackermann term penalizes
+      # CURVATURE change [score per 1/m], and unlike the yaw-rate term it does
+      # not shrink with speed, so 0.6 here overpowers path following: the
+      # vehicle orbits instead of closing on the goal. This value is the one
+      # bac_ackermann_scenarios runs; keep the two in step.
+      weights.hysteresis: 0.3
       weights.squeeze: 0.5
       sim_time: 2.5

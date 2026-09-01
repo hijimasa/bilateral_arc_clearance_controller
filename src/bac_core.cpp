@@ -294,13 +294,24 @@ BacCore::operator=(const BacCore &other)
 {
   if (this != &other)
   {
-    params_                = other.params_;
+    const Params previous = params_;
+    params_ = other.params_;
+    try
+    {
+      rebuildMotionModel();
+    }
+    catch (...)
+    {
+      // The surviving model reads params_ by reference, so it must never be
+      // left describing a configuration this object does not hold.
+      params_ = previous;
+      throw;
+    }
     current_status_        = other.current_status_;
     avoiding_counter_      = other.avoiding_counter_;
     prev_selected_command_ = other.prev_selected_command_;
     cap_ema_               = other.cap_ema_;
     alignment_mode_        = other.alignment_mode_;
-    rebuildMotionModel();
   }
   return *this;
 }
@@ -320,14 +331,27 @@ BacCore::setParams(const Params &params)
   // clamp into a full-lock command instead of a clean failure.
   detail::validateMotionModelParams(params);
 
-  if (params_.motion_model.type != params.motion_model.type ||
-      params_.turn_radius_min != params.turn_radius_min)
+  const Params previous = params_;
+  params_ = params;
+  try
+  {
+    rebuildMotionModel();
+  }
+  catch (...)
+  {
+    // Validation above rejects an unusable configuration, so reaching here
+    // means allocation failed. Restore params_ so the surviving model still
+    // describes the configuration this object reports.
+    params_ = previous;
+    throw;
+  }
+
+  if (previous.motion_model.type != params.motion_model.type ||
+      previous.turn_radius_min != params.turn_radius_min)
   {
     prev_selected_command_ = Twist2D{};
     alignment_mode_ = false;
   }
-  params_ = params;
-  rebuildMotionModel();
 }
 
 const Params &

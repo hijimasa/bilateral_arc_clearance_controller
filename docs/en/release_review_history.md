@@ -5,17 +5,22 @@ English | [日本語](../release_review_history.md)
 ## Current state
 
 - Checked: 2026-09-01
-- Evaluated package: `2939c1b` plus an uncommitted working tree (addition of the Ackermann motion model)
-- Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); R11 did not re-run the benchmark
+- Evaluated package: `24466ae`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
+  `5951e0b` (documentation) and `24466ae` (review record); R12 reviewed those three commits
+- Benchmark: `026a17a` (canonical) / `4fed3d2` (matched comparison and ablation); neither R11 nor R12 re-ran the benchmark
 - Decision: code review **Go** and public-release P0 **complete**; changing visibility remains an owner decision
 
-All Critical, High, and Medium findings across eleven release-review rounds have been addressed, as have the
-three Low findings from R10 and the four from R11 (R11 L1 was closed by documentation, with no behaviour change).
-No release blocker remains. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
+All Critical, High, and Medium findings across twelve release-review rounds have been addressed, as have the
+three Low findings from R10, the four from R11 (R11 L1 was closed by documentation, with no behaviour change),
+and the three from R12. No release blocker remains. R12 re-verified R11's own work and found that the
+abandoned-design wording R11 considered fixed still survived in the public header, that the Nav2 adapter's
+differential-drive coverage had been replaced rather than added to, and that the shipped Ackermann example
+configuration failed the package's own Ackermann regression suite - R11 L4 had been closed on a false premise. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
 216-episode matched-condition comparison, and a 216-episode BAC ablation. On 2026-09-01 the Ackermann motion
 model was added, and R11 fixed the exception safety of `setParams` (one High finding). Remaining work includes
 rollout through angular-acceleration transients, physical disturbance evaluation, a Collision Monitor combined
-baseline, decomposition of `BacCore::process()`, and a broader Ackermann scenario suite (R11 L5). Ackermann
+baseline, decomposition of `BacCore::process()`, a broader Ackermann scenario suite (R11 L5), and clamping the
+filter node's virtual path to the turning circle (R12 L5). Ackermann
 coverage consists of deterministic unit checks and closed-loop regressions only; there is no vehicle evidence.
 
 Individual records preserve the decision made at each point and are not rewritten when a later review withdraws
@@ -40,11 +45,14 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R09 | Insufficient proof in the legacy-data audit, launch status, fail-open pool | Audit withdrawal, canonical regeneration, parent manifest, status propagation, fail-closed pool | [Findings, ja](../reviews/r09-2026-08-28-findings.md) / [Response, ja](../reviews/r09-2026-08-28-response.md) |
 | R10 | Reproducible tree hash, manifest identity, reuse terminology, raw archive | Tracked-source hash, set/schema checks, terminology separation, archive tool | [Findings, ja](../reviews/r10-2026-08-28-findings.md) / [Response, ja](../reviews/r10-2026-08-28-response.md) |
 | R11 | Ackermann support: half-applied rejected configuration, documentation diverged from code, vacuous test assertions | Validate-before-commit `setParams`, corrected the abandoned-design documentation, assertions that kill nine mutants | [Findings, ja](../reviews/r11-2026-09-01-findings.md) / [Response, ja](../reviews/r11-2026-09-01-response.md) |
+| R12 | Shipped Ackermann config failed the regression suite, abandoned-design wording in the public header, replaced differential-drive adapter coverage | Retuned the example weight and added a shipped-configuration scenario, corrected the header, restored the default-configuration test and split the Ackermann one out | [Findings, ja](../reviews/r12-2026-09-01-findings.md) / [Response, ja](../reviews/r12-2026-09-01-response.md) |
 
 ## Current validation contract
 
 - Plain CMake Release build and seven CTest entries; eight CTest entries in ROS 2 Jazzy/Nav2 with the adapter
-  test. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
+  tests, which run the default (differential-drive) configuration while a separate test covers the Ackermann
+  parameter plumbing. The two assert opposite halves of the same tick, so a misresolved `motion_model.type`
+  always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
 - Core unit/property tests, 17 closed-loop scenarios, and 6 Ackermann closed-loop scenarios

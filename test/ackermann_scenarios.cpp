@@ -161,6 +161,9 @@ ackermannParams(float turn_radius_min = 1.0f)
   params.turn_radius_min = turn_radius_min;
   params.limits.v_min = 0.0f;
   params.limits.v_max = 0.4f;
+  // These are the values config/bac_controller_ackermann.yaml ships, so the
+  // suite defends the configuration users actually copy. The Weights default
+  // (0.6) is tuned for differential drive and makes the vehicle orbit here.
   params.weights.hysteresis = 0.3f;
   return params;
 }
@@ -224,6 +227,11 @@ testOffsetCorridorEntry()
   expect(!run.violated_turning_radius,
          "corridor correction respects minimum turning radius (max curvature " +
              std::to_string(run.max_abs_curvature) + ")");
+  // Steering smoothness: no single 50 ms tick may swing more than half of the
+  // full lock-to-lock curvature range (2 / turn_radius_min).
+  expect(run.max_curvature_step < 1.0f / core.params().turn_radius_min,
+         "corridor correction does not swing the steering half a lock in one tick (" +
+             std::to_string(run.max_curvature_step) + " 1/m)");
 }
 
 /// A steered vehicle cannot pivot around an obstacle; it has to commit to an
@@ -273,6 +281,9 @@ testDeadEndStopsWithoutRotating()
          "dead end never falls back to in-place rotation");
   expect(!run.commanded_reverse,
          "dead end respects limits.v_min = 0 and never commands reverse");
+  expect(!run.violated_turning_radius,
+         "braking into a dead end respects minimum turning radius (max curvature " +
+             std::to_string(run.max_abs_curvature) + ")");
 }
 
 /// The discriminating scenario for the no-in-place-rotation property. A goal
@@ -327,6 +338,70 @@ testRearGoal()
              std::to_string(reverse_run.max_abs_curvature) + ")");
 }
 
+/// The configuration users copy must be the configuration the suite defends.
+/// Mirrors config/bac_controller_ackermann.yaml; keep the two in step.
+bac::Params shippedExampleParams()
+{
+  bac::Params params;
+  params.motion_model.type = bac::MotionModelType::ACKERMANN;
+  params.turn_radius_min = 1.0f;
+
+  params.footprint.front = 0.7f;
+  params.footprint.rear = -0.3f;
+  params.footprint.width = 0.6f;
+  params.safety_margin.front = 0.2f;
+  params.safety_margin.rear = 0.2f;
+  params.safety_margin.side = 0.2f;
+  params.avoid_margin.side = 0.6f;
+
+  params.limits.v_max = 0.5f;
+  params.limits.v_min = 0.0f;
+  params.limits.w_max = 0.8f;
+  params.limits.acc_v = 0.8f;
+  params.limits.acc_w = 2.5f;
+  params.control_period = 0.05f;
+  params.stop_decel = 0.8f;
+  params.brake_reaction_time = 0.1f;
+
+  params.weights.clearance = 2.0f;
+  params.weights.path_dist = 1.0f;
+  params.weights.balance = 4.0f;
+  params.weights.heading = 0.15f;
+  params.weights.hysteresis = 0.3f;
+  params.weights.squeeze = 0.5f;
+  params.sim_time = 2.5f;
+  return params;
+}
+
+/// Runs the shipped example end to end. The Weights default (hysteresis 0.6)
+/// is tuned for differential drive; under Ackermann the curvature penalty does
+/// not shrink with speed and the vehicle orbits instead of reaching the goal,
+/// so a suite that quietly used a different weight would not defend the file
+/// users install.
+void
+testShippedExampleConfiguration()
+{
+  bac_sim::World world;
+  world.addBox(4.0f, 0.0f, 1.0f, 1.0f);
+  bac::BacCore core(shippedExampleParams());
+  const AckermannRun run = runAckermann(
+      core, world, { 0.0f, 0.0f, 0.0f }, bac_sim::gotoPointPath(9.0f, 0.0f),
+      9.0f, 0.0f, 90.0f);
+
+  expect(!run.collided, "the shipped Ackermann example has no body contact");
+  expect(run.reached_goal,
+         "the shipped Ackermann example reaches its goal rather than orbiting "
+         "(closest " + std::to_string(run.min_goal_distance) + " m, travelled " +
+             std::to_string(run.travelled_distance) + " m)");
+  expect(!run.offered_in_place_rotation,
+         "the shipped Ackermann example never turns on the spot");
+  expect(!run.violated_turning_radius,
+         "the shipped Ackermann example respects its own turning circle");
+  expect(run.max_curvature_step < 1.0f / core.params().turn_radius_min,
+         "the shipped Ackermann example steers smoothly (" +
+             std::to_string(run.max_curvature_step) + " 1/m per tick)");
+}
+
 /// The turning-radius constraint has to bind: a tighter vehicle in the same
 /// world must be allowed more curvature than a wider one.
 void
@@ -367,6 +442,7 @@ main()
   testDeadEndStopsWithoutRotating();
   testRearGoal();
   testTurningRadiusBinds();
+  testShippedExampleConfiguration();
 
   if (failures != 0)
   {

@@ -108,9 +108,29 @@ testInPlaceRotationSweep()
 
 }  // namespace
 
+void
+testTranslatingTurnRadiusGuard()
+{
+  const bac::Params params;
+  const bac::detail::DiffDriveMotionModel model(params);
+
+  // Documented in docs/parameters.md: for diff_drive, turn_radius_min bounds
+  // TRANSLATING candidates (forward and reverse), and only the in-place
+  // rotation row is exempt.
+  expect(!model.isCommandKinematicallyValid({ 0.1f, 0.1f / (params.turn_radius_min * 0.5f) }),
+         "a forward arc tighter than turn_radius_min is rejected");
+  expect(!model.isCommandKinematicallyValid({ -0.1f, -0.1f / (params.turn_radius_min * 0.5f) }),
+         "a reverse arc tighter than turn_radius_min is rejected");
+  expect(model.isCommandKinematicallyValid({ 0.1f, 0.1f / (params.turn_radius_min * 2.0f) }),
+         "a forward arc wider than turn_radius_min is accepted");
+  expect(model.isCommandKinematicallyValid({ 0.0f, 0.8f }),
+         "in-place rotation is exempt from the turning-radius guard");
+}
+
 int
 main()
 {
+  testTranslatingTurnRadiusGuard();
   testCandidateOrderingAndReachability();
   testConstantCommandProjection();
   testInPlaceRotationSweep();
