@@ -1354,10 +1354,43 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // comment said non-holonomic commands were unaffected, on the grounds that
   // zeroing a sub-deadband yaw rate does not change a straight-line arc. It
   // does change the arc whenever the yaw rate is what makes the command
-  // admissible. Measured against main over 40000 randomised differential-drive
-  // ticks: 0 rows differ at the shipped angvel_min of 0.01 rad/s, and 2 differ
-  // when angvel_min is swept over 0.05-0.35 rad/s, both of them publishing the
-  // selected yaw rate where main published zero. See CHANGELOG.rst.
+  // admissible.
+  //
+  // R19 M9: the branch below IS reached at the shipped angvel_min of
+  // 0.01 rad/s, and how often depends entirely on the tick generator. Measured
+  // against main (2488248) with identical randomised differential-drive tick
+  // streams fed to both revisions, 400000 ticks each at the shipped
+  // angvel_min, seed 12345 unless the row says a second seed (987654321),
+  // branch reaches counted from a scratch copy of this file. The generators
+  // are described by shape rather than shipped, so the COUNTS are not
+  // reproducible verbatim from this comment; the qualitative result is.
+  //
+  //   generator                                   deadband  branch  rows
+  //                                               changed   reached differ
+  //   corridor + close frontal point, current w
+  //     drawn from +-[0.085, 0.124] rad/s            19559     182     193
+  //   the same, second seed                          19624     190     192
+  //   the same corridor, current w uniform +-1        2151      11      11
+  //   frontal wall with a gap, current w +-0.13      10476      13      13
+  //   one cluster at a random bearing, current w
+  //     uniform +-1 rad/s                             3033       1       1
+  //
+  // Reaching it needs the yaw rate ALONE to be rounded away while the speed
+  // survives, so the CURRENT yaw rate has to sit just below one control
+  // period of yaw authority (acc_w * control_period = 0.125 rad/s), where
+  // limitReachableCommand leaves a residual of a few thousandths, or where the
+  // curvature-preserving slowdown produces one. Over the 397 reaches above,
+  // |current.w| was in [0.0863, 0.1301] rad/s without exception. The same
+  // corridor generator over 100000 ticks reaches the branch 43 times drawing
+  // the current yaw rate from that band, 3 times drawing it uniformly over
+  // +-1 rad/s, and 0 times over +-0.03 rad/s.
+  //
+  // So a measured "0 rows differ" means the generator under-sampled that band,
+  // NOT that the behaviour is unchanged. An earlier revision of this comment
+  // reported 0 rows over 40000 ticks of the last generator above and read it
+  // as a property of the change; that generator does give 0 at 40000 ticks
+  // (the deadband still changes the command 297 times) and reaches the branch
+  // once at 400000. See CHANGELOG.rst.
   const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
   const bool deadband_changed = std::fabs(finalized.v - out_v) > 1e-6f ||
                                 std::fabs(finalized.w - out_w) > 1e-6f ||

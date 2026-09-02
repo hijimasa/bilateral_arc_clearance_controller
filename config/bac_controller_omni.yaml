@@ -27,10 +27,17 @@ controller_server:
       # w_samples, which a holonomic model does not use. The lattice is
       # v_samples x vy_samples - two dimensions, like the differential-drive
       # forward speed x yaw rate lattice, but NOT the same number of
-      # candidates. Measured with the values in this file (v_max 0.4,
-      # vy_max 0.3, w_max 1.0, v_samples 5, vy_samples 15, w_samples 25) from
-      # a current velocity of (0.20 m/s, 0.0 rad/s): 96 holonomic candidates
-      # against 130 differential-drive ones.
+      # candidates. Measured from a current velocity of
+      # (0.20 m/s, 0.0 rad/s): 96 holonomic candidates against 130
+      # differential-drive ones, with v_max 0.4, vy_max 0.3 and w_max 1.0 as
+      # set in this file and v_samples 5 / w_samples 25 left at their defaults
+      # in bac_core.hpp - R19 L8: this file does not set those two, so the
+      # measurement used the defaults. (They ARE settable here: v_samples,
+      # w_samples and vy_samples are all declared the same way in
+      # bac_ros_parameters.hpp; this file simply lists only vy_samples.) The
+      # pair 96 / 130 is specific to that current velocity; see
+      # docs/algorithm.md for the sweep, and note that 182 differential-drive
+      # candidates require limits.v_min < 0, which this file does not enable.
       vy_samples: 15
 
       scan_topic: /scan
@@ -54,10 +61,45 @@ controller_server:
       # with 0.10 m thick walls, entry offset 0.30 m, heading_gain 1.5: mean
       # lateral error 0.1412 m at 0.5 and 0.0159 m at 0.9. R18 M6: the pair
       # quoted here before (0.139 / 0.0119) came from the older zero-thickness
-      # fixture, not from the rig this comment declares. The transition is not
-      # monotone - the first cell below 0.05 m is 0.700, 0.705 and 0.710 are
-      # back above 0.18, and only from 0.715 up does it stay below 0.017 - and
-      # 0.8 already reaches essentially the same value as 0.9, so 0.9 is a
+      # fixture, not from the rig this comment declares.
+      #
+      # The transition is not monotone. Swept over 0.500-0.900 in 0.005 steps
+      # on the rig above (81 points):
+      #
+      #   0.690 0.2009 | 0.695 0.1900 | 0.700 0.0330 | 0.705 0.1869
+      #   0.710 0.0152 | 0.715 0.0156 | 0.720 0.0150 | 0.725 0.1600
+      #   0.730 0.0156 | 0.735-0.900   0.0131-0.0162
+      #
+      # DO NOT READ THAT AS "0.730 and up is safe". Those 81 numbers are all
+      # reproducible, but the 0.005 grid ALIASES: re-swept at 0.001 (and at
+      # 0.0002 above 0.730) the bad cells are BANDS, and the grid lands inside
+      # or outside them almost at random. Measured:
+      #
+      #   0.702-0.708  0.1863 .. 0.1952   (0.005 grid sees only 0.705)
+      #   0.721-0.729  0.1444 .. 0.1600   (0.723 = 0.0146 is the one good
+      #                                    cell inside it; the 0.005 grid
+      #                                    sees only 0.725)
+      #   0.7370-0.7386  0.0846 .. 0.1074 (peak 0.1074 at 0.7380 and 0.7382;
+      #                                    0.7376 and 0.7378 are 0.0160, two
+      #                                    good cells inside the band; the
+      #                                    0.005 AND the 0.001 grid both miss
+      #                                    most of it - 0.735 = 0.0131,
+      #                                    0.736 = 0.0169, 0.739 = 0.0160)
+      #
+      # So 0.70-0.74 is a non-monotone region that the 0.005 grid aliases, and
+      # NO value in it may be reached by interpolating between measured
+      # points: neighbouring thousandths differ by an order of magnitude.
+      # Above it the rig is flat: all 807 points from 0.7388 to 0.900 in
+      # 0.0002 steps lie between 0.015658 (at 0.8004) and 0.016315 (at
+      # 0.8726) - every one of them below 0.017, and none anywhere near the
+      # 0.08-0.20 the bands above reach. So no band of this kind was FOUND
+      # above 0.739 - measured at 0.0002 resolution, which cannot rule out a
+      # band narrower than that. (R19, fourth pass: the interval quoted here
+      # was 0.0157-0.0163, which 28 of the 807 points fall outside; it had
+      # been carried over from a coarser subsample. Re-measured over all 807.)
+      #
+      # The shipped 0.9 sits far above the region, and 0.8 (0.016102) already
+      # reaches essentially the same value as 0.9 (0.015945), so 0.9 is a
       # margin over that boundary rather than a required value.
       avoid_margin.side: 0.9
 

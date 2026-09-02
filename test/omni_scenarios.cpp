@@ -90,7 +90,29 @@ independentContactDistance(const std::vector<bac::Point2D> &points,
 
   // Straight motion has no centre to circle about; the rectangle simply
   // translates, and the point is inside for an interval in s on each axis.
-  if (std::fabs(command.w) < 1e-6f)
+  //
+  // R19 M1: this threshold is the exact complement of the evaluator's
+  // `turning = std::fabs(command.w) > 1e-4f`, so the two agree on which branch
+  // a command belongs to. It was 1e-6, two decades lower, which left a band
+  // `1e-6 <= |w| <= 1e-4` where this function took the ARC branch while the
+  // evaluator took the STRAIGHT one. In that band the centre `(-vy/w, v/w)` is
+  // 1e4-1e6 m out and `per_radian = speed / |w|` amplifies the rounding of
+  // `phi0` into metres of distance error.
+  //
+  // Measured against a third derivation - integrate the body pose in the world
+  // frame and transform the static point back into the body frame, which uses
+  // no centre of rotation at all - over 4000 draws per band inside a 3 m
+  // window. At the old 1e-6 threshold, band 1e-6..1e-5: 98 of 3971 report
+  // contact LATER than it happens (worst 3.00 m, i.e. no contact reported at
+  // all where one exists) and 70 report it earlier; band 1e-5..1e-4: 4 and 2 of
+  // 3957. At 1e-4 every band measured - 1e-6..1e-5, 1e-5..1e-4, 1e-4..1e-3,
+  // 1e-2..1e-1, 1e-1..1e0 - is 0 and 0.
+  //
+  // No caller reaches the band either way, so this closes a trap rather than a
+  // defect: of the 75338 calls this suite makes, 39206 have `w` exactly zero,
+  // 0 have `0 < |w| < 1e-4`, 12 are in [1e-4, 1e-2) and 36120 at or above
+  // 1e-2.
+  if (std::fabs(command.w) <= 1e-4f)
   {
     const float ux = command.v / speed;
     const float uy = command.vy / speed;
@@ -218,6 +240,51 @@ independentContactDistance(const std::vector<bac::Point2D> &points,
     }
   }
   return best;
+}
+
+/// How far along its own arc the controller is REQUIRED to have looked, for the
+/// twist `command` at the evaluation horizon `horizon`.
+///
+/// R19 H1: the sweeps used to run the independent contact test only after the
+/// evaluator had already reported a contact (`blocking_s < 1e9`) and a positive
+/// free run. That gate made the independent test unable to see the one defect
+/// class it exists for - the evaluator MISSING a contact - because a miss took
+/// the tick out of the sample instead of failing it. Measured on the first
+/// sweep, 8197 of 8314 moving ticks (98.6%) were removed by that gate.
+///
+/// Lifting the gate needs a stopping rule of its own, or the sweeps demand a
+/// stop before contacts the controller never promised to look at. The rule is
+/// the evaluator's own window, rebuilt here from `Params` and the twist:
+///
+///   * `s_max = horizon + lead`, where `lead` is the footprint's support
+///     extent along the direction of travel - `supportExtent(body, ux, uy)` in
+///     the evaluator, `(dx>=0 ? front*dx : rear*dx) + width/2 * |dy|` written
+///     out. `evaluateArcWindows(points, out, horizon, horizon)` passes the same
+///     `horizon` as both clearance and blocking distance, so
+///     `s_max = max(blocking, clearance) + lead` is `horizon + lead`.
+///   * for a turning command the evaluator additionally caps the search at
+///     `s_angle_cap = turn_radius * eval_angle_max`, with
+///     `turn_radius = speed / |w|`, and passes `min(s_max, s_angle_cap)` to
+///     its contact solver.
+///
+/// Measured cost of omitting the cap: 7 false violations in the first sweep and
+/// 53 in the second, with no mutation applied - all of them contacts beyond
+/// `eval_angle_max` (1.05 rad) of arc, which the controller is not asked to
+/// brake for.
+float
+independentSearchWindow(const bac::Params &params, const bac::Twist2D &command, float horizon)
+{
+  const float speed = command.speed();
+  const float ux = (speed > 1e-6f) ? command.v / speed : ((command.v >= 0.0f) ? 1.0f : -1.0f);
+  const float uy = (speed > 1e-6f) ? command.vy / speed : 0.0f;
+  const float lead = ((ux >= 0.0f) ? params.footprint.front * ux : params.footprint.rear * ux) +
+                     (params.footprint.width * 0.5f) * std::fabs(uy);
+  float window = horizon + lead;
+  if (std::fabs(command.w) > 1e-4f && speed > 1e-3f)
+  {
+    window = std::min(window, (speed / std::fabs(command.w)) * params.eval_angle_max);
+  }
+  return window;
 }
 
 /// Optional corridor-centering window: lateral error is aggregated only while
@@ -644,33 +711,25 @@ testEmittedCommandCanAlwaysStop()
       ++moving;
 
       const float horizon = std::max(speed * params.sim_time, params.min_eval_distance);
-      const bac::ArcEvaluation eval =
-          core.evaluateArcWindows(points, out, horizon, horizon);
-      if (eval.blocking_s >= 1e9f)
-      {
-        continue;
-      }
       const float ux = out.v / speed;
       const float uy = out.vy / speed;
       const float margin =
           ((ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux) +
           params.safety_margin.side * std::fabs(uy);
-      const float free_run = eval.blocking_s - margin;
-      if (free_run <= 0.0f)
-      {
-        continue;  // already inside the margin: the escape regime, see above
-      }
-      ++evaluated;
       const float decel = std::max(params.stop_decel, 0.1f);
       const float needed =
           speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
 
-      // R18 H1: the same invariant, against a contact distance derived here
-      // from the rectangle instead of read back from the evaluator.
+      // R18 H1 / R19 H1: the same invariant, against a contact distance derived
+      // here from the rectangle instead of read back from the evaluator - and
+      // evaluated ABOVE the evaluator's own two gates, so that the evaluator
+      // failing to see a contact cannot excuse the tick from being checked.
+      // See independentSearchWindow for why the window is needed.
       {
+        const float window = independentSearchWindow(params, out, horizon);
         const float contact = independentContactDistance(points, params.footprint, out);
         const float own_free_run = contact - margin;
-        if (contact < 1e9f && own_free_run > 0.0f)
+        if (contact <= window && own_free_run > 0.0f)
         {
           ++independent_checks;
           if (own_free_run <= needed - 1e-4f)
@@ -687,6 +746,19 @@ testEmittedCommandCanAlwaysStop()
           }
         }
       }
+
+      const bac::ArcEvaluation eval =
+          core.evaluateArcWindows(points, out, horizon, horizon);
+      if (eval.blocking_s >= 1e9f)
+      {
+        continue;
+      }
+      const float free_run = eval.blocking_s - margin;
+      if (free_run <= 0.0f)
+      {
+        continue;  // already inside the margin: the escape regime, see above
+      }
+      ++evaluated;
       if (free_run <= needed - 1e-4f)
       {
         if (violations == 0)
@@ -717,6 +789,48 @@ testEmittedCommandCanAlwaysStop()
   // R18 H1: separate evidence rather than a restatement - this requirement
   // does not come from the code that computes the swept region, so a defect
   // that shrinks that region shows up here instead of cancelling out.
+  //
+  // R19 M6 asked whether this threshold separates a normal band from a
+  // destructive one. It does not, and after the R19 H1 move it cannot: the
+  // count no longer depends on the evaluator at all, so evaluator mutations
+  // barely move it. Measured over 52 mutations of src/ and of bac_core.hpp
+  // (unmutated 117): 27, 49, 79, then 85, 91, 95, 96, 112, 112, 112, ... up to
+  // 533. Three fall under 80:
+  //
+  //   27  eval_angle_max halved in bac_core.hpp   (8339 moving ticks)
+  //   49  emergency layer's lateral term dropped  (4471 moving ticks)
+  //   79  vy dropped from projectConstantCommand  (7266 moving ticks)
+  //
+  // R19 V2-M1: an earlier revision of this comment said only "the one mutation
+  // that stops the vehicle moving" falls under 80, and that no mutation of the
+  // evaluator's geometry ever trips it. Both are false. The LOWEST of the
+  // three moves the body MORE than the unmutated run does (8339 against 8314),
+  // and it is a purely optimistic change to the evaluator's geometry. It is
+  // invisible to the invariant below for a specific reason: `eval_angle_max`
+  // is a constant SHARED by the product and by `independentSearchWindow` in
+  // this file, so halving it shrinks the test's own window in step and the
+  // independent violation count stays at 0 (see the R19 response, H1). Halving
+  // the SAME cap inside the evaluator only - so that the test's window does not
+  // follow - gives 1 and 89 violations instead. Four assertions in this
+  // file react to the shared constant being halved, and all four are coverage
+  // guards rather than safety ones: `evaluated > 60` and this threshold in the
+  // first sweep (117 -> 27), and `checked > 2000` and its counterpart in the
+  // second (3150 -> 1723). No safety invariant here reacts at all.
+  //
+  // It is still kept as a VACUITY guard - the sweep still drives at obstacles -
+  // and not as a mutation detector: over those 52 mutations no mutation is
+  // killed by this assertion, by its counterpart in the second sweep, or by the
+  // one in the third sweep alone. Every mutation that trips one of the three
+  // also fails at least one assertion that is not a coverage count (the
+  // eval_angle_max one fails only coverage counts HERE, but is killed by
+  // BacScenarioHarness, BacAckermannScenarios, BacOutputStageUnit and
+  // BacCoreUnit). Before the H1 move one mutation did die on a coverage count
+  // alone (`rho_max * 0.90`, at 71 checks); it now dies on the invariant below.
+  //
+  // R19 M6 also noted that this count used to be numerically identical to
+  // `evaluated`. Unmutated it still is - 117 == 117 here, and 3150 == 3150 in
+  // the second sweep - but under mutation it is not (`rho_max * 0.95` gives 118
+  // here against 90 there, the sigma flip 115 against 884).
   expect(independent_checks > 80,
          "the independently derived contact test ran often enough to mean something (" +
              std::to_string(independent_checks) + " checks)");
@@ -820,47 +934,49 @@ testEmittedCommandCanStopWhenAccelerationBinds()
       continue;
     }
     const float horizon = std::max(speed * params.sim_time, params.min_eval_distance);
-    const bac::ArcEvaluation eval = core.evaluateArcWindows(points, out, horizon, horizon);
-    if (eval.blocking_s >= 1e9f)
-    {
-      continue;
-    }
     const float ux = out.v / speed;
     const float uy = out.vy / speed;
     const float margin =
         ((ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux) +
         params.safety_margin.side * std::fabs(uy);
+    const float decel = std::max(params.stop_decel, 0.1f);
+    const float needed = speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+
+    // R18 H1 / R19 H1: as in the sweep above - derived here rather than read
+    // back from the evaluator, and placed ABOVE the evaluator's own two gates.
+    {
+      const float window = independentSearchWindow(params, out, horizon);
+      const float contact = independentContactDistance(points, params.footprint, out);
+      const float own_free_run = contact - margin;
+      if (contact <= window && own_free_run > 0.0f)
+      {
+        ++independent_checks;
+        if (own_free_run <= needed - 1e-4f)
+        {
+          if (independent_violations == 0)
+          {
+            independent_worst = "out (" + std::to_string(out.v) + ", " +
+                                std::to_string(out.w) + ", " + std::to_string(out.vy) +
+                                ") speed " + std::to_string(speed) + ", free run " +
+                                std::to_string(own_free_run) + ", needs " +
+                                std::to_string(needed);
+          }
+          ++independent_violations;
+        }
+      }
+    }
+
+    const bac::ArcEvaluation eval = core.evaluateArcWindows(points, out, horizon, horizon);
+    if (eval.blocking_s >= 1e9f)
+    {
+      continue;
+    }
     const float free_run = eval.blocking_s - margin;
     if (free_run <= 0.0f)
     {
       continue;  // the escape regime, as above
     }
     ++checked;
-    const float decel = std::max(params.stop_decel, 0.1f);
-    const float needed = speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
-
-    // R18 H1: the same invariant, against a contact distance derived here
-    // from the rectangle instead of read back from the evaluator.
-    {
-      const float contact = independentContactDistance(points, params.footprint, out);
-      const float own_free_run = contact - margin;
-      if (contact < 1e9f && own_free_run > 0.0f)
-      {
-      ++independent_checks;
-      if (own_free_run <= needed - 1e-4f)
-      {
-        if (independent_violations == 0)
-        {
-        independent_worst = "out (" + std::to_string(out.v) + ", " +
-                      std::to_string(out.w) + ", " + std::to_string(out.vy) +
-                      ") speed " + std::to_string(speed) + ", free run " +
-                      std::to_string(own_free_run) + ", needs " +
-                      std::to_string(needed);
-        }
-        ++independent_violations;
-      }
-      }
-    }
     if (free_run <= needed - 1e-4f)
     {
       if (violations == 0)
@@ -890,6 +1006,23 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   // R18 H1: separate evidence rather than a restatement - this requirement
   // does not come from the code that computes the swept region, so a defect
   // that shrinks that region shows up here instead of cancelling out.
+  //
+  // R19 M6, as above: a vacuity guard, not a separating threshold. Measured
+  // over the same 52 mutations (unmutated 3150): 425 (output reachability stage
+  // bypassed), 817 (emergency lateral term dropped), 1723 (eval_angle_max
+  // halved in bac_core.hpp), then 2931, 3131, ... upwards to 3407.
+  //
+  // R19 V2-M1: an earlier revision said the ones below 2000 are all mutations
+  // that stop the vehicle moving. They are not - the lowest, the output
+  // reachability bypass, leaves the moving-tick count at the unmutated 8314 in
+  // the first sweep, and the eval_angle_max one raises it. What all three do is
+  // change how far the sweep gets before the shared window closes. All three
+  // are killed by assertions that are not coverage counts (the reachability
+  // bypass by the governor's sideways-versus-head-on comparison here, the other
+  // two by other test binaries), so nothing is killed by this assertion alone.
+  // Unmutated the count is still numerically identical to `checked`
+  // (3150 == 3150); under mutation it is not (`rho_max` without |w| gives 3164
+  // here against 5614 there).
   expect(independent_checks > 2000,
          "the independently derived contact test ran often enough to mean something (" +
              std::to_string(independent_checks) + " checks)");
@@ -912,11 +1045,17 @@ testEmittedCommandCanStopWhenAccelerationBinds()
 /// thing in the stage that produces one.
 ///
 /// `angvel_min` is drawn wider than the shipped 0.01 rad/s so the branch is
-/// reached often enough for the count to be a band rather than a handful:
-/// measured 255 of 21087 moving ticks here, against 0 for either of the two
-/// behaviours the R17 response considered and rejected - braking to a
-/// standstill instead (0 of 21087) and applying the deadband regardless
-/// (0 of 21342, which also fails the binding sweep above with 7 violations).
+/// reached often enough for the count to be a band rather than a handful.
+/// R19 M4: the moving-tick denominators below were transposed here before -
+/// 21342 - 21087 = 255 is exactly the number of ticks the FIRST rejected
+/// behaviour stops, not a coincidence. Re-measured on this fixture:
+///
+///   current                                 255 kept of 21342 moving
+///   brake to a standstill instead             0 kept of 21087 moving
+///   apply the deadband regardless             0 kept of 21342 moving
+///
+/// and the last of the three also fails the binding sweep above with 7
+/// violations.
 void
 testDeadbandIsSkippedRatherThanBreakingAdmissibility()
 {
@@ -995,9 +1134,13 @@ testDeadbandIsSkippedRatherThanBreakingAdmissibility()
 /// R18 H1: the two sweeps above almost never emit a straight twist - the yaw
 /// regulator is active in both - so the evaluator's straight branch, which is
 /// where `lead` and the left/right support extents decide contact, was reached
-/// by neither. Measured: 0 straight ticks in the first sweep and 106 in the
-/// second, against 885 checks here. `frame.lead = body.front` survives both of
-/// them and fails here with 2 violations.
+/// by neither. Measured among the ticks that REACH their invariant: 0 straight
+/// ticks in the first sweep and 106 in the second, against 885 checks here.
+/// (Counted over all moving ticks instead, rather than over the checked ones,
+/// the two are 70 of 8314 and 358 of 28246 - still far below this sweep, and
+/// the denominator is stated because the two counts differ.)
+/// `frame.lead = body.front` survives both of them and fails here with 2
+/// violations. R19 L2: this - not the footprint distribution - is why.
 ///
 /// `heading_gain` is zero so the regulator asks for no yaw, which is what puts
 /// the evaluator on its straight branch; the lattice is still the full
@@ -1031,9 +1174,15 @@ testStraightCommandsClearTheirOwnFootprint()
     // Deliberately asymmetric, and wide enough that `width / 2` can exceed
     // `front`. Replacing the support extent along the direction of travel with
     // `front` is only OPTIMISTIC where the true extent is larger, which for a
-    // sideways command means exactly `width / 2 > front`; with the narrower
-    // bodies the other sweeps use, that mutation is conservative everywhere
-    // and survives.
+    // sideways command means exactly `width / 2 > front`.
+    //
+    // R19 L2: that condition is NOT what the other sweeps lack. Counted over
+    // their own draws, `width / 2 > front` holds in 1586 of 6000 trials (26.4%)
+    // in the first sweep and 10782 of 40000 (27.0%) in the second, against
+    // 23312 of 60000 (38.9%) here. Widening the footprint distribution raises
+    // the rate but does not create the condition. What the other two sweeps
+    // lack is straight ticks, which is the other half of this comment; see
+    // below.
     params.footprint.front = 0.15f + next() * 0.45f;
     params.footprint.rear = -(0.10f + next() * 0.20f);
     params.footprint.width = 0.3f + next() * 0.7f;
@@ -1056,8 +1205,10 @@ testStraightCommandsClearTheirOwnFootprint()
     }
     // Aimed close to the cluster, so the vehicle is actually driven at the
     // obstacle and the invariant is reached rather than trivially satisfied by
-    // an empty direction of travel. Drawing the bearing uniformly instead
-    // leaves 98 checks in 12000 trials.
+    // an empty direction of travel. R19 L1: drawing the bearing uniformly
+    // instead leaves 56 checks in 12000 trials, against 177 aimed over the same
+    // 12000 and 885 aimed over the 60000 this loop runs; 303 uniform over
+    // 60000.
     const float path_bearing = bearing + (next() * 2.0f - 1.0f) * 0.7f;
     std::vector<bac::Point2D> path;
     for (int i = 1; i <= 20; ++i)
@@ -1109,6 +1260,14 @@ testStraightCommandsClearTheirOwnFootprint()
     }
   }
 
+  // R19 M7 recorded that the destructive side of this threshold had never been
+  // measured (the lowest over 61 mutations was 670, all above 600). Measured
+  // here over 52 mutations of src/ and of bac_core.hpp (unmutated 885): 499
+  // with the emergency layer's lateral term dropped, then 679, 867, 868, 871,
+  // 874, 885 and upwards to 1037. So one mutation does land below, and 600
+  // separates the set - but on one point only, and that mutation fails
+  // assertions in five other test binaries as well. Like the two above, read
+  // this as a vacuity guard, not as a kill.
   expect(checks > 600,
          "the straight-command sweep reached the invariant often enough to matter (" +
              std::to_string(checks) + " checks, " + std::to_string(rotating) +
@@ -1367,8 +1526,34 @@ testGovernorTreatsSidewaysLikeForward()
   // symmetric about y = 0 and the margins are isotropic, so reflecting the
   // world, vy and w must reflect the command. Measured with front 0.70 and
   // rear -0.30 over the 144 cells this loop visits, the symmetrised form breaks
-  // it in 8 of them, worst 0.080000 m/s; the asymmetric form's worst is
-  // 3.0e-08. R18 M4: the numbers quoted here before (186 of 4000, worst
+  // it as follows, all measured on this 144-cell grid (unmutated: worst
+  // 2.98e-08 at either `heading_gain`, 0 cells broken):
+  //
+  //   mutation                                     gain 0        gain 1.5
+  //   governor side_gap uses travel_left both      6 / 0.080000  8 / 0.080000
+  //   governor side_gap uses travel_right both     6 / 0.080000  8 / 0.080000
+  //   evaluator side_extent = perp_left           18 / 0.360000  0 / 2.98e-08
+  //   evaluator side_extent = perp_right          18 / 0.360000  0 / 2.98e-08
+  //   governor support along = front * dx          2 / 0.016828  0 / 2.98e-08
+  //
+  // The "8 of 144, worst 0.080000" this comment used to quote without naming
+  // its mutation is ONE OF the first two rows and this check cannot tell them
+  // apart: the travel_left form and its mirror image, the travel_right form,
+  // produce the identical signature at both gains (R19 V2-M2 - an earlier
+  // revision of this comment identified it as the travel_left form alone,
+  // which the measurement does not support). Both survive the gain change. The
+  // three rows below them are the reason R19 H2 sent the gain back to zero.
+  //
+  // A form which is genuinely SYMMETRISED is invisible here, measured: setting
+  // travel_left and travel_right both to width / 2 leaves 0 / 144 at worst
+  // 2.98e-08 at both gains, and so does making the along-travel term even in
+  // dx (front * |dx|). Setting the evaluator's perp_left and perp_right both to
+  // width / 2 leaves 0 / 144 at worst EXACTLY 0.000000 at gain 0 (and
+  // 2.98e-08 at gain 1.5) - symmetrising that pair removes the last
+  // asymmetric term, so the two mirrored runs agree bit for bit. Symmetrising
+  // is itself mirror-symmetric, so what mirror invariance sees is the two
+  // extents being used in the wrong ORDER, not their being made equal.
+  // R18 M4: the numbers quoted here before all of this (186 of 4000, worst
   // 0.3496) came from a wider exploratory grid, not from this check.
   {
     bac::Params mirror = omniParams();
@@ -1380,12 +1565,25 @@ testGovernorTreatsSidewaysLikeForward()
     mirror.safety_margin.front = 0.2f;
     mirror.safety_margin.rear = 0.2f;
     mirror.safety_margin.side = 0.2f;
-    // R18 M3: heading_gain was zero here, so every output yaw rate was
-    // identically zero and the "w must reflect the command" half of this check
-    // was vacuous - and the governor's arc correction, which only runs on a
-    // turning command, was never reached. Measured with the gain at zero:
-    // 48 cells, 0 with a non-zero yaw.
-    mirror.heading_gain = 1.5f;
+    // R18 M3: the "w must reflect the command" half of this check used to be
+    // vacuous - every output yaw rate was identically zero, because the grid
+    // held no yaw at all (48 cells, cur_w fixed at 0, heading_gain 0).
+    //
+    // R19 H2: what fixed that is the `cur_w` dimension below, NOT the
+    // heading_gain of 1.5 that was raised at the same time. Raising the gain
+    // cost two kills that this check was the ONLY detector for:
+    //   * the evaluator's
+    //     `side_extent = (left_offset >= 0) ? perp_left : perp_right`
+    //     reduced to `perp_left`;
+    //   * the governor's `support()` along-travel term
+    //     `(dx >= 0) ? front * dx : rear * dx` reduced to `front * dx`, which
+    //     is a partial revert of the asymmetric support R17 H1 introduced.
+    // With the gain at 1.5 both PASS this check. With the gain back at zero and
+    // the cur_w grid kept they fail it again, at 18 of 144 cells (worst
+    // 0.360000 m/s) and 2 of 144 (worst 0.016828 m/s). The yaw half stays
+    // non-vacuous either way: 87 of 144 cells command a yaw rate at gain 0,
+    // against 129 at gain 1.5.
+    mirror.heading_gain = 0.0f;
 
     float worst_break = 0.0f;
     int nonzero_w = 0;
@@ -1444,7 +1642,7 @@ testGovernorTreatsSidewaysLikeForward()
            "an asymmetric footprint does not break the mirror symmetry of the problem (" +
                std::to_string(breaks) + " of " + std::to_string(cells) + " cells, worst " +
                std::to_string(worst_break) + " m/s; " + worst_state + ")");
-    // Measured 129 of 144; the threshold is a quarter of the grid.
+    // Measured 87 of 144 at heading_gain 0; the threshold is a quarter of the grid.
     expect(nonzero_w * 4 > cells,
            "the yaw half of that symmetry is actually exercised (" +
                std::to_string(nonzero_w) + " of " + std::to_string(cells) +
@@ -1458,15 +1656,28 @@ testGovernorTreatsSidewaysLikeForward()
   // Crabbing left, the direction of travel is +y, so the left of the travel
   // line is -x - the REAR overhang - and its right is +x, the front. With front
   // 0.70 and rear -0.30 the swept box therefore reaches 0.30 m to the left of
-  // the travel line and 0.70 m to the right. An obstacle 0.70 m ahead of the
-  // axle is on the boundary of that box and must govern the speed; one 0.70 m
-  // behind it is more than twice the rear reach away and must not. Swapping the
-  // two extents inverts both answers, and the ahead case then runs at v_max.
+  // the travel line and 0.70 m to the right. Swapping the two extents inverts
+  // which side of the body the obstacle is treated as lying on, and the +0.70
+  // case then runs at v_max.
   //
-  // Measured: 0.560000 ahead against 0.567726 behind; with the extents swapped,
-  // 0.600000 against 0.561427. Over a 1350-cell grid of wall distance, obstacle
-  // offset and current lateral speed the swap changes 413 cells, 183 of them
-  // upwards.
+  // R19 M5: what these two pins actually measure, from a sweep of the obstacle
+  // offset at 0.05 m pitch over -2.0..+2.0 and 0.5 m over -8.0..+8.0:
+  //
+  //   x <= -1.25          0.600000024 = v_max, not governed
+  //   x = -1.00           0.583458
+  //   x = -0.70           0.567726   <- `behind`
+  //   x = -0.60 .. +0.20  0.561427
+  //   x = +0.25 .. +1.00  0.560000   <- `ahead`
+  //   x >= +1.05          0.600000024 = v_max, not governed
+  //
+  // So `behind` at -0.70 IS governed (0.5677 < 0.6000); an earlier revision of
+  // this comment said it was "more than twice the rear reach away and must
+  // not", which is false - the ungoverned region starts at x <= -1.25 on this
+  // grid. And `ahead < 0.58` is not a statement about the front overhang: it
+  // holds over the whole interval x in [-0.90, +1.00], every cell of it. What
+  // the first pin can actually detect is a change that pushes the value up to
+  // v_max, which is what swapping the extents does; the assertion text below
+  // says only that. The normal side is one point (0.560000), not a band.
   {
     bac::Params sided = omniParams();
     sided.limits.v_max = 0.6f;
@@ -1495,15 +1706,16 @@ testGovernorTreatsSidewaysLikeForward()
 
     const float ahead = crabLeftSpeed(0.70f);
     const float behind = crabLeftSpeed(-0.70f);
-    // 0.58 sits between the two measured bands with 0.02 m/s either side; the
-    // ordering below is the same fact stated without a constant.
+    // 0.58 sits between 0.560000 and v_max = 0.600000 with 0.02 m/s either
+    // side. It does NOT separate `ahead` from `behind` - see the sweep above -
+    // so the two assertions say only what they measure.
     expect(ahead < 0.58f,
-           "an obstacle within the FRONT overhang governs a left crab (" +
-               std::to_string(ahead) + " m/s, expected below 0.58; the swapped extents "
-               "give 0.600000, which is v_max)");
+           "an obstacle at +0.70 m still governs a left crab rather than leaving it at "
+           "v_max (" + std::to_string(ahead) + " m/s, expected below 0.58; the swapped "
+           "extents give 0.600000, which is v_max)");
     expect(behind > ahead,
-           "an obstacle beyond the REAR overhang is governed LESS than one within the "
-           "front overhang (" +
+           "the two extents are used in the right ORDER: an obstacle at -0.70 m is "
+           "governed less hard than one at +0.70 m (" +
                std::to_string(behind) + " behind against " + std::to_string(ahead) +
                " ahead; the swapped extents invert this to 0.561427 against 0.600000)");
   }

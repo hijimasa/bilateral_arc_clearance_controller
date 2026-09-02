@@ -79,11 +79,54 @@ Forthcoming
   a straightened arc nobody had checked; the command as selected is published
   instead. This reaches DIFFERENTIAL DRIVE as well, and unlike the output-stage
   change above the difference is not a reduction - the published yaw rate can
-  be non-zero where the previous revision published zero. Measured against
-  ``main`` over 40000 randomised differential-drive ticks: 0 rows differ at the
-  shipped ``angvel_min`` of 0.01 rad/s, and 2 differ when ``angvel_min`` is
-  swept over 0.05-0.35 rad/s. Every shipped regression fixture, including the
-  17-scenario harness and the Ackermann suite, is byte-identical either way.
+  be non-zero where the previous revision published zero. **It does differ at
+  the shipped ``angvel_min`` of 0.01 rad/s** - how often depends entirely on
+  the tick generator, so every generator is stated. Measured against ``main``
+  (2488248) with identical randomised differential-drive tick streams fed to
+  both revisions and the outputs compared row by row, all at the shipped
+  ``angvel_min``, 400000 ticks each, seed 12345 except where the table says a
+  second seed (987654321); the branch-reach column comes from a scratch copy of
+  ``bac_core.cpp`` with a counter in the branch. The generators are described
+  by shape rather than shipped, so these counts are not reproducible verbatim
+  from this file alone - what IS reproducible is the qualitative result, that
+  drawing the current yaw rate from the band below reaches the branch and
+  drawing it uniformly over a wide range mostly does not:
+
+  ::
+
+    generator                                     deadband  branch  rows
+                                                  changed   reached differ
+    corridor + close frontal point, current w
+      drawn from +-[0.085, 0.124] rad/s              19559     182     193
+    the same, second seed                            19624     190     192
+    the same corridor, current w uniform +-1          2151      11      11
+    frontal wall with a gap, current w +-0.13        10476      13      13
+    one obstacle cluster at a random bearing,
+      current w uniform +-1 rad/s                     3033       1       1
+
+  Reaching the branch needs the yaw rate ALONE to be rounded away while the
+  speed survives, and that needs the current yaw rate to sit in a narrow band
+  just below one control period of yaw authority
+  (``acc_w * control_period`` = 0.125 rad/s), where
+  ``limitReachableCommand`` leaves a residual of a few thousandths - or where
+  the curvature-preserving slowdown produces one. Over the 397 branch reaches
+  recorded above, ``|current.w|`` lay in [0.0863, 0.1301] rad/s without
+  exception, and 370 of the 397 were at 0.10 rad/s or above. The same corridor
+  generator run for 100000 ticks reaches the branch 43 times when the current yaw rate is
+  drawn from that band, 3 times when it is drawn uniformly over +-1 rad/s, and
+  0 times when it is drawn over +-0.03 rad/s.
+
+  A measurement of "0" here therefore means the generator under-sampled that
+  band, not that the behaviour is unchanged (R19 M9). The last row above is the
+  generator an earlier revision of this entry used, and at 40000 ticks it does
+  give 0 branch reaches and 0 differing rows (the deadband still changes the
+  command 297 times); at 400000 ticks the same generator reaches the branch
+  once. Do not read "0 rows differ at the shipped ``angvel_min``" as a property
+  of the change. Rows can also differ slightly more often than the branch is
+  reached (193 against 182 above) because the core is stateful across ticks, so
+  one suppressed rounding perturbs later ticks. Every shipped regression
+  fixture, including the 17-scenario harness and the Ackermann suite, is
+  byte-identical either way.
   Note that ``angvel_min`` is applied by the holonomic model too, not only by
   differential drive.
 * Bind the motion model once per configuration instead of per control tick, so

@@ -32,7 +32,10 @@ English | [日本語](../release_review_history.md)
   itself introduced two code regressions and three claims that do not reproduce. Its five High findings blocked
   the merge and the R17 response closed them, along with the Medium ones that blocked it. R17 is recorded in
   `a89f0c4` and its response landed in `364fe1a`
-- R18 (reviewing `ba544e2`, with the unreviewed `364fe1a` and `ba544e2` foremost) is **Hold** and unaddressed.
+- R18 (reviewing `ba544e2`, with the unreviewed `364fe1a` and `ba544e2` foremost) **had a verdict of Hold
+  before its response** (R19 M10: this line used to read "is Hold and unaddressed" while the same paragraph
+  goes on to state that the response closed its High findings and to name the response commit - the same
+  self-contradiction R18 H6 found on the R17 line and the R18 response fixed there).
   Nothing in the product code blocks the merge: R17 H1's asymmetric slab was independently confirmed to be the
   geometrically exact lateral interval of the swept box, the `vy == 0` reduction is bit-identical, and the two
   existing models' fixture outputs match a freshly built `main`. The Hold rests on one structural defect in the
@@ -41,13 +44,18 @@ English | [日本語](../release_review_history.md)
   of which reported a fix to two installed files that were never touched. The R18 response closed its six High
   findings, the merge-blocking Medium ones and the cheap Low ones; the product code's behaviour is unchanged
   (`src/` has no non-comment diff). R18 is recorded in `5238150` and its response landed in `8eefe99`
-- R19 (reviewing `78f6852`, scoped to the unreviewed `8eefe99` and `78f6852`) is **Hold** and unaddressed.
+- R19 (reviewing `78f6852`, scoped to the unreviewed `8eefe99` and `78f6852`) is **Hold**, response in progress.
   It was run against a stopping criterion fixed in advance - converge and merge if no new High finding and no
   non-reproducing claim - and **the criterion was not met**: four new High findings. The product code is
   unchanged from `ba544e2`; all four are in the test apparatus and documentation the R18 response introduced.
   H1 is that R18 H1's self-reference was only half resolved - the contact distance's MAGNITUDE no longer
   cancels out, but its EXISTENCE still does - and H2 is two mutation kills lost by raising the mirror check's
-  `heading_gain`, a recurrence of the failure R14 M5 named. R19 is recorded in this commit
+  `heading_gain`, a recurrence of the failure R14 M5 named. The R19 response closed its four High findings,
+  the merge-blocking Medium ones and the cheap Low ones, over **five passes with the fixing and the verifying
+  done by separate parties**. The High findings independent verification raised per pass were 5, 3, 1, 1 and
+  then 0. The third pass was the one edited without that separation, and it is the one that wrote a single
+  unverified report into an installed file, replacing a true statement with a false one - caught by two
+  independent verifiers. `src/` kept a non-comment diff of zero throughout. R19 is recorded in `310f26b`
 
 All Critical, High, and Medium findings through R14 have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
@@ -97,7 +105,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R16 | Re-review of the R15 response. R15 H4 was closed only on the sampled grid points - a 0.002 m sweep reproduces contact with 0.23 m of penetration; the output deadband runs after every admissibility check, so the invariant fails on the published twist; the speed governor is still forward-only; and the code the R15 response added is never executed by the suite | The deadband's output re-checked, the governor generalised to the direction of travel, a sweep that reaches the fallback, and the direction recovery covered. H1 turned out to rest on zero-thickness walls: the corridor now has thickness and the limitation is documented | [Findings, ja](../reviews/r16-2026-09-02-findings.md) / [Response, ja](../reviews/r16-2026-09-02-response.md) |
 | R17 | Re-review of the R16 response. The governor's lateral slab was symmetrised and broke mirror invariance, the deadband re-check creates permanent stalls, the first sweep's STOP assertion is never evaluated, and the corridor-entry and filter-node claims do not reproduce | The governor's lateral interval made asymmetric, the deadband simply not applied when it would break admissibility, the first sweep's STOP assertion actually evaluated, and every quoted boundary and number re-measured | [Findings, ja](../reviews/r17-2026-09-02-findings.md) / [Response, ja](../reviews/r17-2026-09-02-response.md) |
 | R18 | Re-review of the R17 response (final round). The sweep's safety invariant is self-referential - it takes the contact distance from the code under test, so a mutation that halves the body width prints "0 violations" and passes. The R17 response reported a fix to two installed files it never touched, the deadband comment's measured 14-of-14 does not reproduce (7 of 14), "no discriminating regression is possible" is false, and the thin-wall claim and the English history are false | The sweeps' contact distance re-derived independently in the test (exact rotating sweep), a third sweep dedicated to straight commands, a regression that counts the skipped deadband, the lateral extents' orientation pinned, and yaw actually exercised in the mirror check. Every false claim - "same size" in the installed files, the deadband measurement, the thin-wall paragraph, the English history and the filter-node numbers - corrected against a fresh measurement | [Findings, ja](../reviews/r18-2026-09-02-findings.md) / [Response, ja](../reviews/r18-2026-09-02-response.md) |
-| R19 | Re-review of the R18 response, scoped to `8eefe99` and run against a stopping criterion fixed in advance. The sweeps' independent contact test sits DOWNSTREAM of the evaluator's own gate, so a defect that makes it miss contacts cannot be detected (98.6% of moving ticks never reach the check; six miss-side mutations survive); raising the mirror check's `heading_gain` lost two mutation kills, one of them a partial revert of R17 H1; and the candidate-lattice sweep and the `avoid_margin.side` transition do not reproduce under the conditions their own sentences declare | Unaddressed | [Findings, ja](../reviews/r19-2026-09-02-findings.md) |
+| R19 | Re-review of the R18 response, scoped to `8eefe99` and run against a stopping criterion fixed in advance. The sweeps' independent contact test sits DOWNSTREAM of the evaluator's own gate, so a defect that makes it miss contacts cannot be detected (98.6% of moving ticks never reach the check; six miss-side mutations survive); raising the mirror check's `heading_gain` lost two mutation kills, one of them a partial revert of R17 H1; and the candidate-lattice sweep and the `avoid_margin.side` transition do not reproduce under the conditions their own sentences declare | Moved the independent contact test above the evaluator's gates and truncated it at the evaluator's own window; returned the mirror check's `heading_gain` to 0 while keeping the `cur_w` grid; aligned the straight-line branch threshold with the evaluator's; re-measured the candidate lattice, the `avoid_margin.side` transition, the contact cells, the coverage thresholds and the pin comments | [Findings, ja](../reviews/r19-2026-09-02-findings.md) / [Response, ja](../reviews/r19-2026-09-02-response.md) |
 
 ## Current validation contract
 
