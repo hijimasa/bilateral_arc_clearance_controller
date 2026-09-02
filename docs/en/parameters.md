@@ -57,6 +57,12 @@ dimensions** as the differential-drive forward speed × yaw rate lattice, not a 
 the same candidate COUNT: measured with the shipped holonomic values (`limits.v_max` 0.4, `limits.vy_max` 0.3,
 `limits.w_max` 1.0, `v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current velocity of
 (0.20 m/s, 0.0 rad/s), 96 holonomic candidates against 130 differential-drive ones (R18 M5, H2).
+**That pair counts the COARSE lattice only, with `w_refine_steps` set to 0.** The `bac_core.hpp` default is
+`w_refine_steps = 3` and the shipped holonomic yaml does not override it, so loading the shipped configuration
+as it stands adds 2 × 3 refinement candidates and gives **102 holonomic against 136 differential-drive**
+(measured, open field, path straight ahead, same current velocity). Refinement runs only when the coarse winner
+is not the stop row, so the +6 holds wherever the winner is a moving row. See
+[algorithm.md](algorithm.md) for the sweep.
 
 The yaw rate is not a searched dimension but a regulator output: proportional on the heading error to the local
 path tangent, with gain `heading_gain`, **decided before candidate generation and shared by every candidate**.

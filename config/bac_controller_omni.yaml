@@ -38,6 +38,14 @@ controller_server:
       # pair 96 / 130 is specific to that current velocity; see
       # docs/algorithm.md for the sweep, and note that 182 differential-drive
       # candidates require limits.v_min < 0, which this file does not enable.
+      #
+      # 96 / 130 counts the COARSE lattice only: it was measured with
+      # w_refine_steps set to 0. This file does not set w_refine_steps either,
+      # and the bac_core.hpp default is 3, so loading THIS file as it stands
+      # adds 2 x 3 refinement candidates and gives 102 holonomic against 136
+      # differential-drive (measured, open field, path straight ahead, same
+      # current velocity). Refinement runs only when the coarse winner is not
+      # the stop row, so the +6 holds wherever the winner is a moving row.
       vy_samples: 15
 
       scan_topic: /scan

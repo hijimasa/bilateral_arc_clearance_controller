@@ -21,7 +21,10 @@ Forthcoming
   lattice is forward speed x lateral speed - two dimensions, like the
   differential-drive forward speed x yaw rate lattice, but not the same number
   of candidates (measured with the shipped holonomic configuration from a
-  current velocity of 0.20 m/s: 96 against 130). The yaw rate regulates
+  current velocity of 0.20 m/s: 96 against 130 on the COARSE lattice, i.e.
+  with ``w_refine_steps`` set to 0; this configuration does not set it and the
+  ``bac_core.hpp`` default of 3 adds 2 x 3 refinement candidates, giving
+  102 against 136). The yaw rate regulates
   the body onto the local path tangent and is fixed before candidate
   generation, so the trajectory that is scored and contact-checked is the one
   that is driven. In a passage the regulator also points the body into the gap
