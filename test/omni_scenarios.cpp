@@ -454,6 +454,17 @@ testEmittedCommandCanAlwaysStop()
       const bac::Twist2D out = result.output;
       current = out;
       const float speed = out.speed();
+      // Status::STOP means holding still. R17 H3: this increment existed only
+      // in the second sweep, so this sweep's assertion on it could never fire.
+      if (result.status == bac::Status::STOP && speed > 1e-3f)
+      {
+        if (stop_while_moving == 0)
+        {
+          stop_while_moving_worst =
+              "speed " + std::to_string(speed) + " m/s, vy " + std::to_string(out.vy);
+        }
+        ++stop_while_moving;
+      }
       if (speed <= 1e-3f)
       {
         continue;
@@ -515,7 +526,7 @@ testEmittedCommandCanAlwaysStop()
 /// what gets published. R16 H4 found that the R15 fix to the fallback ladder
 /// was never executed by any test, because the sweep above deliberately raises
 /// the acceleration limits to isolate the candidate stage. Measured over this
-/// grid the fallback is entered 318 times and its gate actually rejects the
+/// grid the fallback is entered 386 times and its gate actually rejects the
 /// combined twist 67 times, so the ladder is exercised rather than merely
 /// reached.
 ///
@@ -633,8 +644,8 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   expect(checked > 2000,
          "the binding-acceleration sweep reached the invariant often enough to matter (" +
              std::to_string(checked) + ")");
-  // Measured: 0 here, against 32 with the fallback gate removed and 7 with the
-  // deadband left unchecked. Both bands are far from the bound.
+  // Measured: 0 here, against 25 with the fallback gate removed, 32 with
+  // stoppable() forced true, and 7 with the deadband left unchecked.
   expect(stop_while_moving == 0,
          "no tick reports STOP while it is still translating (" +
              std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
@@ -880,6 +891,74 @@ testGovernorTreatsSidewaysLikeForward()
   expect(worst_gap < 0.02f,
          "the governor moderates a wall approached sideways as it does one approached "
          "head-on (worst excess " + std::to_string(worst_gap) + " m/s; " + worst + ")");
+
+  // MIRROR invariance, with an ASYMMETRIC footprint. The rotation check above
+  // uses a square body, which is exactly why it could not see R17 H1: the
+  // governor's lateral slab had been symmetrised about the travel axis, and the
+  // true interval is asymmetric by (front + rear) * uy. A body whose front and
+  // rear overhangs differ makes that term non-zero.
+  //
+  // The problem IS mirror-symmetric whatever the overhangs: the footprint is
+  // symmetric about y = 0 and the margins are isotropic, so reflecting the
+  // world, vy and w must reflect the command. Measured with front 0.70 and
+  // rear -0.30, the symmetrised form breaks this in 186 of 4000 sampled states,
+  // worst 0.3496 m/s; the asymmetric form breaks none.
+  {
+    bac::Params mirror = omniParams();
+    mirror.limits.v_max = 0.6f;
+    mirror.limits.vy_max = 0.6f;
+    mirror.footprint.front = 0.70f;
+    mirror.footprint.rear = -0.30f;
+    mirror.footprint.width = 0.5f;
+    mirror.safety_margin.front = 0.2f;
+    mirror.safety_margin.rear = 0.2f;
+    mirror.safety_margin.side = 0.2f;
+    mirror.heading_gain = 0.0f;
+
+    float worst_break = 0.0f;
+    std::string worst_state;
+    for (const float wall : { 0.60f, 0.80f, 1.00f, 1.20f })
+      for (const float cur_v : { 0.0f, 0.2f, 0.4f })
+        for (const float cur_vy : { -0.4f, -0.2f, 0.2f, 0.4f })
+        {
+          std::vector<bac::Point2D> points, mirrored, path, mirrored_path;
+          for (int k = -30; k <= 30; ++k)
+          {
+            const float t = 0.05f * static_cast<float>(k);
+            points.push_back({ t, wall });
+            mirrored.push_back({ t, -wall });
+          }
+          for (int i = 1; i <= 20; ++i)
+          {
+            const float r = 0.25f * static_cast<float>(i);
+            path.push_back({ r, 0.3f * r });
+            mirrored_path.push_back({ r, -0.3f * r });
+          }
+
+          bac::BacCore a(mirror);
+          const bac::Result ra = a.process(points, path, bac::Twist2D(cur_v, 0.0f, cur_vy));
+          bac::BacCore b(mirror);
+          const bac::Result rb =
+              b.process(mirrored, mirrored_path, bac::Twist2D(cur_v, 0.0f, -cur_vy));
+
+          const float dv = std::fabs(ra.output.v - rb.output.v);
+          const float dvy = std::fabs(ra.output.vy + rb.output.vy);
+          const float dw = std::fabs(ra.output.w + rb.output.w);
+          const float break_size = std::max(dv, std::max(dvy, dw));
+          if (break_size > worst_break)
+          {
+            worst_break = break_size;
+            worst_state = "wall " + std::to_string(wall) + " current (" +
+                          std::to_string(cur_v) + ", " + std::to_string(cur_vy) + "): out (" +
+                          std::to_string(ra.output.v) + ", " + std::to_string(ra.output.vy) +
+                          ") against mirrored (" + std::to_string(rb.output.v) + ", " +
+                          std::to_string(rb.output.vy) + ")";
+          }
+        }
+    expect(worst_break < 1e-3f,
+           "an asymmetric footprint does not break the mirror symmetry of the problem "
+           "(worst " + std::to_string(worst_break) + " m/s; " + worst_state + ")");
+  }
 }
 
 /// Nav2 asks for a goal POSE, not a goal position. A model that steers with yaw
@@ -924,7 +1003,7 @@ testGoalOrientationIsHeld()
   // Position, stated as the measured distance rather than the harness's
   // reached_goal flag. The path source stops emitting within 0.3 m of the goal,
   // so 0.27 m is the floor; holding the most extreme orientation (-2.8 rad)
-  // costs a little on top of it. Measured over the set: 0.271-0.371 m.
+  // costs a little on top of it. Measured over the set: 0.2876-0.3706 m.
   expect(worst_position < 0.40f,
          "holding the commanded orientation does not cost the goal position (worst "
          "closest approach " + std::to_string(worst_position) + " m)");
@@ -987,9 +1066,12 @@ testZeroGainHoldsHeadingAndStillArrives()
 /// from 0.30 to 0.42 m, zero contacts, every one traversed - with walls of
 /// either 0.05, 0.10 or 0.20 m thickness and with zero-thickness ones.
 ///
-/// The entry offset still has a limit: at 0.45 m in this fixture the vehicle
-/// holds at the mouth rather than entering. That is a limit, not a contact, and
-/// docs/algorithm.md states it.
+/// R17 H4 found those recorded limits stale after the R16 fixes. Re-measured
+/// over 0.30-0.50 m in 0.002 m steps, counting a contact, a failure to traverse
+/// or a route around the outside as a failure: this 1.2 m corridor with 0.10 m
+/// walls passes all 101 cells, and a 1.1 m one starts failing at 0.418 m.
+/// Zero-thickness walls are worse - 0.476 m and 0.372 m respectively -
+/// which is why the fixture has thickness.
 void
 testNarrowCorridorCentering()
 {
@@ -1253,9 +1335,11 @@ testShippedExampleConfiguration()
                std::to_string(run.final_pose.x) + ")");
     expect(run.lateral_samples > 0,
            "it reached the measurement window (" + std::to_string(run.lateral_samples) + ")");
-    // Measured on the shipped values: 0.0126 m. With avoid_margin.side at 0.5,
-    // where the bilateral term never engages for this body, it is 0.139 m. The
-    // bound sits between the two, which is what makes the yaml value matter.
+    // Measured on the shipped values in THIS 1.2 m corridor: 0.0148 m. With
+    // avoid_margin.side at 0.5, where the bilateral term never engages for this
+    // body, it is 0.1079 m. (The 0.139 m the yaml comment quotes is the same
+    // comparison in a 1.6 m corridor.) The bound sits between the two, which is
+    // what makes the yaml value matter.
     expect(run.mean_abs_lateral < 0.05f,
            "and holds the centerline, which the shipped avoid_margin.side is what buys "
            "(mean |y| " + std::to_string(run.mean_abs_lateral) + " m)");

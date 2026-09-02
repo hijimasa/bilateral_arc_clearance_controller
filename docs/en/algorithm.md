@@ -4,7 +4,7 @@ English | [日本語](../algorithm.md)
 
 ## Scope
 
-For a differential-drive or Ackermann robot with a rectangular footprint, BAC selects the next
+For a differential-drive, Ackermann, or holonomic robot with a rectangular footprint, BAC selects the next
 constant-curvature command `(v,w)` from robot-frame obstacle points, a local path transformed into the robot
 frame, and the current linear and angular velocity. Obstacles are modeled as static points during one control
 cycle. Both models move the body along a constant-curvature arc. Differential drive bounds only its translating
@@ -94,7 +94,8 @@ The published benchmark observations below use the differential-drive model.
   0.050 m minimum clearance. The other three controllers completed that 1.15 m trial, so BAC showed no advantage
   at this boundary condition.
 - The holonomic policy avoids with lateral velocity and uses yaw to regulate pose. Its candidate lattice is
-  forward speed × lateral speed, the same size as the differential-drive forward speed × yaw rate lattice, and
+  forward speed × lateral speed - two dimensions, like the differential-drive forward speed × yaw rate lattice,
+  though not the same candidate count (measured: 96 against 130) - and
   the yaw rate is fixed before candidate generation so the trajectory that is scored is the trajectory that is
   driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
   rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
@@ -102,14 +103,17 @@ The published benchmark observations below use the differential-drive model.
   sides and open straight ahead. **The measurement conditions are stated here** because R15 M12 found that a table
   without them did not reproduce on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH
   models, a 7 m corridor, `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
-  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m is 0.0124 / 0.0143 / 0.0123 / 0.0119 / 0.0155 m against 0.0253 / 0.0261 / 0.0272
-  / 0.0367 / 0.0348 m for differential drive, a factor of 1.8 to 3.1. Lowering `avoid_margin.side` stops the
+  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, with 0.10 m thick walls, is 0.0131 / 0.0148 / 0.0171 / 0.0159 / 0.0160 m against
+  0.0259 / 0.0280 / 0.0288 / 0.0260 / 0.0255 m for differential drive, a factor of 1.6 to 2.0. Lowering `avoid_margin.side` stops the
   bilateral term from engaging at all: in a 1.6 m corridor the mean error is 0.0119 m at 0.9 and 0.139 m at 0.5,
-  with the boundary between 0.70 and 0.75 and 0.8 reaching essentially the same value as 0.9.
-  **The entry offset has a limit.** A 1.2 m corridor is traversed from 0.30 to 0.40 m of offset but not at
-  0.45 m, where the vehicle holds at the mouth, and a 1.1 m corridor is routed around from 0.36 m. Neither is a
-  contact. Rounding an isolated obstacle it commands a peak |yaw rate| of 0.036 rad/s where differential drive
-  needs 0.313. It passes twenty-two deterministic tests, ten unit and twelve closed-loop.
+  with the boundary between 0.68 and 0.70, a transition that is not monotone, and 0.8 reaching essentially the
+  same value as 0.9.
+  **The entry offset has a limit.** Swept from 0.30 to 0.50 m in 0.002 m steps - 101 cells, counting a contact,
+  a failure to traverse, or a route around the outside as a failure - a 1.2 m corridor with 0.10 m thick walls
+  passes **all 101**, while a 1.1 m one starts failing at 0.418 m. Modelling the walls as zero-thickness lines
+  makes both worse: 1.2 m starts failing at 0.476 m and 1.1 m at 0.372 m. Rounding an isolated obstacle it
+  commands a peak |yaw rate| of 0.0437 rad/s where differential drive needs 0.3125. It passes twenty-five
+  deterministic tests, ten unit and fifteen closed-loop.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle
   detour, dead-end stop, rear goal, turning-radius binding, yaw-rate-limit binding, clearance-probe reach, the
   shipped example configuration, safety stop (forward-only), safety stop (reverse escape), narrow-corridor
@@ -137,7 +141,9 @@ They are not probabilistic or universal claims about untested environments.
 - **Avoiding a THIN wall entered almost parallel to it.** BAC sees only the points it is given. Rays cast nearly
   tangentially at a surface with no thickness can pass between beams, so the very edge the body is about to touch
   may never appear as a point, and what cannot be measured cannot be avoided. At 0.5 degrees of angular
-  resolution (720 beams over 360 degrees) this miss is reproducible against a zero-thickness wall. Real walls
+  resolution (720 beams over 360 degrees) this produced a contact at `616746b`; at the current revision the
+  controller no longer drives into that position over entry offsets 0.30-0.50 m, but the sensing limit itself is
+  unchanged and is a property of the sensor, not of the controller. Real walls
   present a face, so that configuration is a modelling degeneracy rather than a scenario: the regressions use
   walls with thickness. Raising the resolution (2880 beams or more) or giving the wall thickness both remove it
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop

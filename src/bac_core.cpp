@@ -170,7 +170,14 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
     return along + body_y_half_base * std::fabs(dy);
   };
   const float travel_lead = support(travel_ux, travel_uy) + brake_distance;
-  const float travel_half = support(travel_nx, travel_ny);
+  // The swept box's lateral interval is [-travel_right, travel_left] and is NOT
+  // symmetric about the travel axis: the two differ by (front + rear) * uy.
+  // Using one half-width for both symmetrised it, which left the under-braking
+  // this generalisation exists to remove on one side and over-capped the other
+  // (R17 H1). The arc evaluator has always kept these apart as perp_left and
+  // perp_right; the governor now does too. Both equal width / 2 when vy == 0.
+  const float travel_left = support(travel_nx, travel_ny);
+  const float travel_right = support(-travel_nx, -travel_ny);
 
   const float speed_scale = std::min(
       1.0f, params.margin_scale_floor +
@@ -229,7 +236,8 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
     const float travel_lat = point.x * travel_nx + point.y * travel_ny;
     const float ahead      = travel_s - travel_lead;
     const float lookahead  = std::max(params.side_envelope_lookahead, 1e-3f);
-    const float side_gap   = std::fabs(travel_lat) - travel_half;
+    const float side_gap =
+        (travel_lat >= 0.0f) ? travel_lat - travel_left : -travel_lat - travel_right;
     if (side_gap < 0.0f && ahead > 0.0f)
     {
       // Dead-ahead collision course: linear speed ramp over the governor
@@ -1207,11 +1215,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // DWA admissibility of one emitted twist: can it stop, along its own
   // direction of travel and keeping the directional margin, before it touches
   // anything? One definition, used by the emergency fallback below.
-  const auto stoppable = [&](const Twist2D &command) {
+  // Largest speed this twist could carry and still stop before contact, or
+  // FLT_MAX when its arc is contact-free within the window.
+  const auto safe_speed_for = [&](const Twist2D &command) {
     const float speed = command.speed();
     if (speed <= 1e-3f)
     {
-      return true;
+      return FLT_MAX;
     }
     float dist_block = std::max(speed * params_.sim_time, params_.min_eval_distance);
     dist_block = std::min(dist_block, remaining_path);
@@ -1219,14 +1229,15 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         evaluateArcWindows(filtered_points, command, 0.0f, dist_block);
     if (ev.blocking_s >= FLT_MAX)
     {
-      return true;
+      return FLT_MAX;
     }
     const float free_run = ev.blocking_s - travel_margin(command);
     const float a = std::max(params_.stop_decel, 0.1f);
     const float tr = params_.brake_reaction_time;
-    const float v_safe =
-        free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
-    return speed <= v_safe + 1e-4f;
+    return free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
+  };
+  const auto stoppable = [&](const Twist2D &command) {
+    return command.speed() <= safe_speed_for(command) + 1e-4f;
   };
 
 
@@ -1345,9 +1356,23 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                                 std::fabs(finalized.vy - out_vy) > 1e-6f;
   if (deadband_changed && !stoppable(finalized))
   {
-    out_v = 0.0f;
-    out_w = 0.0f;
-    out_vy = 0.0f;
+    // The deadband is a quantization that suppresses jitter, not a safety
+    // requirement, so when it would break admissibility it simply does not
+    // apply. Every observed case is a yaw rate below angvel_min being removed:
+    // over the evaluation window that straightens the arc enough to clip
+    // something, while the command as selected was admissible. Braking to a
+    // standstill instead repeated the same decision every tick and made an
+    // absorbing state (R17 H2), and slowing down does not help because the
+    // straightened arc has no safe speed at all - measured, 14 of 14 events on
+    // the shipped suite had safe_speed_for(finalized) == 0 while the
+    // un-deadbanded command was stoppable.
+    if (!stoppable(out_command()))
+    {
+      out_v = 0.0f;
+      out_w = 0.0f;
+      out_vy = 0.0f;
+    }
+    // else: keep the command as selected, deadband not applied.
   }
   else
   {

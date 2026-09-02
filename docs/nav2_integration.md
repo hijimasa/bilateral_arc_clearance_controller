@@ -123,9 +123,11 @@ goal姿勢が渡されるのは、pruning後の経路にgoal自身が残って�
 経路接線に従う。これらのモデルで特定のgoal姿勢が必要なら、Nav2側のrecoveryやcontroller切り替えで
 対応する。
 
-**`bac_filter_node` は全方向指令を通さない。** 評価用のこのnodeは仮想pathの合成と速度capを前進成分
-だけで行うため、`motion_model.type: omni` を受理はするが、上流の`linear.y`は出力に現れない（純横指令
-は出力0になる）。全方向モデルを使うのはNav2 controller plugin側（`bac::BacController`）である。
+**`bac_filter_node` は全方向指令を部分的にしか通さない。** 評価用のこのnodeは仮想pathの合成と速度cap
+を前進成分だけで行うため、前進成分があるときは横速度が残るが、純横指令は出力0になる。コンテナ内の実
+ノードでの実測: `cmd_vel_in(linear.x = 0.30, linear.y = 0.30)` に対し
+`cmd_vel_out(linear.x = 0.234, linear.y = 0.187)`、`cmd_vel_in(linear.x = 0, linear.y = 0.30)` に対し
+出力0である。全方向モデルの本来の使い先はNav2 controller plugin側（`bac::BacController`）である。
 
 **横移動は車体側方のセンサ被覆を要求する。** これは`limits.v_min < 0`が後方について負うのと同じ注意で
 あり、前方のみのLiDARでは斜行先が見えない。`limits.vy_max`はdrivetrainの能力ではなく、実際に観測できて

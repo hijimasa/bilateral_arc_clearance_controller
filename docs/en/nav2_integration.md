@@ -129,9 +129,11 @@ fixed while translating, which suits a platform with 360-degree sensing.
 of travel, so they ignore a commanded goal orientation and follow the path tangent as before. A specific goal yaw
 for those models needs a Nav2 recovery or a controller switch.
 
-**`bac_filter_node` does not carry a holonomic command.** The evaluation node synthesises its virtual path and
-applies its speed cap on the forward component only, so it accepts `motion_model.type: omni` but never reproduces
-an upstream `linear.y` (a purely lateral command comes out as zero). The holonomic model is for the Nav2
+**`bac_filter_node` carries a holonomic command only partly.** The evaluation node synthesises its virtual path
+and applies its speed cap on the forward component alone, so lateral velocity survives when there is a forward
+component but a purely lateral command does not. Measured on the running node inside the container:
+`cmd_vel_in(linear.x = 0.30, linear.y = 0.30)` gives `cmd_vel_out(linear.x = 0.234, linear.y = 0.187)`, while
+`cmd_vel_in(linear.x = 0, linear.y = 0.30)` gives zero. The holonomic model's intended home is the Nav2
 controller plugin, `bac::BacController`.
 
 **Sideways motion needs sensor coverage abeam the body** — the same caveat `limits.v_min < 0` carries for the
