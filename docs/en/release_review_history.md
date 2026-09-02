@@ -40,7 +40,7 @@ English | [日本語](../release_review_history.md)
   that halves the body width prints "0 violations" and passes - and five false claims in the R17 response, one
   of which reported a fix to two installed files that were never touched. The R18 response closed its six High
   findings, the merge-blocking Medium ones and the cheap Low ones; the product code's behaviour is unchanged
-  (`src/` has no non-comment diff). R18 is recorded in `5238150`
+  (`src/` has no non-comment diff). R18 is recorded in `5238150` and its response landed in `8eefe99`
 
 All Critical, High, and Medium findings through R14 have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
