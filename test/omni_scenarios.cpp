@@ -305,6 +305,10 @@ struct OmniRun
   bool exceeded_speed_cap = false;
   bool exceeded_lateral_cap = false;
   bool exceeded_yaw_cap = false;
+  /// Smallest distance between the body RECTANGLE and any wall segment over
+  /// the run, from bac_sim::robotClearance - the same quantity, from the same
+  /// helper, that runClosedLoop and runAckermann report under this name.
+  /// Stays at the 1e9 sentinel in a world with no walls.
   float min_clearance = 1e9f;
   float min_goal_distance = 1e9f;
   float travelled_distance = 0.0f;
@@ -429,16 +433,36 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     pose.th = wrapAngle(pose.th + w * dt);
     run.travelled_distance += std::sqrt(step_x * step_x + step_y * step_y);
 
-    for (const bac::Point2D &point : points)
+    // Body contact, decided the way runClosedLoop (test/sim_runner.hpp) and
+    // runAckermann decide it: the exact minimum distance between the four
+    // body edges and every wall segment.
+    //
+    // This loop used to ask instead whether any LiDAR RETURN landed inside the
+    // footprint rectangle, and reported the shortest return RANGE FROM THE
+    // BODY ORIGIN under the name `min_clearance`. Both were wrong, and
+    // measured before the change:
+    //
+    //  - The point test slips between beams. Sliding a wall segment that truly
+    //    crosses the front edge along that edge (4000 placements, 720 beams,
+    //    the footprint below), the point test called a real contact
+    //    contact-free at 0.9% of placements for a 20 mm segment, 22.1% for a
+    //    10 mm one, and 25.1% for a 6 mm one. It agreed for 30 mm.
+    //  - The reported number was not a clearance. Over the 28 runOmni calls
+    //    these 17 scenarios make, the 11 with walls reported 0.2501 to 0.3500 m
+    //    MORE than the true clearance; the 1.2 m corridor runs reported
+    //    0.5213-0.5449 m where the body was actually 0.2600-0.2886 m from a
+    //    wall. The name and the quantity disagreed.
+    //
+    // Switching to robotClearance changed no verdict in these scenarios: all
+    // 28 runs were contact-free under BOTH tests, measured, so the suite's
+    // pass/fail set and its stdout are unchanged. The point is that the weak
+    // test would not have caught a contact that the strict one catches.
+    const float clearance = bac_sim::robotClearance(pose, params.footprint, world);
+    run.min_clearance = std::min(run.min_clearance, clearance);
+    if (clearance <= 0.0f)
     {
-      run.min_clearance = std::min(run.min_clearance,
-                                   std::sqrt(point.x * point.x + point.y * point.y));
-      // Body contact: the point is inside the footprint rectangle.
-      if (point.x >= params.footprint.rear && point.x <= params.footprint.front &&
-          std::fabs(point.y) <= params.footprint.width / 2.0f)
-      {
-        run.collided = true;
-      }
+      run.collided = true;
+      break;  // physical contact: the scenario has failed, as in the other two runners
     }
 
     const float goal_distance =
