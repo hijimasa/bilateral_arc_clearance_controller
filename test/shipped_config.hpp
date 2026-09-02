@@ -18,6 +18,14 @@
  * Deliberately a minimal `key: value` reader, not a YAML library: the files are
  * flat parameter blocks, and the point is to have no build dependency between
  * a regression suite and the configuration it defends.
+ *
+ * KNOWN GAP, not yet fixed: only config/bac_controller_omni.yaml and
+ * config/bac_controller_ackermann.yaml are guarded. config/bac_controller.yaml,
+ * the DIFFERENTIAL-DRIVE file, has no guard at all - no BAC_DIFF_DRIVE_CONFIG_PATH
+ * is defined in CMakeLists.txt and test/scenarios.cpp never reads it, so an edit
+ * to the file most users copy first cannot fail any suite. Deferred on purpose:
+ * the two existing guards are duplicated implementations that have already
+ * drifted apart, so the third one is worth writing only once they are one.
  */
 
 #pragma once

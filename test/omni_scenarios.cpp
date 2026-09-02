@@ -2011,10 +2011,26 @@ shippedExampleParams()
   };
 
   const bac_sim::ConfigEntry *model = value_of("motion_model.type");
-  if (model == nullptr || model->value != "omni")
+  std::string model_value = (model == nullptr) ? std::string("<missing>") : model->value;
+  // The loader takes this one as a STRING, so `"omni"` is legal YAML for it and
+  // yields the same value as the bare form - unlike a quoted number, which is a
+  // type error there too. The Ackermann guard has always stripped these quotes;
+  // this one did not, so `motion_model.type: "omni"` failed the holonomic suite
+  // alone. Measured before the change on a copy of the shipped yaml with only
+  // the quotes added: this suite reported 3 failed checks
+  // ("selects the holonomic model (got '\"omni\"')" twice, plus "every value
+  // the scenario needs was read from the shipped configuration"), while the
+  // Ackermann suite passed on the identical edit to its own yaml. The two
+  // implementations are still separate; only the quote handling is aligned
+  // here, the common guard is stage 3.
+  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
+  {
+    model_value = model_value.substr(1, model_value.size() - 2U);
+  }
+  if (model == nullptr || model_value != "omni")
   {
     expect(false, std::string("the shipped configuration selects the holonomic model (got '") +
-                      (model == nullptr ? std::string("<missing>") : model->value) + "')");
+                      model_value + "')");
     complete = false;
   }
   params.motion_model.type = bac::MotionModelType::OMNI;
