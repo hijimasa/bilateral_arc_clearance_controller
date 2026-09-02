@@ -25,6 +25,8 @@
 - R17（`dea7662` を対象、最重点は未レビューのR16対応commit群）は判定 **Hold**、対応未了。製品コードの
   安全性は収束しており約570万tickで接触0だが、R16対応commit自身が2件のコード回帰と3件の再現しない
   主張を持ち込んだ。High 5件は統合を阻む。R17対応でHigh 5件と統合前条件のMediumを閉じた
+  （記録commit `a89f0c4`、対応commit `364fe1a`。R16の対応commitは `c74fe7d` / `68a8ed9` / `4739c6f` /
+  `fa15112` / `dea7662` である）
 
 全17回のリリースレビューのうち、R14までのCritical / High / Mediumは対応済みである。R15〜R17は
 `feature/omni-motion-model` に対するもので、`main`（`2488248`）には含まれない。第10回のLow 3件、
