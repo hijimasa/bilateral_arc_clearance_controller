@@ -55,7 +55,7 @@ English | [日本語](../release_review_history.md)
   done by separate parties**. The High findings independent verification raised per pass were 5, 3, 1, 1 and
   then 0. The third pass was the one edited without that separation, and it is the one that wrote a single
   unverified report into an installed file, replacing a true statement with a false one - caught by two
-  independent verifiers. `src/` kept a non-comment diff of zero throughout. R19 is recorded in `310f26b`
+  independent verifiers. `src/` kept a non-comment diff of zero throughout. R19 is recorded in `310f26b` and its response landed in `187c053`
 
 All Critical, High, and Medium findings through R14 have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
