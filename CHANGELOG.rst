@@ -18,8 +18,10 @@ Forthcoming
   outputs stay byte-identical.
 * Add a holonomic (omnidirectional) motion model, ``motion_model.type: omni``.
   Lateral velocity is the avoidance dimension, not yaw rate: the candidate
-  lattice is forward speed x lateral speed, the same size as the
-  differential-drive forward speed x yaw rate lattice. The yaw rate regulates
+  lattice is forward speed x lateral speed - two dimensions, like the
+  differential-drive forward speed x yaw rate lattice, but not the same number
+  of candidates (measured with the shipped holonomic configuration from a
+  current velocity of 0.20 m/s: 96 against 130). The yaw rate regulates
   the body onto the local path tangent and is fixed before candidate
   generation, so the trajectory that is scored and contact-checked is the one
   that is driven. In a passage the regulator also points the body into the gap
@@ -71,6 +73,19 @@ Forthcoming
   difference is conservative (stop, drive slower, or give up the rotation). In
   closed loop, 9 of 10 worlds are bit-identical and the tenth deviates by at
   most 2 mm. ``test/output_stage_unit.cpp`` pins the new semantics.
+* Do not apply the output deadband when applying it would make the published
+  twist unable to stop before contact. The deadband runs after every
+  admissibility check, so zeroing a yaw rate below ``angvel_min`` could publish
+  a straightened arc nobody had checked; the command as selected is published
+  instead. This reaches DIFFERENTIAL DRIVE as well, and unlike the output-stage
+  change above the difference is not a reduction - the published yaw rate can
+  be non-zero where the previous revision published zero. Measured against
+  ``main`` over 40000 randomised differential-drive ticks: 0 rows differ at the
+  shipped ``angvel_min`` of 0.01 rad/s, and 2 differ when ``angvel_min`` is
+  swept over 0.05-0.35 rad/s. Every shipped regression fixture, including the
+  17-scenario harness and the Ackermann suite, is byte-identical either way.
+  Note that ``angvel_min`` is applied by the holonomic model too, not only by
+  differential drive.
 * Bind the motion model once per configuration instead of per control tick, so
   an unusable kinematic configuration is rejected by ``setParams`` and
   ``process`` neither allocates nor throws.

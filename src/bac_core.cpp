@@ -1347,9 +1347,17 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // publish a twist nobody checked: zeroing a yaw rate below angvel_min
   // straightens a crabbing arc into a different trajectory, and for a
   // holonomic body that rewrites 30% of ticks (R16 H2). Re-check what is
-  // actually published and brake if the deadband changed it into something
-  // that can no longer stop. Non-holonomic commands are unaffected - zeroing a
-  // sub-deadband yaw rate on a straight-line command does not change its arc.
+  // actually published and do not apply the deadband if it changed the command
+  // into something that can no longer stop.
+  //
+  // R18 M7: this reaches differential drive too. An earlier revision of this
+  // comment said non-holonomic commands were unaffected, on the grounds that
+  // zeroing a sub-deadband yaw rate does not change a straight-line arc. It
+  // does change the arc whenever the yaw rate is what makes the command
+  // admissible. Measured against main over 40000 randomised differential-drive
+  // ticks: 0 rows differ at the shipped angvel_min of 0.01 rad/s, and 2 differ
+  // when angvel_min is swept over 0.05-0.35 rad/s, both of them publishing the
+  // selected yaw rate where main published zero. See CHANGELOG.rst.
   const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
   const bool deadband_changed = std::fabs(finalized.v - out_v) > 1e-6f ||
                                 std::fabs(finalized.w - out_w) > 1e-6f ||
@@ -1360,12 +1368,23 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     // requirement, so when it would break admissibility it simply does not
     // apply. Every observed case is a yaw rate below angvel_min being removed:
     // over the evaluation window that straightens the arc enough to clip
-    // something, while the command as selected was admissible. Braking to a
-    // standstill instead repeated the same decision every tick and made an
-    // absorbing state (R17 H2), and slowing down does not help because the
-    // straightened arc has no safe speed at all - measured, 14 of 14 events on
-    // the shipped suite had safe_speed_for(finalized) == 0 while the
-    // un-deadbanded command was stoppable.
+    // something, while the command as selected was admissible.
+    //
+    // Braking to a standstill instead repeated the same decision every tick
+    // and made an absorbing state (R17 H2). Slowing to a speed the STRAIGHTENED
+    // arc could stop at is not available either, but not for the reason an
+    // earlier revision of this comment gave: measured over the holonomic suite,
+    // 171 of 267 events have safe_speed_for(finalized) == 0, so for those there
+    // is no such speed - but the other 96 do have one, from 0.0015 to 0.671 m/s
+    // (R18 H3 corrected an earlier claim of 14 of 14 here). What rules it out
+    // is that it would slow the vehicle to satisfy a quantization the vehicle
+    // does not have to satisfy, when the command as selected is already
+    // admissible and is what the scorer chose.
+    // R18 M8: this inner brake is defence in depth and is not reached in any
+    // measured configuration - 0 of 4112 events over 360k randomised ticks that
+    // also swept angvel_min and velocity_min. It is kept because the outer
+    // condition does not by itself establish that the command as selected is
+    // admissible; no assertion covers it.
     if (!stoppable(out_command()))
     {
       out_v = 0.0f;

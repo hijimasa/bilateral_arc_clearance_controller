@@ -155,7 +155,11 @@ fi
 # honour. That is all this checks. It says nothing about the holonomic output
 # path: the node's virtual path and speed cap are forward-only, so it carries
 # lateral velocity only when there is a forward component. The output path is
-# the Nav2 controller plugin's, and the labelled ctest entries above cover it.
+# the Nav2 controller plugin's. R18 L5: the labelled ctest entries above do NOT
+# cover that path either - the `omni` ones link `bac_core` only, and
+# `test/ros_adapter_unit.cpp`, which links the plugin, does not mention `omni`.
+# Nothing in this repository exercises the holonomic policy THROUGH the Nav2
+# plugin; that gap is recorded rather than closed.
 readonly OMNI_VALID_LOG="${WORK_DIR}/omni-node-valid.log"
 OMNI_VALID_STATUS=0
 run_filter_node "${OMNI_VALID_LOG}" \

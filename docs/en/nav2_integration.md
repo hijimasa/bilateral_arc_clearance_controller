@@ -131,9 +131,13 @@ for those models needs a Nav2 recovery or a controller switch.
 
 **`bac_filter_node` carries a holonomic command only partly.** The evaluation node synthesises its virtual path
 and applies its speed cap on the forward component alone, so lateral velocity survives when there is a forward
-component but a purely lateral command does not. Measured on the running node inside the container:
-`cmd_vel_in(linear.x = 0.30, linear.y = 0.30)` gives `cmd_vel_out(linear.x = 0.234, linear.y = 0.187)`, while
-`cmd_vel_in(linear.x = 0, linear.y = 0.30)` gives zero. The holonomic model's intended home is the Nav2
+component but a purely lateral command does not. Measured on the running node inside the container with
+`motion_model.type: omni`, `limits.vy_max: 0.3` and a clear 720-beam scan at 20 Hz,
+`cmd_vel_in(linear.x = 0.30, linear.y = 0.30)` gives `cmd_vel_out` of `(0.212132, 0.212132)` when `/odom`
+reports that same velocity, `(0.040000, 0.040000)` when `/odom` reports zero, and `(0, 0)` with no `/odom` at
+all - the output depends on the current velocity, so **the numbers mean nothing without the odometry
+condition**. (R18 M15: the `(0.234, 0.187)` this paragraph used to quote reproduces under none of them.)
+`cmd_vel_in(linear.x = 0, linear.y = 0.30)` gives zero under every one of them. The holonomic model's intended home is the Nav2
 controller plugin, `bac::BacController`.
 
 **Sideways motion needs sensor coverage abeam the body** — the same caveat `limits.v_min < 0` carries for the

@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,174 @@ wrapAngle(float angle)
   while (angle > static_cast<float>(M_PI)) angle -= 2.0f * static_cast<float>(M_PI);
   while (angle <= -static_cast<float>(M_PI)) angle += 2.0f * static_cast<float>(M_PI);
   return angle;
+}
+
+/// Arc length at which the footprint rectangle first touches one of `points`,
+/// derived here from the rectangle and the rigid-body motion alone.
+///
+/// R18 H1: the sweeps below assert that the emitted twist can stop before
+/// contact, but they took that contact distance from `evaluateArcWindows` -
+/// the code under test. A defect that shrinks the swept region shrinks the
+/// requirement by exactly as much, so the assertion cancels out: seeding
+/// `body_hit = abs_offset < side_extent * 0.5f` into the evaluator leaves both
+/// sweeps printing "0 violations" while an independent probe finds 38. What
+/// follows shares no code with the evaluator and is derived differently.
+///
+/// In the BODY frame a static obstacle point satisfies
+/// `pdot = (-v + w * py, -vy - w * px)`, so it circles the instantaneous
+/// centre `c = (-vy / w, v / w)` at angular rate `-w`: a point at radius `r`
+/// and initial bearing `phi0` is at `phi0 - sign(w) * u` after travelling
+/// `u` radians, i.e. after `s = speed * u / |w|`. Contact is therefore the
+/// smallest `u >= 0` whose bearing puts the point inside the rectangle.
+///
+/// The circle crosses each of the four edge lines at most twice, so at most
+/// eight bearings can change the inside/outside answer. Between consecutive
+/// crossings the answer is constant, which makes the midpoint of each gap a
+/// sufficient test and the whole thing exact rather than sampled.
+float
+independentContactDistance(const std::vector<bac::Point2D> &points,
+                           const bac::Footprint &body, const bac::Twist2D &command)
+{
+  const float half_width = body.width * 0.5f;
+  const float speed = command.speed();
+  if (speed <= 1e-6f)
+  {
+    return std::numeric_limits<float>::max();
+  }
+  const auto inside = [&](float x, float y) {
+    return x >= body.rear && x <= body.front && y >= -half_width && y <= half_width;
+  };
+
+  // Straight motion has no centre to circle about; the rectangle simply
+  // translates, and the point is inside for an interval in s on each axis.
+  if (std::fabs(command.w) < 1e-6f)
+  {
+    const float ux = command.v / speed;
+    const float uy = command.vy / speed;
+    const auto axis = [](float coordinate, float lo, float hi, float direction, float &s_lo,
+                         float &s_hi) {
+      if (std::fabs(direction) < 1e-9f)
+      {
+        const bool within = coordinate >= lo && coordinate <= hi;
+        s_lo = within ? 0.0f : 1.0f;
+        s_hi = within ? std::numeric_limits<float>::max() : -1.0f;
+        return;
+      }
+      const float a = (coordinate - hi) / direction;
+      const float b = (coordinate - lo) / direction;
+      s_lo = std::min(a, b);
+      s_hi = std::max(a, b);
+    };
+    float best = std::numeric_limits<float>::max();
+    for (const bac::Point2D &p : points)
+    {
+      float x_lo = 0.0f, x_hi = 0.0f, y_lo = 0.0f, y_hi = 0.0f;
+      axis(p.x, body.rear, body.front, ux, x_lo, x_hi);
+      axis(p.y, -half_width, half_width, uy, y_lo, y_hi);
+      const float lo = std::max(std::max(x_lo, y_lo), 0.0f);
+      if (lo <= std::min(x_hi, y_hi) && lo < best)
+      {
+        best = lo;
+      }
+    }
+    return best;
+  }
+
+  const float two_pi = 2.0f * static_cast<float>(M_PI);
+  const float turn_sign = command.w >= 0.0f ? 1.0f : -1.0f;
+  const float centre_x = -command.vy / command.w;
+  const float centre_y = command.v / command.w;
+  const float per_radian = speed / std::fabs(command.w);
+
+  float best = std::numeric_limits<float>::max();
+  for (const bac::Point2D &p : points)
+  {
+    const float qx = p.x - centre_x;
+    const float qy = p.y - centre_y;
+    const float radius = std::hypot(qx, qy);
+    if (radius < 1e-9f)
+    {
+      // The point sits on the centre and never moves relative to the body.
+      if (inside(centre_x, centre_y))
+      {
+        return 0.0f;
+      }
+      continue;
+    }
+    const float phi0 = std::atan2(qy, qx);
+
+    float bearings[9];
+    int count = 0;
+    const auto push_cosine = [&](float target) {
+      const float value = (target - centre_x) / radius;
+      if (value >= -1.0f && value <= 1.0f)
+      {
+        const float a = std::acos(value);
+        bearings[count++] = a;
+        bearings[count++] = -a;
+      }
+    };
+    const auto push_sine = [&](float target) {
+      const float value = (target - centre_y) / radius;
+      if (value >= -1.0f && value <= 1.0f)
+      {
+        const float a = std::asin(value);
+        bearings[count++] = a;
+        bearings[count++] = static_cast<float>(M_PI) - a;
+      }
+    };
+    push_cosine(body.rear);
+    push_cosine(body.front);
+    push_sine(-half_width);
+    push_sine(half_width);
+    if (count == 0)
+    {
+      // The circle clears every edge line, so it is entirely inside or
+      // entirely outside; one probe settles it.
+      if (inside(centre_x + radius * std::cos(phi0), centre_y + radius * std::sin(phi0)))
+      {
+        return 0.0f;
+      }
+      continue;
+    }
+
+    // Re-express each crossing as the travel `u` that reaches it.
+    float travel[9];
+    for (int i = 0; i < count; ++i)
+    {
+      float u = turn_sign * (phi0 - bearings[i]);
+      u = std::fmod(u, two_pi);
+      if (u < 0.0f)
+      {
+        u += two_pi;
+      }
+      travel[i] = u;
+    }
+    travel[count++] = 0.0f;
+    std::sort(travel, travel + count);
+
+    for (int i = 0; i < count; ++i)
+    {
+      const float lo = travel[i];
+      const float hi = (i + 1 < count) ? travel[i + 1] : two_pi;
+      if (hi <= lo)
+      {
+        continue;
+      }
+      const float mid = 0.5f * (lo + hi);
+      const float phi = phi0 - turn_sign * mid;
+      if (inside(centre_x + radius * std::cos(phi), centre_y + radius * std::sin(phi)))
+      {
+        const float s = lo * per_radian;
+        if (s < best)
+        {
+          best = s;
+        }
+        break;
+      }
+    }
+  }
+  return best;
 }
 
 /// Optional corridor-centering window: lateral error is aggregated only while
@@ -389,6 +558,9 @@ testEmittedCommandCanAlwaysStop()
   int moving = 0;
   int evaluated = 0;
   std::string worst;
+  int independent_violations = 0;
+  int independent_checks = 0;
+  std::string independent_worst;
   for (int trial = 0; trial < 6000; ++trial)
   {
     bac::Params params;
@@ -492,6 +664,29 @@ testEmittedCommandCanAlwaysStop()
       const float decel = std::max(params.stop_decel, 0.1f);
       const float needed =
           speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+
+      // R18 H1: the same invariant, against a contact distance derived here
+      // from the rectangle instead of read back from the evaluator.
+      {
+        const float contact = independentContactDistance(points, params.footprint, out);
+        const float own_free_run = contact - margin;
+        if (contact < 1e9f && own_free_run > 0.0f)
+        {
+          ++independent_checks;
+          if (own_free_run <= needed - 1e-4f)
+          {
+            if (independent_violations == 0)
+            {
+              independent_worst = "out (" + std::to_string(out.v) + ", " +
+                                  std::to_string(out.w) + ", " + std::to_string(out.vy) +
+                                  ") speed " + std::to_string(speed) + ", free run " +
+                                  std::to_string(own_free_run) + ", needs " +
+                                  std::to_string(needed);
+            }
+            ++independent_violations;
+          }
+        }
+      }
       if (free_run <= needed - 1e-4f)
       {
         if (violations == 0)
@@ -519,6 +714,17 @@ testEmittedCommandCanAlwaysStop()
   expect(violations == 0,
          "every emitted twist can stop before contact along its own direction of travel (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
+  // R18 H1: separate evidence rather than a restatement - this requirement
+  // does not come from the code that computes the swept region, so a defect
+  // that shrinks that region shows up here instead of cancelling out.
+  expect(independent_checks > 80,
+         "the independently derived contact test ran often enough to mean something (" +
+             std::to_string(independent_checks) + " checks)");
+  expect(independent_violations == 0,
+         "every emitted twist can stop before a contact distance derived independently "
+         "of the evaluator (" +
+             std::to_string(independent_violations) + " violations; first: " +
+             independent_worst + ")");
 }
 
 /// The same invariant as above, but with acceleration limits that BIND, so the
@@ -547,6 +753,9 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   int stop_while_moving = 0;
   std::string stop_while_moving_worst;
   std::string worst;
+  int independent_violations = 0;
+  int independent_checks = 0;
+  std::string independent_worst;
   for (int trial = 0; trial < 40000; ++trial)
   {
     bac::Params params;
@@ -629,6 +838,29 @@ testEmittedCommandCanStopWhenAccelerationBinds()
     ++checked;
     const float decel = std::max(params.stop_decel, 0.1f);
     const float needed = speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+
+    // R18 H1: the same invariant, against a contact distance derived here
+    // from the rectangle instead of read back from the evaluator.
+    {
+      const float contact = independentContactDistance(points, params.footprint, out);
+      const float own_free_run = contact - margin;
+      if (contact < 1e9f && own_free_run > 0.0f)
+      {
+      ++independent_checks;
+      if (own_free_run <= needed - 1e-4f)
+      {
+        if (independent_violations == 0)
+        {
+        independent_worst = "out (" + std::to_string(out.v) + ", " +
+                      std::to_string(out.w) + ", " + std::to_string(out.vy) +
+                      ") speed " + std::to_string(speed) + ", free run " +
+                      std::to_string(own_free_run) + ", needs " +
+                      std::to_string(needed);
+        }
+        ++independent_violations;
+      }
+      }
+    }
     if (free_run <= needed - 1e-4f)
     {
       if (violations == 0)
@@ -644,13 +876,246 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   expect(checked > 2000,
          "the binding-acceleration sweep reached the invariant often enough to matter (" +
              std::to_string(checked) + ")");
-  // Measured: 0 here, against 25 with the fallback gate removed, 32 with
-  // stoppable() forced true, and 7 with the deadband left unchecked.
+  // R18 L4: measured 0 here, against 101 with `vy` dropped from the Status::STOP
+  // condition. The 25 / 32 / 7 this comment used to quote are the bands of the
+  // NEXT assertion, not of this one.
   expect(stop_while_moving == 0,
          "no tick reports STOP while it is still translating (" +
              std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
+  // Measured: 0 here, against 25 with the fallback gate removed, 32 with
+  // stoppable() forced true, and 7 with the deadband left unchecked.
   expect(violations == 0,
          "what the output stage and the fallback publish can stop before contact (" +
+             std::to_string(violations) + " violations; first: " + worst + ")");
+  // R18 H1: separate evidence rather than a restatement - this requirement
+  // does not come from the code that computes the swept region, so a defect
+  // that shrinks that region shows up here instead of cancelling out.
+  expect(independent_checks > 2000,
+         "the independently derived contact test ran often enough to mean something (" +
+             std::to_string(independent_checks) + " checks)");
+  expect(independent_violations == 0,
+         "every emitted twist can stop before a contact distance derived independently "
+         "of the evaluator (" +
+             std::to_string(independent_violations) + " violations; first: " +
+             independent_worst + ")");
+}
+
+/// The output deadband is not applied when applying it would break
+/// admissibility (R17 H2), and that is observable from outside.
+///
+/// R18 H4: the R17 response claimed no regression could distinguish the fix,
+/// on the grounds that both behaviours are safe. They are, but they are not
+/// the same output. Before the fix the stage published either the deadbanded
+/// command - whose yaw is zero once below `angvel_min` - or an exact
+/// (0, 0, 0), so a published yaw rate strictly between zero and `angvel_min`
+/// was structurally impossible. Keeping the command as selected is the only
+/// thing in the stage that produces one.
+///
+/// `angvel_min` is drawn wider than the shipped 0.01 rad/s so the branch is
+/// reached often enough for the count to be a band rather than a handful:
+/// measured 255 of 21087 moving ticks here, against 0 for either of the two
+/// behaviours the R17 response considered and rejected - braking to a
+/// standstill instead (0 of 21087) and applying the deadband regardless
+/// (0 of 21342, which also fails the binding sweep above with 7 violations).
+void
+testDeadbandIsSkippedRatherThanBreakingAdmissibility()
+{
+  unsigned seed = 913u;
+  const auto next = [&seed]() {
+    seed = seed * 1664525u + 1013904223u;
+    return static_cast<float>((seed >> 8) & 0xFFFFu) / 65535.0f;
+  };
+
+  int kept = 0;
+  int moving = 0;
+  for (int trial = 0; trial < 30000; ++trial)
+  {
+    bac::Params params;
+    params.motion_model.type = bac::MotionModelType::OMNI;
+    params.limits.v_max = 0.2f + next() * 0.6f;
+    params.limits.vy_max = 0.1f + next() * 0.6f;
+    params.limits.v_min = 0.0f;
+    params.limits.w_max = 0.5f + next() * 1.5f;
+    params.limits.acc_v = 0.1f + next() * 0.5f;
+    params.limits.acc_w = 0.2f + next() * 1.0f;
+    params.control_period = 0.05f;
+    params.stop_decel = 0.4f + next() * 1.6f;
+    params.brake_reaction_time = next() * 0.25f;
+    params.footprint.front = 0.2f + next() * 0.3f;
+    params.footprint.rear = -(0.2f + next() * 0.3f);
+    params.footprint.width = 0.3f + next() * 0.5f;
+    params.safety_margin.front = 0.05f + next() * 0.3f;
+    params.safety_margin.rear = params.safety_margin.front;
+    params.safety_margin.side = 0.05f + next() * 0.3f;
+    params.avoid_margin.side = 0.4f + next() * 0.6f;
+    params.sim_time = 1.5f + next() * 2.0f;
+    params.heading_gain = next() * 3.0f;
+    params.angvel_min = 0.05f + next() * 0.30f;
+    bac::BacCore core(params);
+
+    std::vector<bac::Point2D> points;
+    const float bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    const float distance = 0.35f + next() * 1.0f;
+    for (int k = -14; k <= 14; ++k)
+    {
+      const float spread = 0.05f * static_cast<float>(k);
+      points.push_back({ distance * std::cos(bearing) - spread * std::sin(bearing),
+                         distance * std::sin(bearing) + spread * std::cos(bearing) });
+    }
+    const float path_bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    std::vector<bac::Point2D> path;
+    for (int i = 1; i <= 20; ++i)
+    {
+      const float r = 0.25f * static_cast<float>(i);
+      path.push_back({ r * std::cos(path_bearing), r * std::sin(path_bearing) });
+    }
+    const bac::Twist2D current(next() * params.limits.v_max,
+                               (next() * 2.0f - 1.0f) * params.limits.w_max,
+                               (next() * 2.0f - 1.0f) * params.limits.vy_max);
+
+    const bac::Twist2D out = core.process(points, path, current).output;
+    if (out.speed() > 1e-3f)
+    {
+      ++moving;
+    }
+    if (out.w != 0.0f && std::fabs(out.w) < params.angvel_min)
+    {
+      ++kept;
+    }
+  }
+
+  expect(kept > 120,
+         "the output stage publishes the command as selected where the deadband would "
+         "have broken admissibility (" +
+             std::to_string(kept) + " such ticks of " + std::to_string(moving) + " moving)");
+}
+
+/// The same invariant once more, on commands that do NOT rotate.
+///
+/// R18 H1: the two sweeps above almost never emit a straight twist - the yaw
+/// regulator is active in both - so the evaluator's straight branch, which is
+/// where `lead` and the left/right support extents decide contact, was reached
+/// by neither. Measured: 0 straight ticks in the first sweep and 106 in the
+/// second, against 885 checks here. `frame.lead = body.front` survives both of
+/// them and fails here with 2 violations.
+///
+/// `heading_gain` is zero so the regulator asks for no yaw, which is what puts
+/// the evaluator on its straight branch; the lattice is still the full
+/// (v, vy) grid, so the direction of travel covers every bearing.
+void
+testStraightCommandsClearTheirOwnFootprint()
+{
+  unsigned seed = 411u;
+  const auto next = [&seed]() {
+    seed = seed * 1664525u + 1013904223u;
+    return static_cast<float>((seed >> 8) & 0xFFFFu) / 65535.0f;
+  };
+
+  int checks = 0;
+  int violations = 0;
+  int rotating = 0;
+  std::string worst;
+  for (int trial = 0; trial < 60000; ++trial)
+  {
+    bac::Params params;
+    params.motion_model.type = bac::MotionModelType::OMNI;
+    params.limits.v_max = 0.2f + next() * 0.6f;
+    params.limits.vy_max = 0.1f + next() * 0.6f;
+    params.limits.v_min = 0.0f;
+    params.limits.w_max = 0.5f + next() * 1.5f;
+    params.limits.acc_v = 1000.0f;
+    params.limits.acc_w = 1000.0f;
+    params.control_period = 0.05f;
+    params.stop_decel = 0.4f + next() * 1.6f;
+    params.brake_reaction_time = next() * 0.25f;
+    // Deliberately asymmetric, and wide enough that `width / 2` can exceed
+    // `front`. Replacing the support extent along the direction of travel with
+    // `front` is only OPTIMISTIC where the true extent is larger, which for a
+    // sideways command means exactly `width / 2 > front`; with the narrower
+    // bodies the other sweeps use, that mutation is conservative everywhere
+    // and survives.
+    params.footprint.front = 0.15f + next() * 0.45f;
+    params.footprint.rear = -(0.10f + next() * 0.20f);
+    params.footprint.width = 0.3f + next() * 0.7f;
+    params.safety_margin.front = 0.05f + next() * 0.3f;
+    params.safety_margin.rear = params.safety_margin.front;
+    params.safety_margin.side = 0.05f + next() * 0.3f;
+    params.avoid_margin.side = 0.4f + next() * 0.6f;
+    params.sim_time = 1.5f + next() * 2.0f;
+    params.heading_gain = 0.0f;  // no yaw asked for, so the command is straight
+    bac::BacCore core(params);
+
+    std::vector<bac::Point2D> points;
+    const float bearing = (next() * 2.0f - 1.0f) * static_cast<float>(M_PI);
+    const float distance = 0.35f + next() * 1.1f;
+    for (int k = -14; k <= 14; ++k)
+    {
+      const float spread = 0.05f * static_cast<float>(k);
+      points.push_back({ distance * std::cos(bearing) - spread * std::sin(bearing),
+                         distance * std::sin(bearing) + spread * std::cos(bearing) });
+    }
+    // Aimed close to the cluster, so the vehicle is actually driven at the
+    // obstacle and the invariant is reached rather than trivially satisfied by
+    // an empty direction of travel. Drawing the bearing uniformly instead
+    // leaves 98 checks in 12000 trials.
+    const float path_bearing = bearing + (next() * 2.0f - 1.0f) * 0.7f;
+    std::vector<bac::Point2D> path;
+    for (int i = 1; i <= 20; ++i)
+    {
+      const float r = 0.25f * static_cast<float>(i);
+      path.push_back({ r * std::cos(path_bearing), r * std::sin(path_bearing) });
+    }
+    const bac::Twist2D current(next() * params.limits.v_max, 0.0f,
+                               (next() * 2.0f - 1.0f) * params.limits.vy_max);
+
+    const bac::Twist2D out = core.process(points, path, current).output;
+    const float speed = out.speed();
+    if (speed <= 1e-3f)
+    {
+      continue;
+    }
+    if (std::fabs(out.w) > 1e-4f)
+    {
+      ++rotating;
+      continue;
+    }
+    const float contact = independentContactDistance(points, params.footprint, out);
+    if (contact >= 1e9f)
+    {
+      continue;
+    }
+    const float ux = out.v / speed;
+    const float uy = out.vy / speed;
+    const float margin =
+        ((ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux) +
+        params.safety_margin.side * std::fabs(uy);
+    const float free_run = contact - margin;
+    if (free_run <= 0.0f)
+    {
+      continue;  // the escape regime, as in the sweeps above
+    }
+    ++checks;
+    const float decel = std::max(params.stop_decel, 0.1f);
+    const float needed = speed * speed / (2.0f * decel) + speed * params.brake_reaction_time;
+    if (free_run <= needed - 1e-4f)
+    {
+      if (violations == 0)
+      {
+        worst = "trial " + std::to_string(trial) + " out (" + std::to_string(out.v) + ", " +
+                std::to_string(out.vy) + ") speed " + std::to_string(speed) + ", free run " +
+                std::to_string(free_run) + ", needs " + std::to_string(needed);
+      }
+      ++violations;
+    }
+  }
+
+  expect(checks > 600,
+         "the straight-command sweep reached the invariant often enough to matter (" +
+             std::to_string(checks) + " checks, " + std::to_string(rotating) +
+             " rotating ticks skipped)");
+  expect(violations == 0,
+         "every emitted straight twist can stop before a contact distance derived "
+         "independently of the evaluator (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
 }
 
@@ -901,8 +1366,10 @@ testGovernorTreatsSidewaysLikeForward()
   // The problem IS mirror-symmetric whatever the overhangs: the footprint is
   // symmetric about y = 0 and the margins are isotropic, so reflecting the
   // world, vy and w must reflect the command. Measured with front 0.70 and
-  // rear -0.30, the symmetrised form breaks this in 186 of 4000 sampled states,
-  // worst 0.3496 m/s; the asymmetric form breaks none.
+  // rear -0.30 over the 144 cells this loop visits, the symmetrised form breaks
+  // it in 8 of them, worst 0.080000 m/s; the asymmetric form's worst is
+  // 3.0e-08. R18 M4: the numbers quoted here before (186 of 4000, worst
+  // 0.3496) came from a wider exploratory grid, not from this check.
   {
     bac::Params mirror = omniParams();
     mirror.limits.v_max = 0.6f;
@@ -913,12 +1380,21 @@ testGovernorTreatsSidewaysLikeForward()
     mirror.safety_margin.front = 0.2f;
     mirror.safety_margin.rear = 0.2f;
     mirror.safety_margin.side = 0.2f;
-    mirror.heading_gain = 0.0f;
+    // R18 M3: heading_gain was zero here, so every output yaw rate was
+    // identically zero and the "w must reflect the command" half of this check
+    // was vacuous - and the governor's arc correction, which only runs on a
+    // turning command, was never reached. Measured with the gain at zero:
+    // 48 cells, 0 with a non-zero yaw.
+    mirror.heading_gain = 1.5f;
 
     float worst_break = 0.0f;
+    int nonzero_w = 0;
+    int cells = 0;
+    int breaks = 0;
     std::string worst_state;
     for (const float wall : { 0.60f, 0.80f, 1.00f, 1.20f })
       for (const float cur_v : { 0.0f, 0.2f, 0.4f })
+        for (const float cur_w : { -0.4f, 0.0f, 0.4f })
         for (const float cur_vy : { -0.4f, -0.2f, 0.2f, 0.4f })
         {
           std::vector<bac::Point2D> points, mirrored, path, mirrored_path;
@@ -936,15 +1412,24 @@ testGovernorTreatsSidewaysLikeForward()
           }
 
           bac::BacCore a(mirror);
-          const bac::Result ra = a.process(points, path, bac::Twist2D(cur_v, 0.0f, cur_vy));
+          const bac::Result ra = a.process(points, path, bac::Twist2D(cur_v, cur_w, cur_vy));
           bac::BacCore b(mirror);
           const bac::Result rb =
-              b.process(mirrored, mirrored_path, bac::Twist2D(cur_v, 0.0f, -cur_vy));
+              b.process(mirrored, mirrored_path, bac::Twist2D(cur_v, -cur_w, -cur_vy));
+          ++cells;
+          if (ra.output.w != 0.0f)
+          {
+            ++nonzero_w;
+          }
 
           const float dv = std::fabs(ra.output.v - rb.output.v);
           const float dvy = std::fabs(ra.output.vy + rb.output.vy);
           const float dw = std::fabs(ra.output.w + rb.output.w);
           const float break_size = std::max(dv, std::max(dvy, dw));
+          if (break_size > 1e-3f)
+          {
+            ++breaks;
+          }
           if (break_size > worst_break)
           {
             worst_break = break_size;
@@ -956,8 +1441,71 @@ testGovernorTreatsSidewaysLikeForward()
           }
         }
     expect(worst_break < 1e-3f,
-           "an asymmetric footprint does not break the mirror symmetry of the problem "
-           "(worst " + std::to_string(worst_break) + " m/s; " + worst_state + ")");
+           "an asymmetric footprint does not break the mirror symmetry of the problem (" +
+               std::to_string(breaks) + " of " + std::to_string(cells) + " cells, worst " +
+               std::to_string(worst_break) + " m/s; " + worst_state + ")");
+    // Measured 129 of 144; the threshold is a quarter of the grid.
+    expect(nonzero_w * 4 > cells,
+           "the yaw half of that symmetry is actually exercised (" +
+               std::to_string(nonzero_w) + " of " + std::to_string(cells) +
+               " cells command a yaw rate)");
+  }
+
+  // R18 M2: mirror symmetry alone cannot see the two lateral extents being
+  // SWAPPED, because swapping them is itself mirror-symmetric. Pin their
+  // orientation directly.
+  //
+  // Crabbing left, the direction of travel is +y, so the left of the travel
+  // line is -x - the REAR overhang - and its right is +x, the front. With front
+  // 0.70 and rear -0.30 the swept box therefore reaches 0.30 m to the left of
+  // the travel line and 0.70 m to the right. An obstacle 0.70 m ahead of the
+  // axle is on the boundary of that box and must govern the speed; one 0.70 m
+  // behind it is more than twice the rear reach away and must not. Swapping the
+  // two extents inverts both answers, and the ahead case then runs at v_max.
+  //
+  // Measured: 0.560000 ahead against 0.567726 behind; with the extents swapped,
+  // 0.600000 against 0.561427. Over a 1350-cell grid of wall distance, obstacle
+  // offset and current lateral speed the swap changes 413 cells, 183 of them
+  // upwards.
+  {
+    bac::Params sided = omniParams();
+    sided.limits.v_max = 0.6f;
+    sided.limits.vy_max = 0.6f;
+    sided.footprint.front = 0.70f;
+    sided.footprint.rear = -0.30f;
+    sided.footprint.width = 0.5f;
+    sided.safety_margin.front = 0.2f;
+    sided.safety_margin.rear = 0.2f;
+    sided.safety_margin.side = 0.2f;
+    sided.heading_gain = 0.0f;
+
+    const auto crabLeftSpeed = [&](float obstacle_x) {
+      std::vector<bac::Point2D> points, path;
+      for (int k = -6; k <= 6; ++k)
+      {
+        points.push_back({ obstacle_x + 0.02f * static_cast<float>(k), 1.45f });
+      }
+      for (int i = 1; i <= 20; ++i)
+      {
+        path.push_back({ 0.0f, 0.25f * static_cast<float>(i) });
+      }
+      bac::BacCore core(sided);
+      return core.process(points, path, bac::Twist2D(0.0f, 0.0f, 0.6f)).output.speed();
+    };
+
+    const float ahead = crabLeftSpeed(0.70f);
+    const float behind = crabLeftSpeed(-0.70f);
+    // 0.58 sits between the two measured bands with 0.02 m/s either side; the
+    // ordering below is the same fact stated without a constant.
+    expect(ahead < 0.58f,
+           "an obstacle within the FRONT overhang governs a left crab (" +
+               std::to_string(ahead) + " m/s, expected below 0.58; the swapped extents "
+               "give 0.600000, which is v_max)");
+    expect(behind > ahead,
+           "an obstacle beyond the REAR overhang is governed LESS than one within the "
+           "front overhang (" +
+               std::to_string(behind) + " behind against " + std::to_string(ahead) +
+               " ahead; the swapped extents invert this to 0.561427 against 0.600000)");
   }
 }
 
@@ -1337,9 +1885,9 @@ testShippedExampleConfiguration()
            "it reached the measurement window (" + std::to_string(run.lateral_samples) + ")");
     // Measured on the shipped values in THIS 1.2 m corridor: 0.0148 m. With
     // avoid_margin.side at 0.5, where the bilateral term never engages for this
-    // body, it is 0.1079 m. (The 0.139 m the yaml comment quotes is the same
-    // comparison in a 1.6 m corridor.) The bound sits between the two, which is
-    // what makes the yaml value matter.
+    // body, it is 0.1051 m (R18 L1 corrected 0.1079). The 0.1412 m the yaml
+    // comment quotes is the same comparison in a 1.6 m corridor. The bound sits
+    // between the two, which is what makes the yaml value matter.
     expect(run.mean_abs_lateral < 0.05f,
            "and holds the centerline, which the shipped avoid_margin.side is what buys "
            "(mean |y| " + std::to_string(run.mean_abs_lateral) + " m)");
@@ -1358,6 +1906,8 @@ main()
   testHeadingRegulatorTracksTheTangent();
   testEmittedCommandCanAlwaysStop();
   testEmittedCommandCanStopWhenAccelerationBinds();
+  testStraightCommandsClearTheirOwnFootprint();
+  testDeadbandIsSkippedRatherThanBreakingAdmissibility();
   testLateralRowIsContactChecked();
   testEmergencyLayerSeesLateralMotion();
   testStopMeansStoppedAndHeadingTakesTheShortWay();

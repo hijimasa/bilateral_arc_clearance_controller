@@ -25,7 +25,12 @@ controller_server:
       heading_gain: 1.5
       # Lateral-velocity samples per forward-speed row; the counterpart of
       # w_samples, which a holonomic model does not use. The lattice is
-      # v_samples x vy_samples, the same size as the differential-drive one.
+      # v_samples x vy_samples - two dimensions, like the differential-drive
+      # forward speed x yaw rate lattice, but NOT the same number of
+      # candidates. Measured with the values in this file (v_max 0.4,
+      # vy_max 0.3, w_max 1.0, v_samples 5, vy_samples 15, w_samples 25) from
+      # a current velocity of (0.20 m/s, 0.0 rad/s): 96 holonomic candidates
+      # against 130 differential-drive ones.
       vy_samples: 15
 
       scan_topic: /scan
@@ -46,10 +51,14 @@ controller_server:
       # footprint.width / 2 + avoid_margin.side. With 0.5 here that cap is
       # 0.75 m, so an ordinary 1.6 m corridor is "open" on the far side and the
       # term never fires for this 0.5 m wide body. Measured in a 1.6 m corridor
-      # at an entry offset of 0.30 m: mean lateral error 0.139 m at 0.5 and
-      # 0.0119 m at 0.9. The transition is not monotone and the boundary sits
-      # between 0.68 and 0.70; 0.8 already reaches essentially the same value as
-      # 0.9, so 0.9 is a margin over that boundary rather than a required value.
+      # with 0.10 m thick walls, entry offset 0.30 m, heading_gain 1.5: mean
+      # lateral error 0.1412 m at 0.5 and 0.0159 m at 0.9. R18 M6: the pair
+      # quoted here before (0.139 / 0.0119) came from the older zero-thickness
+      # fixture, not from the rig this comment declares. The transition is not
+      # monotone - the first cell below 0.05 m is 0.700, 0.705 and 0.710 are
+      # back above 0.18, and only from 0.715 up does it stay below 0.017 - and
+      # 0.8 already reaches essentially the same value as 0.9, so 0.9 is a
+      # margin over that boundary rather than a required value.
       avoid_margin.side: 0.9
 
       limits.v_max: 0.4

@@ -52,8 +52,11 @@ require separate validation.
 
 With `omni`, **lateral velocity is the avoidance dimension, not yaw rate**. A holonomic body can side-step an
 obstacle without changing where it points, so searching over yaw would spend the candidate budget on a degree of
-freedom that avoids nothing. The candidate lattice is therefore forward speed × lateral speed — the **same size**
-as the differential-drive forward speed × yaw rate lattice, not a three-dimensional one.
+freedom that avoids nothing. The candidate lattice is therefore forward speed × lateral speed — the **same two
+dimensions** as the differential-drive forward speed × yaw rate lattice, not a three-dimensional one. It is not
+the same candidate COUNT: measured with the shipped holonomic values (`limits.v_max` 0.4, `limits.vy_max` 0.3,
+`limits.w_max` 1.0, `v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current velocity of
+(0.20 m/s, 0.0 rad/s), 96 holonomic candidates against 130 differential-drive ones (R18 M5, H2).
 
 The yaw rate is not a searched dimension but a regulator output: proportional on the heading error to the local
 path tangent, with gain `heading_gain`, **decided before candidate generation and shared by every candidate**.
@@ -112,7 +115,7 @@ sensor coverage abeam the body** — the same caveat `limits.v_min` carries for 
 | `heading_gain` | 1.5 | `omni` only. Proportional gain of the pose regulator [1/s]. 0 holds the heading fixed, which suits a body with 360-degree sensing. No upper bound is validated; see the measured trade-off below |
 | `vy_samples` | 15 | `omni` only. Lateral-velocity samples per forward-speed row, the counterpart of `w_samples`; at least 3 |
 | `velocity_min` | 0.005 | Output linear speeds below this value are rounded to zero [m/s]. Ackermann zeroes the whole command, since a yaw rate without speed is not realizable |
-| `angvel_min` | 0.01 | Differential drive only: output angular speeds below this value are rounded to zero [rad/s]. Ackermann does not apply it, because a small yaw rate at low speed can still represent material curvature; it zeroes `angular.z` only when the curvature itself is negligible |
+| `angvel_min` | 0.01 | Differential drive AND the holonomic model: output angular speeds below this value are rounded to zero [rad/s] (R18 M7 - this entry previously said differential drive only, which is false). Ackermann does not apply it, because a small yaw rate at low speed can still represent material curvature; it zeroes `angular.z` only when the curvature itself is negligible. For every model the rounding is skipped when it would leave a twist that can no longer stop before contact |
 
 Differential-drive yaw-rate candidates and Ackermann curvature candidates cover their full configured range
 rather than an acceleration window around the current state. This intentional departure from the original DWA
@@ -138,7 +141,7 @@ executing those limits.
 | `weights.balance` | 4.0 | Left–right difference penalty in tight spaces |
 | `weights.path_dist` | 1.0 | Weight for path cost: remaining projected arc length plus lateral offset |
 | `weights.heading` | 0.15 | Endpoint heading-error weight |
-| `weights.hysteresis` | 0.6 | Weight for change from the previous output command, after the reachability clamp and deadband: yaw rate for differential drive [score per rad/s], curvature for Ackermann [score per 1/m], lateral velocity for `omni` [score per m/s] |
+| `weights.hysteresis` | 0.6 | Weight for change from the previous output command - after the reachability clamp, and after the deadband where the deadband was applied; on a tick where it was skipped because it would have broken stop-before-contact, the command as selected (R18 L2): yaw rate for differential drive [score per rad/s], curvature for Ackermann [score per 1/m], lateral velocity for `omni` [score per m/s] |
 | `weights.squeeze` | 0.5 | Speed penalty under small lateral clearance |
 
 `weights.hysteresis` carries different units per model: [score per rad/s] against yaw-rate change for

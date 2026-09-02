@@ -5,7 +5,9 @@ English | [日本語](../release_review_history.md)
 ## Current state
 
 - Checked: 2026-09-02 (through R18)
-- Evaluated package: `13b3d16`. The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
+- Evaluated package: `13b3d16` through R14; R15 to R18 each reviewed a point on
+  `feature/omni-motion-model` (`616746b`, `a9c6c31`, `dea7662`, `ba544e2` in order). The rest of this bullet
+  describes `13b3d16` as it stood at R14; `main` is `2488248` (R18 M14). The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
   `5951e0b` (documentation) and `24466ae` (review record); R12 reviewed those three commits and its response
   landed in `3521226`; R13 reviewed through `3bd88cb` (the scenario expansion closing R11 L5) and its response
   landed in `112eb35`; R14 reviewed the whole branch through `112eb35`, recorded in `0586253` with its response
@@ -25,22 +27,27 @@ English | [日本語](../release_review_history.md)
   test world modelling walls as zero-thickness lines: the corridor now has thickness, and entering nearly
   parallel to a thin wall is documented as a limit of the method. R16 is recorded in `3708fd4` and its
   response landed in `c74fe7d`, `68a8ed9`, `4739c6f`, `fa15112` and `dea7662`
-- R17 (reviewing `dea7662`, with the unreviewed R16 response commits foremost) is **Hold** and unaddressed.
-  The product code has converged - no body contact over some 5.7 M ticks - but the R16 response itself
-  introduced two code regressions and three claims that do not reproduce. Its five High findings blocked the
-  merge and the R17 response closed them, along with the Medium ones that blocked it
+- R17 (reviewing `dea7662`, with the unreviewed R16 response commits foremost) had a verdict of **Hold** before
+  its response. The product code has converged - no body contact over some 5.7 M ticks - but the R16 response
+  itself introduced two code regressions and three claims that do not reproduce. Its five High findings blocked
+  the merge and the R17 response closed them, along with the Medium ones that blocked it. R17 is recorded in
+  `a89f0c4` and its response landed in `364fe1a`
 - R18 (reviewing `ba544e2`, with the unreviewed `364fe1a` and `ba544e2` foremost) is **Hold** and unaddressed.
   Nothing in the product code blocks the merge: R17 H1's asymmetric slab was independently confirmed to be the
   geometrically exact lateral interval of the swept box, the `vy == 0` reduction is bit-identical, and the two
   existing models' fixture outputs match a freshly built `main`. The Hold rests on one structural defect in the
   test rig - the sweep's safety invariant takes its contact distance from the code under test, so a mutation
   that halves the body width prints "0 violations" and passes - and five false claims in the R17 response, one
-  of which reported a fix to two installed files that were never touched. R18 is recorded in this commit
+  of which reported a fix to two installed files that were never touched. The R18 response closed its six High
+  findings, the merge-blocking Medium ones and the cheap Low ones; the product code's behaviour is unchanged
+  (`src/` has no non-comment diff). R18 is recorded in `5238150`
 
 All Critical, High, and Medium findings through R14 have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
 by the 2026-09-01 scenario expansion), the three from R12, and five of the six from R13. R13 L7 - a data race on
-`speed_limit_` that predates this branch - is carried to the next cycle. No release blocker remains. R12 re-verified R11's own work and found that the
+`speed_limit_` that predates this branch - is carried to the next cycle. Nothing on `main` (`2488248`) is a
+release blocker. R15 to R18 review `feature/omni-motion-model` and are NOT in `main`: R15, R16 and R17 have had
+their High findings and their merge-blocking Medium ones closed, and R18 is being addressed (R18 H6). R12 re-verified R11's own work and found that the
 abandoned-design wording R11 considered fixed still survived in the public header, that the Nav2 adapter's
 differential-drive coverage had been replaced rather than added to, and that the shipped Ackermann example
 configuration failed the package's own Ackermann regression suite - R11 L4 had been closed on a false premise. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
@@ -82,7 +89,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R15 | Merge-readiness for the holonomic model. `vy` never reached the four places that decide the direction of travel, so contact checking, the stop-before-contact test and the emergency layer do not hold for a purely lateral command; one corridor-entry contact; six measured claims did not reproduce | The four direction-of-travel decisions generalised to the velocity vector, the emergency fallback gated on its combined twist, a property test asserting the invariant, and the measured claims and test counts corrected | [Findings, ja](../reviews/r15-2026-09-02-findings.md) / [Response, ja](../reviews/r15-2026-09-02-response.md) |
 | R16 | Re-review of the R15 response. R15 H4 was closed only on the sampled grid points - a 0.002 m sweep reproduces contact with 0.23 m of penetration; the output deadband runs after every admissibility check, so the invariant fails on the published twist; the speed governor is still forward-only; and the code the R15 response added is never executed by the suite | The deadband's output re-checked, the governor generalised to the direction of travel, a sweep that reaches the fallback, and the direction recovery covered. H1 turned out to rest on zero-thickness walls: the corridor now has thickness and the limitation is documented | [Findings, ja](../reviews/r16-2026-09-02-findings.md) / [Response, ja](../reviews/r16-2026-09-02-response.md) |
 | R17 | Re-review of the R16 response. The governor's lateral slab was symmetrised and broke mirror invariance, the deadband re-check creates permanent stalls, the first sweep's STOP assertion is never evaluated, and the corridor-entry and filter-node claims do not reproduce | The governor's lateral interval made asymmetric, the deadband simply not applied when it would break admissibility, the first sweep's STOP assertion actually evaluated, and every quoted boundary and number re-measured | [Findings, ja](../reviews/r17-2026-09-02-findings.md) / [Response, ja](../reviews/r17-2026-09-02-response.md) |
-| R18 | Re-review of the R17 response (final round). The sweep's safety invariant is self-referential - it takes the contact distance from the code under test, so a mutation that halves the body width prints "0 violations" and passes. The R17 response reported a fix to two installed files it never touched, the deadband comment's measured 14-of-14 does not reproduce (7 of 14), "no discriminating regression is possible" is false, and the thin-wall claim and the English history are false | Unaddressed | [Findings, ja](../reviews/r18-2026-09-02-findings.md) |
+| R18 | Re-review of the R17 response (final round). The sweep's safety invariant is self-referential - it takes the contact distance from the code under test, so a mutation that halves the body width prints "0 violations" and passes. The R17 response reported a fix to two installed files it never touched, the deadband comment's measured 14-of-14 does not reproduce (7 of 14), "no discriminating regression is possible" is false, and the thin-wall claim and the English history are false | The sweeps' contact distance re-derived independently in the test (exact rotating sweep), a third sweep dedicated to straight commands, a regression that counts the skipped deadband, the lateral extents' orientation pinned, and yaw actually exercised in the mirror check. Every false claim - "same size" in the installed files, the deadband measurement, the thin-wall paragraph, the English history and the filter-node numbers - corrected against a fresh measurement | [Findings, ja](../reviews/r18-2026-09-02-findings.md) / [Response, ja](../reviews/r18-2026-09-02-response.md) |
 
 ## Current validation contract
 
@@ -92,7 +99,7 @@ The linked findings and responses are preserved in Japanese as the original audi
   always fails one of them. The Jazzy container additionally checks that the `ackermann`-labelled tests exist and pass, that the
   installed Ackermann configuration selects the model, and that a running node rejects an unsupported
   `motion_model.type` and a non-positive `turn_radius_min`
-- Ten holonomic unit tests and fifteen closed-loop scenarios. Five of the scenarios run the same world under a
+- Ten holonomic unit tests and seventeen closed-loop scenarios. Four of the scenarios run the same world under a
   differential-drive reference and assert on the difference, one runs the shipped holonomic configuration
   itself, and one is a property test over 6000 randomised worlds AND randomised parameters that checks, on every
   tick, that the emitted twist can stop before contact along its own direction of travel - the form in which

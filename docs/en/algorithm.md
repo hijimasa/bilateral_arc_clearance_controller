@@ -95,25 +95,30 @@ The published benchmark observations below use the differential-drive model.
   at this boundary condition.
 - The holonomic policy avoids with lateral velocity and uses yaw to regulate pose. Its candidate lattice is
   forward speed × lateral speed - two dimensions, like the differential-drive forward speed × yaw rate lattice,
-  though not the same candidate count (measured: 96 against 130) - and
+  though not the same candidate count. Measured with the shipped holonomic values (`limits.v_max` 0.4,
+  `limits.vy_max` 0.3, `limits.w_max` 1.0, `v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current
+  velocity of (0.20 m/s, 0.0 rad/s): 96 against 130. The conditions matter - the same settings give 156 or 182
+  differential-drive candidates from other current speeds, while the holonomic count stays 96 (R18 M5) - and
   the yaw rate is fixed before candidate generation so the trajectory that is scored is the trajectory that is
   driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
   rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
   degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is gated to passages — bounded on both
   sides and open straight ahead. **The measurement conditions are stated here** because R15 M12 found that a table
   without them did not reproduce on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH
-  models, a 7 m corridor, `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
+  models, a 7.5 m corridor (x = 2.0 to 9.5 m), `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
   1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, with 0.10 m thick walls, is 0.0131 / 0.0148 / 0.0171 / 0.0159 / 0.0160 m against
   0.0259 / 0.0280 / 0.0288 / 0.0260 / 0.0255 m for differential drive, a factor of 1.6 to 2.0. Lowering `avoid_margin.side` stops the
-  bilateral term from engaging at all: in a 1.6 m corridor the mean error is 0.0119 m at 0.9 and 0.139 m at 0.5,
-  with the boundary between 0.68 and 0.70, a transition that is not monotone, and 0.8 reaching essentially the
-  same value as 0.9.
+  bilateral term from engaging at all: in a 1.6 m corridor with 0.10 m thick walls the mean error is 0.0159 m at
+  0.9 and 0.1412 m at 0.5. The transition is not monotone - the first cell below 0.05 m is 0.700, 0.705 and 0.710
+  are back above 0.18, and only from 0.715 up does it stay below 0.017 - and 0.8 reaches essentially the same
+  value as 0.9. R18 M6: the pair quoted here before (0.0119 / 0.139) came from the older zero-thickness fixture
+  rather than from the rig this paragraph declares.
   **The entry offset has a limit.** Swept from 0.30 to 0.50 m in 0.002 m steps - 101 cells, counting a contact,
   a failure to traverse, or a route around the outside as a failure - a 1.2 m corridor with 0.10 m thick walls
   passes **all 101**, while a 1.1 m one starts failing at 0.418 m. Modelling the walls as zero-thickness lines
   makes both worse: 1.2 m starts failing at 0.476 m and 1.1 m at 0.372 m. Rounding an isolated obstacle it
-  commands a peak |yaw rate| of 0.0437 rad/s where differential drive needs 0.3125. It passes twenty-five
-  deterministic tests, ten unit and fifteen closed-loop.
+  commands a peak |yaw rate| of 0.0437 rad/s where differential drive needs 0.3125. It passes twenty-seven
+  deterministic tests, ten unit and seventeen closed-loop.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle
   detour, dead-end stop, rear goal, turning-radius binding, yaw-rate-limit binding, clearance-probe reach, the
   shipped example configuration, safety stop (forward-only), safety stop (reverse escape), narrow-corridor
@@ -141,9 +146,14 @@ They are not probabilistic or universal claims about untested environments.
 - **Avoiding a THIN wall entered almost parallel to it.** BAC sees only the points it is given. Rays cast nearly
   tangentially at a surface with no thickness can pass between beams, so the very edge the body is about to touch
   may never appear as a point, and what cannot be measured cannot be avoided. At 0.5 degrees of angular
-  resolution (720 beams over 360 degrees) this produced a contact at `616746b`; at the current revision the
-  controller no longer drives into that position over entry offsets 0.30-0.50 m, but the sensing limit itself is
-  unchanged and is a property of the sensor, not of the controller. Real walls
+  resolution (720 beams over 360 degrees) this produced a contact at `616746b`, and **it is not resolved at the
+  current revision**: sweeping a 1.2 m zero-thickness corridor from 0.30 to 0.50 m in 0.002 m steps still
+  contacts in 2 of the 101 cells, at 0.488 and 0.498 m (R18 H5 - this paragraph previously claimed the
+  controller no longer drove into that position, which is false). The same corridor with 0.10 m walls traverses
+  all 101 cells without contact. Across the four conditions swept (1.1 and 1.2 m widths, 0.10 m and zero
+  thickness, 404 cells) the 91 failures break down as 2 contacts, 73 routes around the outside and 16
+  non-traversals; every contact is in the zero-thickness 1.2 m corridor. The sensing limit is
+  a property of the sensor, not of the controller. Real walls
   present a face, so that configuration is a modelling degeneracy rather than a scenario: the regressions use
   walls with thickness. Raising the resolution (2880 beams or more) or giving the wall thickness both remove it
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
