@@ -4,7 +4,7 @@ English | [日本語](../release_review_history.md)
 
 ## Current state
 
-- Checked: 2026-09-02 (through R18)
+- Checked: 2026-09-02 (through R19)
 - Evaluated package: `13b3d16` through R14; R15 to R18 each reviewed a point on
   `feature/omni-motion-model` (`616746b`, `a9c6c31`, `dea7662`, `ba544e2` in order). The rest of this bullet
   describes `13b3d16` as it stood at R14; `main` is `2488248` (R18 M14). The working tree R11 reviewed was committed as `8fd0d7e` (implementation),
@@ -41,13 +41,20 @@ English | [日本語](../release_review_history.md)
   of which reported a fix to two installed files that were never touched. The R18 response closed its six High
   findings, the merge-blocking Medium ones and the cheap Low ones; the product code's behaviour is unchanged
   (`src/` has no non-comment diff). R18 is recorded in `5238150` and its response landed in `8eefe99`
+- R19 (reviewing `78f6852`, scoped to the unreviewed `8eefe99` and `78f6852`) is **Hold** and unaddressed.
+  It was run against a stopping criterion fixed in advance - converge and merge if no new High finding and no
+  non-reproducing claim - and **the criterion was not met**: four new High findings. The product code is
+  unchanged from `ba544e2`; all four are in the test apparatus and documentation the R18 response introduced.
+  H1 is that R18 H1's self-reference was only half resolved - the contact distance's MAGNITUDE no longer
+  cancels out, but its EXISTENCE still does - and H2 is two mutation kills lost by raising the mirror check's
+  `heading_gain`, a recurrence of the failure R14 M5 named. R19 is recorded in this commit
 
 All Critical, High, and Medium findings through R14 have been addressed, as have the
 three Low findings from R10, the five from R11 (L1 was closed by documentation with no behaviour change, and L5
 by the 2026-09-01 scenario expansion), the three from R12, and five of the six from R13. R13 L7 - a data race on
 `speed_limit_` that predates this branch - is carried to the next cycle. Nothing on `main` (`2488248`) is a
-release blocker. R15 to R18 review `feature/omni-motion-model` and are NOT in `main`: R15, R16 and R17 have had
-their High findings and their merge-blocking Medium ones closed, and R18 is being addressed (R18 H6). R12 re-verified R11's own work and found that the
+release blocker. R15 to R19 review `feature/omni-motion-model` and are NOT in `main`: R15 to R18 have had
+their High findings and their merge-blocking Medium ones closed, and R19 is being addressed (R18 H6). R12 re-verified R11's own work and found that the
 abandoned-design wording R11 considered fixed still survived in the public header, that the Nav2 adapter's
 differential-drive coverage had been replaced rather than added to, and that the shipped Ackermann example
 configuration failed the package's own Ackermann regression suite - R11 L4 had been closed on a false premise. The 2026-08-29 follow-up added ROS adapter tests, input-source diagnostics, a
@@ -90,6 +97,7 @@ The linked findings and responses are preserved in Japanese as the original audi
 | R16 | Re-review of the R15 response. R15 H4 was closed only on the sampled grid points - a 0.002 m sweep reproduces contact with 0.23 m of penetration; the output deadband runs after every admissibility check, so the invariant fails on the published twist; the speed governor is still forward-only; and the code the R15 response added is never executed by the suite | The deadband's output re-checked, the governor generalised to the direction of travel, a sweep that reaches the fallback, and the direction recovery covered. H1 turned out to rest on zero-thickness walls: the corridor now has thickness and the limitation is documented | [Findings, ja](../reviews/r16-2026-09-02-findings.md) / [Response, ja](../reviews/r16-2026-09-02-response.md) |
 | R17 | Re-review of the R16 response. The governor's lateral slab was symmetrised and broke mirror invariance, the deadband re-check creates permanent stalls, the first sweep's STOP assertion is never evaluated, and the corridor-entry and filter-node claims do not reproduce | The governor's lateral interval made asymmetric, the deadband simply not applied when it would break admissibility, the first sweep's STOP assertion actually evaluated, and every quoted boundary and number re-measured | [Findings, ja](../reviews/r17-2026-09-02-findings.md) / [Response, ja](../reviews/r17-2026-09-02-response.md) |
 | R18 | Re-review of the R17 response (final round). The sweep's safety invariant is self-referential - it takes the contact distance from the code under test, so a mutation that halves the body width prints "0 violations" and passes. The R17 response reported a fix to two installed files it never touched, the deadband comment's measured 14-of-14 does not reproduce (7 of 14), "no discriminating regression is possible" is false, and the thin-wall claim and the English history are false | The sweeps' contact distance re-derived independently in the test (exact rotating sweep), a third sweep dedicated to straight commands, a regression that counts the skipped deadband, the lateral extents' orientation pinned, and yaw actually exercised in the mirror check. Every false claim - "same size" in the installed files, the deadband measurement, the thin-wall paragraph, the English history and the filter-node numbers - corrected against a fresh measurement | [Findings, ja](../reviews/r18-2026-09-02-findings.md) / [Response, ja](../reviews/r18-2026-09-02-response.md) |
+| R19 | Re-review of the R18 response, scoped to `8eefe99` and run against a stopping criterion fixed in advance. The sweeps' independent contact test sits DOWNSTREAM of the evaluator's own gate, so a defect that makes it miss contacts cannot be detected (98.6% of moving ticks never reach the check; six miss-side mutations survive); raising the mirror check's `heading_gain` lost two mutation kills, one of them a partial revert of R17 H1; and the candidate-lattice sweep and the `avoid_margin.side` transition do not reproduce under the conditions their own sentences declare | Unaddressed | [Findings, ja](../reviews/r19-2026-09-02-findings.md) |
 
 ## Current validation contract
 
