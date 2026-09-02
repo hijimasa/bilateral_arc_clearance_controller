@@ -894,6 +894,28 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   int independent_violations = 0;
   int independent_checks = 0;
   std::string independent_worst;
+  // DO NOT REDUCE THIS TRIAL COUNT without re-measuring. The separation this
+  // sweep buys is ONE DRAW wide.
+  //
+  // `emerg_zone_no_brake` (the emergency zone's brake-distance extension
+  // removed, `zone_x_max += brake_distance * ux` -> `+= 0.0f * ...`) is killed
+  // here and NOWHERE ELSE: under that mutation a full ctest run fails 1 of 10
+  // tests, BacOmniScenarios, and inside this binary only the
+  // `independent_violations == 0` assertion below fires. It fires with exactly
+  // 1 violation, and that violation is drawn at TRIAL 22557 of the 40000
+  // (independent_checks was 1890 at that point). Truncate this loop at 22557
+  // trials or fewer and the count is 0: the mutation then survives the entire
+  // suite. At 10000 trials it is 0 violations and both vacuity guards below
+  // fail as well, unmutated too (773 checks unmutated, 845 mutated) - so 10000
+  // does not merely lose the kill, it stops being a valid sweep.
+  //
+  // The vacuity floor and the kill nearly coincide: `independent_checks > 2000`
+  // is first satisfied at trial 25861 unmutated (23765 under the mutation), so
+  // the smallest non-vacuous sweep is already past the one violating draw. The
+  // count is not padding.
+  //
+  // NOT MEASURED: what a different `seed` does to any of this. Every number
+  // above is for seed 7u. Do not assume the draw survives a reseed - measure it.
   for (int trial = 0; trial < 40000; ++trial)
   {
     bac::Params params;
@@ -1182,6 +1204,26 @@ testStraightCommandsClearTheirOwnFootprint()
   int violations = 0;
   int rotating = 0;
   std::string worst;
+  // DO NOT REDUCE THIS TRIAL COUNT without re-measuring. As in the sweep above,
+  // the separation is TWO DRAWS wide.
+  //
+  // `geo_perp_swap` (the evaluator's left/right support extents exchanged) is
+  // killed here and NOWHERE ELSE: under it a full ctest run fails 1 of 10
+  // tests, BacOmniScenarios, and inside this binary only the
+  // `violations == 0` assertion below fires. It fires with exactly 2
+  // violations, drawn at TRIAL 27784 and TRIAL 36108 of the 60000 (checks 466
+  // and 599 at those points). Truncate this loop at 27784 trials or fewer and
+  // the count is 0: the mutation then survives the entire suite. At 15000
+  // trials it is 0 violations and the `checks > 600` guard below fails as well,
+  // unmutated too (222 checks unmutated, 246 mutated).
+  //
+  // Here too the vacuity floor sits past the kills: `checks > 600` is first
+  // satisfied at trial 40474 unmutated (36149 under the mutation), so the
+  // smallest non-vacuous sweep already contains both violating draws.
+  //
+  // NOT MEASURED: the effect of a different `seed`. Every number above is for
+  // this loop's own seed. Two draws in 60000 is not a margin that should be
+  // assumed to be seed-independent; measure it before relying on it.
   for (int trial = 0; trial < 60000; ++trial)
   {
     bac::Params params;
