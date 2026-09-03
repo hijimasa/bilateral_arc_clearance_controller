@@ -71,12 +71,9 @@ struct Twist2D
                     // differential-drive and Ackermann users.
 
   Twist2D() = default;
-  Twist2D(float v_val, float w_val)
-    : v(v_val)
-    , w(w_val)
-  {
-  }
-  Twist2D(float v_val, float w_val, float vy_val)
+  /// `vy` defaults to zero: a non-holonomic caller writes `Twist2D(v, w)` and
+  /// gets the same twist the two-argument constructor used to build.
+  Twist2D(float v_val, float w_val, float vy_val = 0.0f)
     : v(v_val)
     , w(w_val)
     , vy(vy_val)
