@@ -446,6 +446,26 @@ private:
   /// process() neither allocates nor throws on a bad configuration.
   void rebuildMotionModel();
 
+  /// Sampling speed cap and passage tightness for this tick. `v_cap` is the
+  /// governed cruise speed, `clearance_cap` the parameter clearance
+  /// saturation, `tightness` how far into a passage the probe says the body
+  /// is, `probe_best` the raw bilateral clearance behind it, and
+  /// `probe_center_bias` the straight probe's left/right imbalance.
+  struct SpeedGovernor
+  {
+    float v_cap             = 0.0f;
+    float clearance_cap     = 0.0f;
+    float tightness         = 0.0f;
+    float probe_best        = 0.0f;
+    float probe_center_bias = 0.0f;
+  };
+
+  /// Proximity speed governor and tightness probe. `proximity_governor` and
+  /// `proximity_side_ratio` come from the proximity pass. Updates cap_ema_.
+  SpeedGovernor runSpeedGovernor(const std::vector<Point2D> &filtered_points,
+                                 float proximity_governor, float proximity_side_ratio,
+                                 float remaining_path);
+
   /// Output stage: take the scored winner to the twist that is actually
   /// published. Applies the one-cycle reachability limit, re-checks that
   /// what the limit produced can still stop before contact, and applies the
