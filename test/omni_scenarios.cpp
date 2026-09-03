@@ -2312,14 +2312,32 @@ testSafetyStopHoldsPosition()
 ///                                       against the differential-drive run
 ///                                       instead of against a fixed bound - and
 ///                                       it separates no mutation in this set.
+///                                       It was NOT worthless: against a yaml
+///                                       PERTURBATION, a different threat model
+///                                       from a src/ mutation, it was the only
+///                                       thing catching the one the file's own
+///                                       comment calls out. See below.
 ///
 /// So the kill set is unchanged, and the R15 M5 finding the two worlds answer
 /// (with only the detour world, 13 of 16 value perturbations of the shipped yaml
-/// passed, `avoid_margin.side: 0.9 -> 0.5` among them) is answered more strongly
-/// than before: a perturbation now moves the 26 closed-loop runs of 12
-/// scenarios, where it used to move two runs of this one. (12 and 26 counted at
-/// the call sites; see omniParams for the other four scenarios and why they do
-/// not participate.)
+/// passed, `avoid_margin.side: 0.9 -> 0.5` among them) is answered more
+/// strongly than before. Measured, by editing that value in the shipped yaml
+/// and counting the assertions that fail:
+///
+///   before   1  "and holds the centerline, which the shipped
+///               avoid_margin.side is what buys (mean |y| 0.105089 m)"
+///   after    2  "entry offset 0.300000 m: the holonomic vehicle holds the
+///               centerline better than the differential-drive reference"
+///               and "a heading error past the branch cut turns the short way
+///               round (yaw 0.125000 rad/s)"
+///
+/// The retired absolute bound really was the sole detector of that perturbation
+/// before; it is now caught twice, by two different scenarios, one of which
+/// could not see a yaml edit at all while the parameters were hand-copied.
+/// That is the whole point of the reversal: a perturbation now moves the 26
+/// closed-loop runs of 12 scenarios, where it used to move two runs of this
+/// one. (12 and 26 counted at the call sites; see omniParams for the other four
+/// scenarios and why they do not participate.)
 ///
 /// What is left here is what no scenario can express - that the file PARSES,
 /// that every key in it is consumed by the reader or named in
