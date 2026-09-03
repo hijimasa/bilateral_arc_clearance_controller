@@ -39,17 +39,28 @@ namespace
 
 constexpr float kPi = 3.14159265358979323846f;
 
+/// The deceleration the braking model actually uses. The floor is part of the
+/// DEFINITION, not a guard at a call site: a zero or negative configured
+/// stop_decel would make a braking distance infinite or negative, and the
+/// speed inverted from it meaningless. One constant, because the two users are
+/// two different formulas over the same deceleration - brakingDistance() below
+/// goes speed -> distance, safe_speed_for() in BacCore::process() inverts
+/// distance -> speed - so what they must share is the number, not a function.
+float
+effectiveStopDecel(const Params &params)
+{
+  return std::max(params.stop_decel, 0.1f);
+}
+
 /// Distance the body still covers before a full stop from `speed`: one
-/// deceleration ramp plus the run made during the brake reaction time. The
-/// floor on stop_decel is part of the definition - a zero or negative
-/// configured deceleration would otherwise make the distance infinite or
-/// negative. `speed` is a SPEED along the direction of travel, never a signed
-/// forward velocity: a holonomic body crabbing sideways brakes over the same
-/// distance as one running forward (R15 H3).
+/// deceleration ramp plus the run made during the brake reaction time.
+/// `speed` is a SPEED along the direction of travel, never a signed forward
+/// velocity: a holonomic body crabbing sideways brakes over the same distance
+/// as one running forward (R15 H3).
 float
 brakingDistance(float speed, const Params &params)
 {
-  const float stop_decel = std::max(params.stop_decel, 0.1f);
+  const float stop_decel = effectiveStopDecel(params);
   return speed * speed / (2.0f * stop_decel) + speed * params.brake_reaction_time;
 }
 
@@ -1256,7 +1267,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       return FLT_MAX;
     }
     const float free_run = ev.blocking_s - travel_margin(command);
-    const float a = std::max(params_.stop_decel, 0.1f);
+    const float a = effectiveStopDecel(params_);
     const float tr = params_.brake_reaction_time;
     return free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
   };
