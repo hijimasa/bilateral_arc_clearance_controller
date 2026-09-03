@@ -446,6 +446,15 @@ private:
   /// process() neither allocates nor throws on a bad configuration.
   void rebuildMotionModel();
 
+  /// Output stage: take the scored winner to the twist that is actually
+  /// published. Applies the one-cycle reachability limit, re-checks that
+  /// what the limit produced can still stop before contact, and applies the
+  /// command deadband only when it does not break that. Reads no state and
+  /// writes none.
+  Twist2D finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
+                                const Twist2D &current, const Twist2D &selected,
+                                bool rotation_admissible, float remaining_path) const;
+
   Params params_;
   std::unique_ptr<detail::MotionModel> motion_model_;
 

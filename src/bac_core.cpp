@@ -721,6 +721,227 @@ BacCore::evaluateArcWindows(const std::vector<Point2D> &points, const Twist2D &c
   return evaluator.evaluate(points, command, dist_clear, dist_block);
 }
 
+Twist2D
+BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
+                               const Twist2D &current, const Twist2D &selected,
+                               bool rotation_admissible, float remaining_path) const
+{
+  const detail::MotionModel *motion_model = motion_model_.get();
+  float out_v = selected.v;
+  float out_w = selected.w;
+  float out_vy = selected.vy;
+  const auto out_command = [&]() { return Twist2D(out_v, out_w, out_vy); };
+
+  // DWA admissibility of one emitted twist: can it stop, along its own
+  // direction of travel and keeping the directional margin, before it touches
+  // anything? One definition, used by the emergency fallback below.
+  // Largest speed this twist could carry and still stop before contact, or
+  // FLT_MAX when its arc is contact-free within the window.
+  const auto safe_speed_for = [&](const Twist2D &command) {
+    const float speed = command.speed();
+    if (speed <= 1e-3f)
+    {
+      return FLT_MAX;
+    }
+    const float dist_block = evalWindow(params_, remaining_path, speed);
+    const ArcEvaluation ev =
+        evaluateArcWindows(filtered_points, command, 0.0f, dist_block);
+    if (ev.blocking_s >= FLT_MAX)
+    {
+      return FLT_MAX;
+    }
+    const float free_run = ev.blocking_s - travelMargin(params_, command);
+    const float a = effectiveStopDecel(params_);
+    const float tr = params_.brake_reaction_time;
+    return free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
+  };
+  const auto stoppable = [&](const Twist2D &command) {
+    return command.speed() <= safe_speed_for(command) + 1e-4f;
+  };
+
+
+  // Output reachability: the plant cannot jump to arbitrary yaw rate or road-
+  // wheel angle in one cycle. If the reachable arc needs a lower speed to
+  // stop before contact, reduce v and w together to preserve its curvature.
+  // For differential drive at a large current yaw rate, that proportional w
+  // can itself lie outside the one-cycle deceleration interval. Reapply the
+  // reachability limit and recheck the resulting arc until it is admissible.
+  const Twist2D limited =
+      motion_model->limitReachableCommand(current, out_command());
+  if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f ||
+      std::fabs(limited.vy - out_vy) > 1e-4f)
+  {
+    out_v = limited.v;
+    out_w = limited.w;
+    out_vy = limited.vy;
+    bool output_admissible = true;
+    constexpr int kReachabilityIterations = 8;
+    for (int iteration = 0; iteration < kReachabilityIterations; ++iteration)
+    {
+      output_admissible = true;
+      if (out_command().speed() <= 1e-3f)
+      {
+        if (std::fabs(out_w) > 1e-4f && !rotation_admissible)
+        {
+          out_w = 0.0f;
+        }
+        break;
+      }
+
+      // The exact contact test is valid for any radius, including below
+      // turn_radius_min (that guard exists for scoring, not for contact).
+      // ONE definition of stoppability, shared with the emergency fallback
+      // below: `safe_speed_for` returns FLT_MAX for a contact-free arc, so the
+      // comparison accepts it and the loop breaks, exactly as the former
+      // inline copy of this computation did.
+      const float v_safe = safe_speed_for(out_command());
+      if (out_command().speed() <= v_safe + 1e-4f)
+      {
+        break;
+      }
+
+      output_admissible = false;
+      // A SPEED, not a signed forward speed. The direction of travel is the
+      // model's business: deriving a sign from out_v alone flipped both the
+      // lateral velocity and the yaw rate for a v = 0 winner, turning the
+      // vehicle around instead of slowing it down (R15 H2 derivative).
+      const Twist2D curvature_preserving =
+          motion_model->withLinearSpeed(out_command(), v_safe);
+      const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
+      if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f &&
+          std::fabs(next.vy - out_vy) <= 1e-5f)
+      {
+        break;
+      }
+      out_v = next.v;
+      out_w = next.w;
+      out_vy = next.vy;
+    }
+
+    if (!output_admissible)
+    {
+      // No simultaneously curvature-preserving, contact-admissible, and
+      // one-cycle-reachable translating command was found. Brake translation;
+      // differential drive may retain only a safe reachable rotation.
+      const Twist2D braking =
+          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f, 0.0f));
+      out_v = 0.0f;
+      // What one deceleration window leaves of the previous motion: a residual
+      // rotation and a residual sideways slide. Both are commands like any
+      // other, so the pair is kept only while the COMBINED twist passes the
+      // same stopping test. Testing the lateral component on its own is not
+      // enough - the retained yaw bends it onto an arc, and it was that arc,
+      // not the straight slide, that could no longer stop (R15 H3).
+      const float braking_w =
+          (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
+      // Two outcomes, not three. A standstill rotation has zero SPEED, so
+      // `stoppable` returns true for it immediately and a third rung below
+      // this one could never be reached (R16 M3). The rotation itself is
+      // already gated on `rotation_admissible` above.
+      if (stoppable(Twist2D(0.0f, braking_w, braking.vy)))
+      {
+        out_vy = braking.vy;
+        out_w = braking_w;
+      }
+      else
+      {
+        out_vy = 0.0f;
+        out_w = braking_w;
+      }
+    }
+  }
+  // The deadband runs AFTER every admissibility check, so left alone it can
+  // publish a twist nobody checked: zeroing a yaw rate below angvel_min
+  // straightens a crabbing arc into a different trajectory, and for a
+  // holonomic body that rewrites 30% of ticks (R16 H2). Re-check what is
+  // actually published and do not apply the deadband if it changed the command
+  // into something that can no longer stop.
+  //
+  // R18 M7: this reaches differential drive too. An earlier revision of this
+  // comment said non-holonomic commands were unaffected, on the grounds that
+  // zeroing a sub-deadband yaw rate does not change a straight-line arc. It
+  // does change the arc whenever the yaw rate is what makes the command
+  // admissible.
+  //
+  // R19 M9: the branch below IS reached at the shipped angvel_min of
+  // 0.01 rad/s, and how often depends entirely on the tick generator. Measured
+  // against main (2488248) with identical randomised differential-drive tick
+  // streams fed to both revisions, 400000 ticks each at the shipped
+  // angvel_min, seed 12345 unless the row says a second seed (987654321),
+  // branch reaches counted from a scratch copy of this file. The generators
+  // are described by shape rather than shipped, so the COUNTS are not
+  // reproducible verbatim from this comment; the qualitative result is.
+  //
+  //   generator                                   deadband  branch  rows
+  //                                               changed   reached differ
+  //   corridor + close frontal point, current w
+  //     drawn from +-[0.085, 0.124] rad/s            19559     182     193
+  //   the same, second seed                          19624     190     192
+  //   the same corridor, current w uniform +-1        2151      11      11
+  //   frontal wall with a gap, current w +-0.13      10476      13      13
+  //   one cluster at a random bearing, current w
+  //     uniform +-1 rad/s                             3033       1       1
+  //
+  // Reaching it needs the yaw rate ALONE to be rounded away while the speed
+  // survives, so the CURRENT yaw rate has to sit just below one control
+  // period of yaw authority (acc_w * control_period = 0.125 rad/s), where
+  // limitReachableCommand leaves a residual of a few thousandths, or where the
+  // curvature-preserving slowdown produces one. Over the 397 reaches above,
+  // |current.w| was in [0.0863, 0.1301] rad/s without exception. The same
+  // corridor generator over 100000 ticks reaches the branch 43 times drawing
+  // the current yaw rate from that band, 3 times drawing it uniformly over
+  // +-1 rad/s, and 0 times over +-0.03 rad/s.
+  //
+  // So a measured "0 rows differ" means the generator under-sampled that band,
+  // NOT that the behaviour is unchanged. An earlier revision of this comment
+  // reported 0 rows over 40000 ticks of the last generator above and read it
+  // as a property of the change; that generator does give 0 at 40000 ticks
+  // (the deadband still changes the command 297 times) and reaches the branch
+  // once at 400000. See CHANGELOG.rst.
+  const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
+  const bool deadband_changed = std::fabs(finalized.v - out_v) > 1e-6f ||
+                                std::fabs(finalized.w - out_w) > 1e-6f ||
+                                std::fabs(finalized.vy - out_vy) > 1e-6f;
+  if (deadband_changed && !stoppable(finalized))
+  {
+    // The deadband is a quantization that suppresses jitter, not a safety
+    // requirement, so when it would break admissibility it simply does not
+    // apply. Every observed case is a yaw rate below angvel_min being removed:
+    // over the evaluation window that straightens the arc enough to clip
+    // something, while the command as selected was admissible.
+    //
+    // Braking to a standstill instead repeated the same decision every tick
+    // and made an absorbing state (R17 H2). Slowing to a speed the STRAIGHTENED
+    // arc could stop at is not available either, but not for the reason an
+    // earlier revision of this comment gave: measured over the holonomic suite,
+    // 171 of 267 events have safe_speed_for(finalized) == 0, so for those there
+    // is no such speed - but the other 96 do have one, from 0.0015 to 0.671 m/s
+    // (R18 H3 corrected an earlier claim of 14 of 14 here). What rules it out
+    // is that it would slow the vehicle to satisfy a quantization the vehicle
+    // does not have to satisfy, when the command as selected is already
+    // admissible and is what the scorer chose.
+    // R18 M8: this inner brake is defence in depth and is not reached in any
+    // measured configuration - 0 of 4112 events over 360k randomised ticks that
+    // also swept angvel_min and velocity_min. It is kept because the outer
+    // condition does not by itself establish that the command as selected is
+    // admissible; no assertion covers it.
+    if (!stoppable(out_command()))
+    {
+      out_v = 0.0f;
+      out_w = 0.0f;
+      out_vy = 0.0f;
+    }
+    // else: keep the command as selected, deadband not applied.
+  }
+  else
+  {
+    out_v = finalized.v;
+    out_w = finalized.w;
+    out_vy = finalized.vy;
+  }
+  return out_command();
+}
+
 Result
 BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
                  const Twist2D &current, std::optional<float> goal_heading)
@@ -1286,220 +1507,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     evaluate_candidate(command);
   }
 
-  float out_v = best_cmd.v;
-  float out_w = best_cmd.w;
-  float out_vy = best_cmd.vy;
-  const auto out_command = [&]() { return Twist2D(out_v, out_w, out_vy); };
+  const Twist2D output = finalizeOutputCommand(filtered_points, current, best_cmd,
+                                               rotation_admissible, remaining_path);
 
-  // DWA admissibility of one emitted twist: can it stop, along its own
-  // direction of travel and keeping the directional margin, before it touches
-  // anything? One definition, used by the emergency fallback below.
-  // Largest speed this twist could carry and still stop before contact, or
-  // FLT_MAX when its arc is contact-free within the window.
-  const auto safe_speed_for = [&](const Twist2D &command) {
-    const float speed = command.speed();
-    if (speed <= 1e-3f)
-    {
-      return FLT_MAX;
-    }
-    const float dist_block = eval_window(speed);
-    const ArcEvaluation ev =
-        evaluateArcWindows(filtered_points, command, 0.0f, dist_block);
-    if (ev.blocking_s >= FLT_MAX)
-    {
-      return FLT_MAX;
-    }
-    const float free_run = ev.blocking_s - travelMargin(params_, command);
-    const float a = effectiveStopDecel(params_);
-    const float tr = params_.brake_reaction_time;
-    return free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
-  };
-  const auto stoppable = [&](const Twist2D &command) {
-    return command.speed() <= safe_speed_for(command) + 1e-4f;
-  };
-
-
-  // Output reachability: the plant cannot jump to arbitrary yaw rate or road-
-  // wheel angle in one cycle. If the reachable arc needs a lower speed to
-  // stop before contact, reduce v and w together to preserve its curvature.
-  // For differential drive at a large current yaw rate, that proportional w
-  // can itself lie outside the one-cycle deceleration interval. Reapply the
-  // reachability limit and recheck the resulting arc until it is admissible.
-  const Twist2D limited =
-      motion_model->limitReachableCommand(current, out_command());
-  if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f ||
-      std::fabs(limited.vy - out_vy) > 1e-4f)
-  {
-    out_v = limited.v;
-    out_w = limited.w;
-    out_vy = limited.vy;
-    bool output_admissible = true;
-    constexpr int kReachabilityIterations = 8;
-    for (int iteration = 0; iteration < kReachabilityIterations; ++iteration)
-    {
-      output_admissible = true;
-      if (out_command().speed() <= 1e-3f)
-      {
-        if (std::fabs(out_w) > 1e-4f && !rotation_admissible)
-        {
-          out_w = 0.0f;
-        }
-        break;
-      }
-
-      // The exact contact test is valid for any radius, including below
-      // turn_radius_min (that guard exists for scoring, not for contact).
-      // ONE definition of stoppability, shared with the emergency fallback
-      // below: `safe_speed_for` returns FLT_MAX for a contact-free arc, so the
-      // comparison accepts it and the loop breaks, exactly as the former
-      // inline copy of this computation did.
-      const float v_safe = safe_speed_for(out_command());
-      if (out_command().speed() <= v_safe + 1e-4f)
-      {
-        break;
-      }
-
-      output_admissible = false;
-      // A SPEED, not a signed forward speed. The direction of travel is the
-      // model's business: deriving a sign from out_v alone flipped both the
-      // lateral velocity and the yaw rate for a v = 0 winner, turning the
-      // vehicle around instead of slowing it down (R15 H2 derivative).
-      const Twist2D curvature_preserving =
-          motion_model->withLinearSpeed(out_command(), v_safe);
-      const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
-      if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f &&
-          std::fabs(next.vy - out_vy) <= 1e-5f)
-      {
-        break;
-      }
-      out_v = next.v;
-      out_w = next.w;
-      out_vy = next.vy;
-    }
-
-    if (!output_admissible)
-    {
-      // No simultaneously curvature-preserving, contact-admissible, and
-      // one-cycle-reachable translating command was found. Brake translation;
-      // differential drive may retain only a safe reachable rotation.
-      const Twist2D braking =
-          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f, 0.0f));
-      out_v = 0.0f;
-      // What one deceleration window leaves of the previous motion: a residual
-      // rotation and a residual sideways slide. Both are commands like any
-      // other, so the pair is kept only while the COMBINED twist passes the
-      // same stopping test. Testing the lateral component on its own is not
-      // enough - the retained yaw bends it onto an arc, and it was that arc,
-      // not the straight slide, that could no longer stop (R15 H3).
-      const float braking_w =
-          (std::fabs(braking.w) <= 1e-4f || rotation_admissible) ? braking.w : 0.0f;
-      // Two outcomes, not three. A standstill rotation has zero SPEED, so
-      // `stoppable` returns true for it immediately and a third rung below
-      // this one could never be reached (R16 M3). The rotation itself is
-      // already gated on `rotation_admissible` above.
-      if (stoppable(Twist2D(0.0f, braking_w, braking.vy)))
-      {
-        out_vy = braking.vy;
-        out_w = braking_w;
-      }
-      else
-      {
-        out_vy = 0.0f;
-        out_w = braking_w;
-      }
-    }
-  }
-  // The deadband runs AFTER every admissibility check, so left alone it can
-  // publish a twist nobody checked: zeroing a yaw rate below angvel_min
-  // straightens a crabbing arc into a different trajectory, and for a
-  // holonomic body that rewrites 30% of ticks (R16 H2). Re-check what is
-  // actually published and do not apply the deadband if it changed the command
-  // into something that can no longer stop.
-  //
-  // R18 M7: this reaches differential drive too. An earlier revision of this
-  // comment said non-holonomic commands were unaffected, on the grounds that
-  // zeroing a sub-deadband yaw rate does not change a straight-line arc. It
-  // does change the arc whenever the yaw rate is what makes the command
-  // admissible.
-  //
-  // R19 M9: the branch below IS reached at the shipped angvel_min of
-  // 0.01 rad/s, and how often depends entirely on the tick generator. Measured
-  // against main (2488248) with identical randomised differential-drive tick
-  // streams fed to both revisions, 400000 ticks each at the shipped
-  // angvel_min, seed 12345 unless the row says a second seed (987654321),
-  // branch reaches counted from a scratch copy of this file. The generators
-  // are described by shape rather than shipped, so the COUNTS are not
-  // reproducible verbatim from this comment; the qualitative result is.
-  //
-  //   generator                                   deadband  branch  rows
-  //                                               changed   reached differ
-  //   corridor + close frontal point, current w
-  //     drawn from +-[0.085, 0.124] rad/s            19559     182     193
-  //   the same, second seed                          19624     190     192
-  //   the same corridor, current w uniform +-1        2151      11      11
-  //   frontal wall with a gap, current w +-0.13      10476      13      13
-  //   one cluster at a random bearing, current w
-  //     uniform +-1 rad/s                             3033       1       1
-  //
-  // Reaching it needs the yaw rate ALONE to be rounded away while the speed
-  // survives, so the CURRENT yaw rate has to sit just below one control
-  // period of yaw authority (acc_w * control_period = 0.125 rad/s), where
-  // limitReachableCommand leaves a residual of a few thousandths, or where the
-  // curvature-preserving slowdown produces one. Over the 397 reaches above,
-  // |current.w| was in [0.0863, 0.1301] rad/s without exception. The same
-  // corridor generator over 100000 ticks reaches the branch 43 times drawing
-  // the current yaw rate from that band, 3 times drawing it uniformly over
-  // +-1 rad/s, and 0 times over +-0.03 rad/s.
-  //
-  // So a measured "0 rows differ" means the generator under-sampled that band,
-  // NOT that the behaviour is unchanged. An earlier revision of this comment
-  // reported 0 rows over 40000 ticks of the last generator above and read it
-  // as a property of the change; that generator does give 0 at 40000 ticks
-  // (the deadband still changes the command 297 times) and reaches the branch
-  // once at 400000. See CHANGELOG.rst.
-  const Twist2D finalized = motion_model->applyCommandDeadband(out_command());
-  const bool deadband_changed = std::fabs(finalized.v - out_v) > 1e-6f ||
-                                std::fabs(finalized.w - out_w) > 1e-6f ||
-                                std::fabs(finalized.vy - out_vy) > 1e-6f;
-  if (deadband_changed && !stoppable(finalized))
-  {
-    // The deadband is a quantization that suppresses jitter, not a safety
-    // requirement, so when it would break admissibility it simply does not
-    // apply. Every observed case is a yaw rate below angvel_min being removed:
-    // over the evaluation window that straightens the arc enough to clip
-    // something, while the command as selected was admissible.
-    //
-    // Braking to a standstill instead repeated the same decision every tick
-    // and made an absorbing state (R17 H2). Slowing to a speed the STRAIGHTENED
-    // arc could stop at is not available either, but not for the reason an
-    // earlier revision of this comment gave: measured over the holonomic suite,
-    // 171 of 267 events have safe_speed_for(finalized) == 0, so for those there
-    // is no such speed - but the other 96 do have one, from 0.0015 to 0.671 m/s
-    // (R18 H3 corrected an earlier claim of 14 of 14 here). What rules it out
-    // is that it would slow the vehicle to satisfy a quantization the vehicle
-    // does not have to satisfy, when the command as selected is already
-    // admissible and is what the scorer chose.
-    // R18 M8: this inner brake is defence in depth and is not reached in any
-    // measured configuration - 0 of 4112 events over 360k randomised ticks that
-    // also swept angvel_min and velocity_min. It is kept because the outer
-    // condition does not by itself establish that the command as selected is
-    // admissible; no assertion covers it.
-    if (!stoppable(out_command()))
-    {
-      out_v = 0.0f;
-      out_w = 0.0f;
-      out_vy = 0.0f;
-    }
-    // else: keep the command as selected, deadband not applied.
-  }
-  else
-  {
-    out_v = finalized.v;
-    out_w = finalized.w;
-    out_vy = finalized.vy;
-  }
-  prev_selected_command_ = out_command();
-  result.output         = out_command();
+  prev_selected_command_ = output;
+  result.output          = output;
   result.best_clearance = best_clearance;
   result.best_path_cost = best_path_cost;
   result.admissible_count = admissible_count;
@@ -1509,7 +1521,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // `out_v` and `out_w` alone reported STOP while the body was still sliding
   // sideways, which `avoid_status` subscribers and the filter node's
   // arbitration both act on (R16 M4).
-  if (out_command().speed() == 0.0f && out_w == 0.0f)
+  if (output.speed() == 0.0f && output.w == 0.0f)
   {
     // Intent exists but the best move is to hold still: blocked.
     current_status_ = Status::STOP;
