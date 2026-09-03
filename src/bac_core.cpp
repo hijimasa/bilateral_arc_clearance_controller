@@ -891,8 +891,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
   // Rotation admissibility remains deliberately conservative: a full
   // in-place rotation sweeps the disk of the circumscribed radius.
-  const bool rotation_admissible = motion_model->supportsInPlaceRotation() &&
-                                   motion_model->isInPlaceRotationAdmissible(filtered_points);
+  // `isInPlaceRotationAdmissible` alone: a model that cannot rotate on the
+  // spot answers false unconditionally (see AckermannMotionModel), so the
+  // former `supportsInPlaceRotation() && ...` conjunction could never differ
+  // from its right-hand side, and the short circuit saved nothing.
+  const bool rotation_admissible =
+      motion_model->isInPlaceRotationAdmissible(filtered_points);
   // Rotating onto the tangent before translating is a differential-drive
   // manoeuvre. A holonomic body can rotate on the spot but never needs to
   // align first, so the two predicates are asked separately.

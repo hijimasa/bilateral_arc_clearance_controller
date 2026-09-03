@@ -221,6 +221,10 @@ bool
 AckermannMotionModel::isInPlaceRotationAdmissible(
     const std::vector<Point2D> & /*points*/) const
 {
+  // Unconditional, and load-bearing: a steered vehicle cannot rotate on the
+  // spot at any clearance, so no point cloud can make a standstill rotation
+  // admissible. BacCore relies on this to gate rotation on this predicate
+  // alone, without a separate `supportsInPlaceRotation()` conjunct.
   return false;
 }
 
