@@ -55,16 +55,16 @@
   R19の記録commitは `310f26b`、対応commitは `187c053` である
 
 全19回のリリースレビューのうち、R14までのCritical / High / Mediumは対応済みである。R15〜R19は
-`feature/omni-motion-model` に対するもので、`main`（`2488248`）には含まれない。第10回のLow 3件、
-第11回のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、
-第12回のLow 3件、第13回のLow 6件のうち5件も対応済みで、`main`（`2488248`）にrelease blockerはない。
+`feature/omni-motion-model` に対するもので、`main`（`2488248`）には含まれない。R10のLow 3件、
+R11のLow 5件（L1は挙動変更を伴わない文書化で完了、L5は2026-09-01のシナリオ拡充で完了）、
+R12のLow 3件、R13のLow 6件のうち5件も対応済みで、`main`（`2488248`）にrelease blockerはない。
 R15〜R18はHighと統合前条件のMediumを閉じ、R19は対応中である（この限定はR18 H6による。
-英語版が限定なしに「全レビュー回のCritical / High / Mediumは対応済み」と書いていた）。第13回L7
-（`speed_limit_` のデータ競合）は本branch以前からの既存項目として次cycleへ残す。第12回は第11回の対応の再検証であり、第11回がM1を完了と判断した廃案設計記述が公開ヘッダに残存
+英語版が限定なしに「全レビュー回のCritical / High / Mediumは対応済み」と書いていた）。R13 L7
+（`speed_limit_` のデータ競合）は本branch以前からの既存項目として次cycleへ残す。R12はR11の対応の再検証であり、R11がM1を完了と判断した廃案設計記述が公開ヘッダに残存
 していたこと、Nav2 adapterの差動二輪coverageが追加ではなく置換されていたこと、および同梱のAckermann
-設定例が自身の回帰試験に通らなかったこと（第11回L4の文書化が誤った前提に立っていた）を検出した。
+設定例が自身の回帰試験に通らなかったこと（R11 L4の文書化が誤った前提に立っていた）を検出した。
 2026-08-29にROS adapter testと入力source diagnosticsを追加し、同日に公平条件比較216 episodeとBAC
-ablation 216 episodeを追加した。2026-09-01にはAckermann motion modelを追加し、第11回レビューで
+ablation 216 episodeを追加した。2026-09-01にはAckermann motion modelを追加し、R11レビューで
 `setParams`の例外安全（High 1件）を修正した。次cycleへ残す設計・評価項目は、角加速度過渡を積分した
 rollout、実機外乱評価、Collision Monitor併用baseline、`BacCore::process()`の責務分割、
 filter node仮想pathの旋回円clamp（R12 L5、R13がAckermannでは良性と確認したため優先度低）、
@@ -72,8 +72,8 @@ filter node仮想pathの旋回円clamp（R12 L5、R13がAckermannでは良性と
 2026-09-01に完了し、安全停止（前進のみ／後退退避）、狭路centering、clutter走破を追加した。Ackermannの検証は決定論的な単体検査と閉ループ回帰のみで、
 実車evidenceは無い。
 
-個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特に第8回の
-artifact mtimeによるdomain分離監査は第9回で撤回され、正準216 episodeを修正後runnerで再生成した。
+個別文書は各時点の判断を保存する監査証跡であり、途中で撤回された結論も削除していない。特にR08の
+artifact mtimeによるdomain分離監査はR09で撤回され、正準216 episodeを修正後runnerで再生成した。
 命名と更新方法は[レビュー記録規則](reviews/README.md)に従う。
 
 ## レビューの要約
