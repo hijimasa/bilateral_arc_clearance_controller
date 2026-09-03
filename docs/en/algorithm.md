@@ -116,9 +116,12 @@ The published benchmark observations below use the differential-drive model.
 
 #### Holonomic candidate counts (measured)
 
-Measured with the shipped holonomic values (`limits.v_max` 0.4, `limits.vy_max` 0.3, `limits.w_max` 1.0,
-`v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current velocity of (0.20 m/s, 0.0 rad/s): 96 against
-130. The conditions matter. Sweeping the current forward speed over 41 points from 0.00 to 0.40 m/s (0.01 steps,
+The count at the reference point - 96 holonomic against 130 differential-drive at a current velocity of
+(0.20 m/s, 0.0 rad/s) - and the shipped values it was measured with are in the
+[parameter reference](parameters.md). This section gives the distribution as the current speed varies, and the
+conditions matter.
+
+Sweeping the current forward speed over 41 points from 0.00 to 0.40 m/s (0.01 steps,
 zero yaw, open field, path straight ahead), **the shipped `limits.v_min: 0.0` gives 130 differential-drive
 candidates at 21 of the points and 156 at the other 20; 182 never occurs.** 182 requires reverse to be enabled:
 at `limits.v_min` = -0.05 the sweep gives 130 once, 156 at 20 points and 182 at 20; at -0.10 and -0.15 it gives
