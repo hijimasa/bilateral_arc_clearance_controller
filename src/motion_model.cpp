@@ -17,6 +17,22 @@
 namespace bac::detail
 {
 
+ProjectedPose2D
+projectNonHolonomic(const Twist2D &command, float duration)
+{
+  ProjectedPose2D pose{ 0.0f, 0.0f, command.w * duration };
+  if (std::fabs(command.w) < 1e-4f)
+  {
+    pose.x = command.v * duration;
+    return pose;
+  }
+
+  const float radius = command.v / command.w;
+  pose.x = radius * std::sin(pose.theta);
+  pose.y = radius * (1.0f - std::cos(pose.theta));
+  return pose;
+}
+
 void
 validateMotionModelParams(const Params &params)
 {

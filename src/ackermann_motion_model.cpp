@@ -172,17 +172,8 @@ AckermannMotionModel::clearanceProbeCommands(float linear_speed) const
 ProjectedPose2D
 AckermannMotionModel::projectConstantCommand(const Twist2D &command, float duration) const
 {
-  ProjectedPose2D pose{ 0.0f, 0.0f, command.w * duration };
-  if (std::fabs(command.w) < 1e-4f)
-  {
-    pose.x = command.v * duration;
-    return pose;
-  }
-
-  const float radius = command.v / command.w;
-  pose.x = radius * std::sin(pose.theta);
-  pose.y = radius * (1.0f - std::cos(pose.theta));
-  return pose;
+  // Identical to the differential-drive rollout; see projectNonHolonomic.
+  return projectNonHolonomic(command, duration);
 }
 
 bool

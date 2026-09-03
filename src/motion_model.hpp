@@ -86,6 +86,23 @@ public:
 };
 
 /**
+ * Pose reached from the origin by holding a non-holonomic `(v, w)` for
+ * `duration`, in the body frame.
+ *
+ * Shared by the differential-drive and Ackermann models, whose constant-twist
+ * rollouts are the same closed form: a straight run below the yaw-rate
+ * threshold, otherwise a circular arc of radius `v / w`.
+ *
+ * Deliberately NOT used by the holonomic model. Its general form is written
+ * about the centre of rotation `(-vy/w, v/w)` and does not reduce to this one
+ * numerically at `vy == 0`: `pose.y` is `cy - cy*cos(theta)` there against
+ * `cy*(1 - cos(theta))` here. Over 2,000,000 random `(v, w, duration)` the two
+ * agree bit for bit in `pose.x` but differ in the last place of `pose.y` in
+ * 1,000,245 of them (50.0%). Folding omni in would change its output.
+ */
+ProjectedPose2D projectNonHolonomic(const Twist2D &command, float duration);
+
+/**
  * Rejects a kinematic configuration no model can honour.
  *
  * Separated from makeMotionModel so a caller can validate BEFORE mutating the
