@@ -27,25 +27,17 @@ controller_server:
       # w_samples, which a holonomic model does not use. The lattice is
       # v_samples x vy_samples - two dimensions, like the differential-drive
       # forward speed x yaw rate lattice, but NOT the same number of
-      # candidates. Measured from a current velocity of
-      # (0.20 m/s, 0.0 rad/s): 96 holonomic candidates against 130
-      # differential-drive ones, with v_max 0.4, vy_max 0.3 and w_max 1.0 as
-      # set in this file and v_samples 5 / w_samples 25 left at their defaults
-      # in bac_core.hpp - R19 L8: this file does not set those two, so the
-      # measurement used the defaults. (They ARE settable here: v_samples,
-      # w_samples and vy_samples are all declared the same way in
-      # bac_ros_parameters.hpp; this file simply lists only vy_samples.) The
-      # pair 96 / 130 is specific to that current velocity; see
-      # docs/algorithm.md for the sweep, and note that 182 differential-drive
-      # candidates require limits.v_min < 0, which this file does not enable.
+      # candidates.
       #
-      # 96 / 130 counts the COARSE lattice only: it was measured with
-      # w_refine_steps set to 0. This file does not set w_refine_steps either,
-      # and the bac_core.hpp default is 3, so loading THIS file as it stands
-      # adds 2 x 3 refinement candidates and gives 102 holonomic against 136
-      # differential-drive (measured, open field, path straight ahead, same
-      # current velocity). Refinement runs only when the coarse winner is not
-      # the stop row, so the +6 holds wherever the winner is a moving row.
+      # This file lists only vy_samples, but v_samples, w_samples and
+      # w_refine_steps are settable here too - all of them go through the same
+      # declare_int in bac_ros_parameters.hpp. Left unset they take their
+      # bac_core.hpp defaults (5, 25 and 3), and w_refine_steps changes the
+      # count: the default 3 adds refinement candidates on top of the coarse
+      # lattice, so a coarse-lattice figure is not the number this file loads.
+      # The measured counts, coarse and refined, are in docs/parameters.md;
+      # the sweep over current speed, and the reverse-enabled cases, are in
+      # docs/algorithm.md.
       vy_samples: 15
 
       scan_topic: /scan
