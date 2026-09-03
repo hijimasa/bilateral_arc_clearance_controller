@@ -96,9 +96,22 @@ public:
  * Deliberately NOT used by the holonomic model. Its general form is written
  * about the centre of rotation `(-vy/w, v/w)` and does not reduce to this one
  * numerically at `vy == 0`: `pose.y` is `cy - cy*cos(theta)` there against
- * `cy*(1 - cos(theta))` here. Over 2,000,000 random `(v, w, duration)` the two
- * agree bit for bit in `pose.x` but differ in the last place of `pose.y` in
- * 1,000,245 of them (50.0%). Folding omni in would change its output.
+ * `cy*(1 - cos(theta))` here, and the two cancellations lose different bits.
+ *
+ * Measured over 1,999,936 samples - `v` uniform on [-1.5, 1.5], `|w|` uniform
+ * on [1e-4, 3] with a random sign, `duration` uniform on [0.01, 4], excluding
+ * the `|w| < 1e-4` straight branch where both forms agree trivially.
+ * `pose.x` agrees bit for bit in every sample. `pose.y` differs in 999,447 of
+ * them (50.0%), and the difference is NOT confined to the last place: only
+ * 54.5% of the differing samples are exactly 1 ULP apart, 22.6% are more than
+ * 8 ULP apart, and the tail reaches 8,359,055 ULP - 2.4e-4 m in absolute
+ * terms, at v = -1.24, w = 3.0e-4, duration = 1.14, where `cy = v/w` is large
+ * and the cancellation is catastrophic on one side only. Restricting `|w|` to
+ * a well-conditioned [0.05, 2] does not remove it (52.3% exactly 1 ULP, worst
+ * case 9.5e-7 m).
+ *
+ * So folding the holonomic model into this helper would move its output by up
+ * to a sub-millimetre, not by a rounding step. Do not.
  */
 ProjectedPose2D projectNonHolonomic(const Twist2D &command, float duration);
 
