@@ -184,6 +184,15 @@ if(BUILD_TESTING)
   target_link_libraries(bac_scenario_harness bac_core)
   target_compile_options(bac_scenario_harness PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacScenarioHarness COMMAND bac_scenario_harness --strict)
+  # A SELECTION HANDLE, not extra coverage. Same binary as BacScenarioHarness
+  # with `--filter goal_` added, so it can never kill anything the unfiltered
+  # run does not - measured over the 52 mutations of src/ and bac_core.hpp the
+  # suite is scored against: it fails under emerg_normalized_lat_removed and
+  # geo_sigma_flip, and BacScenarioHarness fails under both as well, so its
+  # unique kill count is 0. It exists so that CI (and `ctest -L
+  # goal_direction`) can run the goal-direction scenarios on their own; at
+  # 0.05 s against the full harness's 2.44 s that costs nothing. Do not delete
+  # it for killing nothing, and do not expect it to kill anything.
   add_test(
       NAME BacGoalDirectionRegression
       COMMAND bac_scenario_harness --strict --filter goal_
