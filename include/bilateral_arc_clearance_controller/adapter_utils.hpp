@@ -60,10 +60,22 @@ std::optional<float> goalHeadingInBase(const Point2D &plan_end,
 /**
  * @brief Apply a 2D rigid transform, prune before the robot-nearest point,
  * and retain the following contiguous path window within max_range.
+ *
+ * @param plan_yaw   Optional per-pose orientation of `path`, in the PLAN
+ *   frame, same length as `path`. Anything else - a null pointer, a null
+ *   `pruned_yaw`, a length that does not match - means no orientations.
+ * @param pruned_yaw Receives the retained window's orientations, rotated into
+ *   the BASE frame by this same transform. It is the SAME window from the SAME
+ *   decision: the pruning rule is stated once, so an orientation cannot end up
+ *   paired with a point the pruner did not keep. Always cleared first, so a
+ *   caller reusing one buffer cannot mistake last tick's sequence for this
+ *   tick's.
  */
 std::vector<Point2D> transformAndPrunePath(const std::vector<Point2D> &path,
                                            float transform_x, float transform_y,
-                                           float transform_yaw, float max_range);
+                                           float transform_yaw, float max_range,
+                                           const std::vector<float> *plan_yaw = nullptr,
+                                           std::vector<float> *pruned_yaw = nullptr);
 
 }  // namespace bac
 

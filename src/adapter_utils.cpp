@@ -55,8 +55,17 @@ projectScan(const std::vector<float> &ranges, float angle_min, float angle_incre
 
 std::vector<Point2D>
 transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
-                      float transform_y, float transform_yaw, float max_range)
+                      float transform_y, float transform_yaw, float max_range,
+                      const std::vector<float> *plan_yaw, std::vector<float> *pruned_yaw)
 {
+  // Cleared before any early return: a caller that reuses one buffer across
+  // ticks must never be handed the previous tick's orientations.
+  if (pruned_yaw != nullptr)
+  {
+    pruned_yaw->clear();
+  }
+  const bool carry_yaw = plan_yaw != nullptr && pruned_yaw != nullptr &&
+                         plan_yaw->size() == path.size();
   if (path.empty() || !(max_range > 0.0f))
   {
     return {};
@@ -87,6 +96,10 @@ transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
 
   std::vector<Point2D> local_path;
   local_path.reserve(transformed.size() - nearest);
+  if (carry_yaw)
+  {
+    pruned_yaw->reserve(transformed.size() - nearest);
+  }
   const float max_distance_squared = max_range * max_range;
   for (std::size_t i = nearest; i < transformed.size(); ++i)
   {
@@ -97,6 +110,13 @@ transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
       break;
     }
     local_path.push_back(transformed[i]);
+    if (carry_yaw)
+    {
+      // The transform rotates the plan frame into the base frame, so a
+      // plan-frame orientation gains that same rotation - the identical
+      // relation goalHeadingInBase applies to the goal orientation.
+      pruned_yaw->push_back((*plan_yaw)[i] + transform_yaw);
+    }
   }
   return local_path;
 }

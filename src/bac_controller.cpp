@@ -112,6 +112,37 @@ BacController::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
     scan_inf_is_valid_ = node->get_parameter(pname).as_bool();
   }
 
+  // Who owns the body orientation. "off" (the default) keeps tangent
+  // following; "plan" hands the plan's per-pose orientations to the core
+  // (BacCore::process path_yaw), so a holonomic vehicle crabs along a path
+  // drawn to its side and rotates gradually between two orientations while it
+  // travels. Fail closed on anything else, and on a model that steers with
+  // yaw: it cannot hold a commanded orientation, and silently ignoring the
+  // request would leave the user believing the plan governs when it does not.
+  {
+    const std::string pname = name + ".plan_yaw_mode";
+    if (!node->has_parameter(pname))
+    {
+      node->declare_parameter<std::string>(pname, "off");
+    }
+    const std::string mode = node->get_parameter(pname).as_string();
+    if (mode == "plan")
+    {
+      if (params.motion_model.type != MotionModelType::OMNI)
+      {
+        throw std::invalid_argument(
+            "bac: plan_yaw_mode 'plan' requires motion_model.type omni; a model that "
+            "steers with yaw cannot hold a commanded orientation");
+      }
+      plan_yaw_ = true;
+    }
+    else if (mode != "off")
+    {
+      throw std::invalid_argument("bac: plan_yaw_mode must be 'off' or 'plan', got '" +
+                                  mode + "'");
+    }
+  }
+
   // Reject configurations that cannot produce meaningful candidates - a
   // silent nonsense config is worse than a failed configure.
   if (!(params.footprint.width > 0.0f) || !(params.footprint.front > params.footprint.rear))
@@ -315,12 +346,16 @@ BacController::publishDiagnostics(const Result &result, bool using_scan)
 
 std::vector<Point2D>
 BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/,
-                             std::optional<float> *goal_heading) const
+                             std::optional<float> *goal_heading,
+                             std::vector<float> *path_yaw) const
 {
   if (goal_heading != nullptr)
   {
     *goal_heading = std::nullopt;
   }
+  // Cleared on EVERY exit path, the throws included: the caller reuses the
+  // buffer each tick, and a stale sequence would steer the body.
+  path_yaw->clear();
   // The plan lives in its own frame (typically map) while the controller runs
   // in the costmap/base frames - subtracting coordinates across frames would
   // silently cancel exactly the localization error this controller is
@@ -356,8 +391,22 @@ BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/,
   const float tf_x = static_cast<float>(tf_msg.transform.translation.x);
   const float tf_y = static_cast<float>(tf_msg.transform.translation.y);
   const float tf_yaw = static_cast<float>(tf2::getYaw(tf_msg.transform.rotation));
+  // plan_yaw_mode "plan": every plan pose's orientation rides through the
+  // prune attached to its own point, then gains the same plan-to-base
+  // rotation as the goal heading below. The pruner slices both on one
+  // decision; this function never re-states the pruning rule.
+  std::vector<float> plan_yaw;
+  if (plan_yaw_)
+  {
+    plan_yaw.reserve(plan_.poses.size());
+    for (const auto &p : plan_.poses)
+    {
+      plan_yaw.push_back(static_cast<float>(tf2::getYaw(p.pose.orientation)));
+    }
+  }
   std::vector<Point2D> local_path =
-      transformAndPrunePath(plan_points, tf_x, tf_y, tf_yaw, core_.params().max_range);
+      transformAndPrunePath(plan_points, tf_x, tf_y, tf_yaw, core_.params().max_range,
+                            plan_yaw_ ? &plan_yaw : nullptr, path_yaw);
 
   // Nav2 carries the requested goal orientation on the last plan pose. Pass it
   // on only when that pose is still in the pruned path: pruning stops at
@@ -402,11 +451,12 @@ BacController::computeVelocityCommands(const geometry_msgs::msg::PoseStamped &po
     points = collectObstaclePoints(pose);
   }
   std::optional<float> goal_heading;
-  std::vector<Point2D> path = transformPlan(pose, &goal_heading);
+  std::vector<float>   path_yaw;
+  std::vector<Point2D> path = transformPlan(pose, &goal_heading, &path_yaw);
   Twist2D current(static_cast<float>(velocity.linear.x), static_cast<float>(velocity.angular.z),
                   static_cast<float>(velocity.linear.y));
 
-  Result result = core_.process(points, path, current, goal_heading);
+  Result result = core_.process(points, path, current, goal_heading, path_yaw);
   publishDiagnostics(result, using_scan);
 
   geometry_msgs::msg::TwistStamped cmd;

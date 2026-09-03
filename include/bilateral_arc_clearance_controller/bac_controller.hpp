@@ -64,8 +64,13 @@ private:
   /// only when that pose survived pruning - otherwise the far end of `path` is
   /// a waypoint rather than the goal, and its orientation is not a goal
   /// orientation.
+  ///
+  /// `path_yaw` (never null) receives one orientation per returned point, in
+  /// the base frame, when plan_yaw_mode is "plan" - the pose orientations the
+  /// plan carries, pruned on the pruner's own decision. Cleared otherwise.
   std::vector<Point2D> transformPlan(const geometry_msgs::msg::PoseStamped &pose,
-                                     std::optional<float> *goal_heading) const;
+                                     std::optional<float> *goal_heading,
+                                     std::vector<float> *path_yaw) const;
 
   /// Publish the active obstacle source and selected-candidate diagnostics
   void publishDiagnostics(const Result &result, bool using_scan);
@@ -98,6 +103,11 @@ private:
 
   float base_v_max_  = 0.4f;  // configured limits.v_max (speed limit re-caps it)
   float speed_limit_ = 0.0f;  // 0 = unlimited
+
+  /// plan_yaw_mode "plan": hand the plan's per-pose orientations to the core,
+  /// so the plan owns the body orientation instead of the path tangent.
+  /// Requires a holonomic model - configure() rejects it for the others.
+  bool plan_yaw_ = false;
 };
 
 }  // namespace bac

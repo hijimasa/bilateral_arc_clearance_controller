@@ -83,6 +83,24 @@ nav_msgs::msg::Path rearPlan(const std::string &frame)
   return path;
 }
 
+/// A plan drawn straight to the robot's LEFT whose every pose keeps the
+/// robot's own orientation (yaw 0): under plan_yaw_mode "plan" the vehicle
+/// must crab along it rather than turn onto the tangent.
+nav_msgs::msg::Path sidePlanHoldingYaw(const std::string &frame)
+{
+  nav_msgs::msg::Path path;
+  path.header.frame_id = frame;
+  for (int i = 0; i <= 10; ++i)
+  {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = frame;
+    pose.pose.position.y = 0.2 * static_cast<double>(i);
+    pose.pose.orientation.w = 1.0;  // yaw 0 everywhere, the goal pose included
+    path.poses.push_back(pose);
+  }
+  return path;
+}
+
 
 void testControllerAdapter()
 {
@@ -302,6 +320,113 @@ void testAckermannAdapterConfiguration()
   costmap->cleanup();
 }
 
+void testPlanYawAdapterConfiguration()
+{
+  rclcpp::NodeOptions costmap_options;
+  costmap_options.parameter_overrides({
+    rclcpp::Parameter("plugins", std::vector<std::string>{}),
+    rclcpp::Parameter("global_frame", "odom"),
+    rclcpp::Parameter("robot_base_frame", "base_link"),
+    rclcpp::Parameter("rolling_window", true),
+    rclcpp::Parameter("width", 4),
+    rclcpp::Parameter("height", 4),
+    rclcpp::Parameter("resolution", 0.1)
+  });
+  costmap_options.arguments({ "--ros-args", "-r", "__node:=plan_yaw_costmap" });
+  auto costmap = std::make_shared<nav2_costmap_2d::Costmap2DROS>(costmap_options);
+  costmap->configure();
+
+  // Handing the orientation to the plan is meaningless for a model that
+  // steers with yaw, and silently ignoring the request would leave the user
+  // believing the plan governs. configure() must refuse, not comply halfway.
+  {
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+      rclcpp::Parameter("FollowPath.plan_yaw_mode", "plan"),
+    });
+    auto parent =
+        std::make_shared<rclcpp_lifecycle::LifecycleNode>("bac_plan_yaw_reject_test", options);
+    auto tf = std::make_shared<tf2_ros::Buffer>(parent->get_clock());
+    bac::BacController controller;
+    bool threw = false;
+    try
+    {
+      controller.configure(parent, "FollowPath", tf, costmap);
+    }
+    catch (const std::invalid_argument &)
+    {
+      threw = true;
+    }
+    expect(threw, "plan_yaw_mode 'plan' under differential drive fails configure, not silently");
+  }
+
+  // An unknown mode is a typo, and a typo that silently means "off" would
+  // read as the feature being broken rather than misspelled.
+  {
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+      rclcpp::Parameter("FollowPath.motion_model.type", "omni"),
+      rclcpp::Parameter("FollowPath.limits.vy_max", 0.3),
+      rclcpp::Parameter("FollowPath.plan_yaw_mode", "sideways"),
+    });
+    auto parent =
+        std::make_shared<rclcpp_lifecycle::LifecycleNode>("bac_plan_yaw_badmode_test", options);
+    auto tf = std::make_shared<tf2_ros::Buffer>(parent->get_clock());
+    bac::BacController controller;
+    bool threw = false;
+    try
+    {
+      controller.configure(parent, "FollowPath", tf, costmap);
+    }
+    catch (const std::invalid_argument &)
+    {
+      threw = true;
+    }
+    expect(threw, "an unknown plan_yaw_mode fails configure instead of meaning 'off'");
+  }
+
+  // End to end through the adapter: the same sideways plan, once with the
+  // plan owning the orientation and once without. Asserted as the DIFFERENCE:
+  // "plan" crabs (lateral motion, yaw exactly zero - every pose asks for the
+  // orientation the body already has), "off" yaws onto the tangent.
+  auto run_side_plan = [&](const char *node_name, const char *mode) {
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+      rclcpp::Parameter("FollowPath.motion_model.type", "omni"),
+      rclcpp::Parameter("FollowPath.limits.vy_max", 0.3),
+      rclcpp::Parameter("FollowPath.limits.v_min", 0.0),
+      rclcpp::Parameter("FollowPath.plan_yaw_mode", mode),
+    });
+    auto parent = std::make_shared<rclcpp_lifecycle::LifecycleNode>(node_name, options);
+    auto tf = std::make_shared<tf2_ros::Buffer>(parent->get_clock());
+    bac::BacController controller;
+    controller.configure(parent, "FollowPath", tf, costmap);
+    controller.activate();
+    geometry_msgs::msg::PoseStamped robot_pose;
+    robot_pose.header.frame_id = "base_link";
+    robot_pose.pose.orientation.w = 1.0;
+    geometry_msgs::msg::Twist velocity;
+    controller.setPlan(sidePlanHoldingYaw("base_link"));
+    const geometry_msgs::msg::TwistStamped command =
+        controller.computeVelocityCommands(robot_pose, velocity, nullptr);
+    controller.deactivate();
+    controller.cleanup();
+    return command;
+  };
+  const geometry_msgs::msg::TwistStamped crab = run_side_plan("bac_plan_yaw_test", "plan");
+  const geometry_msgs::msg::TwistStamped turn = run_side_plan("bac_plan_yaw_off_test", "off");
+  expect(crab.twist.angular.z == 0.0,
+         "under 'plan' a sideways plan holding yaw 0 commands no rotation at all");
+  expect(crab.twist.linear.y > 0.0,
+         "under 'plan' the journey to a plan abeam goes into linear.y (" +
+             std::to_string(crab.twist.linear.y) + " m/s)");
+  expect(std::fabs(turn.twist.angular.z) > std::fabs(crab.twist.angular.z),
+         "under 'off' the same plan is turned onto instead (" +
+             std::to_string(turn.twist.angular.z) + " rad/s)");
+
+  costmap->cleanup();
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -309,6 +434,7 @@ int main(int argc, char **argv)
   rclcpp::init(argc, argv);
   testControllerAdapter();
   testAckermannAdapterConfiguration();
+  testPlanYawAdapterConfiguration();
   rclcpp::shutdown();
 
   if (failures != 0)

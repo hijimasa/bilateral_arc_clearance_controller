@@ -405,6 +405,18 @@ testPlanYawHoldsOrientation()
          "holding the heading, the body crabs towards the path at the one-cycle "
          "acceleration bound (vy " +
              std::to_string(crab.vy) + ")");
+
+  // The adapter builds these by adding the plan-to-base rotation to a
+  // plan-frame orientation, a sum that routinely leaves +-pi. The same
+  // orientation written a full turn away must command the same thing, or the
+  // regulator sees heading_gain times a number 2*pi too large.
+  bac::BacCore turned_around(planYawParams());
+  const std::vector<float> hold_plus_turn(path.size(), 6.28318531f);
+  const bac::Twist2D wrapped =
+      turned_around.process({}, path, bac::Twist2D{}, std::nullopt, hold_plus_turn).output;
+  expect(wrapped.v == crab.v && wrapped.w == crab.w && wrapped.vy == crab.vy,
+         "an orientation written a full turn away commands the same twist (w " +
+             std::to_string(wrapped.w) + " vs " + std::to_string(crab.w) + ")");
 }
 
 void

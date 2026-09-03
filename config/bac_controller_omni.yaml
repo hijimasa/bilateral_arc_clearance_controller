@@ -39,6 +39,19 @@ controller_server:
       # the sweep over current speed, and the reverse-enabled cases, are in
       # docs/algorithm.md.
       vy_samples: 15
+      # Who owns the body orientation. "off" turns onto the local path
+      # tangent, as above. "plan" hands the orientation to the plan: the body
+      # tracks the plan poses' own orientations, so a path drawn to its side
+      # is crabbed along, and a start-to-goal orientation change is spread
+      # over the journey (write the ramp into the plan poses). Requires a
+      # plan whose pose orientations are meaningful - NavFn/Smac write path
+      # tangents there, which reproduces "off" with extra noise. NOTE: with
+      # the plan owning the orientation the passage centering bias is
+      # disabled, and narrow passages are harder for a body that may not
+      # rotate; see docs/parameters.md.
+      # QUOTED because bare `off` is a YAML 1.1 BOOLEAN: unquoted it loads as
+      # false, and the string parameter declaration then fails on the type.
+      plan_yaw_mode: "off"
 
       scan_topic: /scan
       scan_timeout: 0.5

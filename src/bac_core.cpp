@@ -520,13 +520,13 @@ buildStationPath(const std::vector<Point2D> &path, const std::vector<float> *pat
   return station;
 }
 
-// Project a point onto the polyline (from the robot's segment forward).
-// Returns the goal COST (remaining station + weighted lateral offset; full
-// Euclidean distance once past the path end) and the reference bearing
-// (path tangent, or the direction to the final point at the terminal).
-// progress_out is signed progress from the robot's current projection;
-// it prevents collision-free motion AWAY from the ordered path from being
-// mistaken for a useful candidate.
+// Requested orientation at an arc-length station, clamped to the ends.
+//
+// EVERY return is wrapped. The caller's convention is an angle in the current
+// body frame, and the adapter produces those by adding the plan-to-base
+// rotation to a plan-frame orientation - a sum that routinely lands outside
+// +-pi. An unwrapped value reaches the pose regulator as heading_gain times a
+// number up to 2*pi too large, which turns the body the long way round.
 float
 StationPath::yawAt(float at) const
 {
@@ -536,11 +536,11 @@ StationPath::yawAt(float at) const
   }
   if (yaw.size() == 1U || at <= s.front())
   {
-    return yaw.front();
+    return wrapAngle(yaw.front());
   }
   if (at >= s.back())
   {
-    return yaw.back();
+    return wrapAngle(yaw.back());
   }
   std::size_t i = 0;
   while (i + 2U < s.size() && s[i + 1U] < at)
@@ -556,6 +556,13 @@ StationPath::yawAt(float at) const
   return wrapAngle(yaw[i] + t * wrapAngle(yaw[i + 1U] - yaw[i]));
 }
 
+// Project a point onto the polyline (from the robot's segment forward).
+// Returns the goal COST (remaining station + weighted lateral offset; full
+// Euclidean distance once past the path end) and the reference bearing
+// (path tangent, or the direction to the final point at the terminal).
+// progress_out is signed progress from the robot's current projection;
+// it prevents collision-free motion AWAY from the ordered path from being
+// mistaken for a useful candidate.
 float
 StationPath::goalCost(float px, float py, float &bearing_out, float &heading_scale,
                       float &progress_out) const

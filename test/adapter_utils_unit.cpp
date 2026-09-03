@@ -74,6 +74,69 @@ void testTransformAndPrunePath()
          "plan-to-base rigid transform is applied");
 }
 
+/// The orientations a plan carries have to survive pruning ATTACHED to their
+/// own points. Both ends of the window move - the stale prefix is dropped and
+/// the far end is cut at max_range - so an orientation sequence sliced by any
+/// rule but the pruner's own would silently pair a point with another point's
+/// orientation, and the body would be steered by it.
+void
+testTransformAndPrunePathCarriesOrientations()
+{
+  const std::vector<bac::Point2D> path{
+    { -3.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 0.0f },
+    { 1.0f, 0.0f }, { 3.0f, 0.0f }
+  };
+  const std::vector<float> plan_yaw{ 0.1f, 0.2f, 0.3f, 0.4f, 0.5f };
+
+  {
+    std::vector<float> pruned;
+    const std::vector<bac::Point2D> local =
+        bac::transformAndPrunePath(path, 0.0f, 0.0f, 0.0f, 1.5f, &plan_yaw, &pruned);
+    expect(local.size() == 2U && pruned.size() == 2U,
+           "orientations are retained in the same count as the points");
+    // Indices 2 and 3 survive; 0.3 and 0.4 are THEIR orientations, and no
+    // other pair of adjacent values would be wrong by an amount a closed-loop
+    // run could distinguish from tracking lag.
+    expect(near(pruned[0], 0.3f) && near(pruned[1], 0.4f),
+           "each retained point keeps its own orientation across both cuts");
+  }
+
+  {
+    // The transform rotates the plan frame into the base frame, so every
+    // orientation gains that rotation - the same relation goalHeadingInBase
+    // applies. A sign error here aims the body at a mirrored orientation.
+    // A quarter turn puts the path on the base frame's y axis, so index 2 is
+    // still the nearest and 2..4 all fall inside 5 m: three points, and the
+    // orientations that come back are theirs.
+    constexpr float half_pi = 1.57079632679f;
+    std::vector<float> pruned;
+    const std::vector<bac::Point2D> local =
+        bac::transformAndPrunePath(path, 0.0f, 0.0f, half_pi, 5.0f, &plan_yaw, &pruned);
+    expect(local.size() == 3U && pruned.size() == 3U,
+           "the rotated prune keeps three points and three orientations");
+    expect(near(pruned[0], 0.3f + half_pi) && near(pruned[2], 0.5f + half_pi),
+           "plan-frame orientations are rotated into the base frame");
+  }
+
+  {
+    // A mismatched count cannot be repaired - which end is missing decides
+    // which point every remaining orientation belongs to.
+    std::vector<float> pruned{ 9.0f, 9.0f };
+    const std::vector<float> short_yaw{ 0.1f, 0.2f };
+    bac::transformAndPrunePath(path, 0.0f, 0.0f, 0.0f, 1.5f, &short_yaw, &pruned);
+    expect(pruned.empty(), "a mismatched orientation count yields none at all");
+  }
+
+  {
+    // An empty plan returns early. The buffer is a caller's, reused every
+    // tick: left untouched it would hand back the previous tick's sequence.
+    std::vector<float> pruned{ 9.0f };
+    const std::vector<float> none;
+    bac::transformAndPrunePath({}, 0.0f, 0.0f, 0.0f, 1.5f, &none, &pruned);
+    expect(pruned.empty(), "an empty plan clears the caller's orientation buffer");
+  }
+}
+
 
 /// Nav2 carries the goal orientation on the last plan pose. It is a goal
 /// orientation only while that pose is still on the pruned path, and it has to
@@ -126,6 +189,7 @@ int main()
   testScanValidityAndProjection();
   testScanDownsampleAndExtrinsics();
   testTransformAndPrunePath();
+  testTransformAndPrunePathCarriesOrientations();
   testGoalHeadingInBase();
 
   if (failures != 0)

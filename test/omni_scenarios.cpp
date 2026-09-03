@@ -334,6 +334,7 @@ const std::vector<std::string> kAllowedUnconsumedKeys = {
     "scan_downsample",             //   "
     "scan_min_points",             //   "
     "scan_inf_is_valid",           //   "
+    "plan_yaw_mode",               // BacController plan adapter, not BacCore
     "diagnostics_publish_period",  // diagnostics only
 };
 
