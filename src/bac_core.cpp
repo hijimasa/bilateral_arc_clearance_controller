@@ -138,9 +138,12 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   const float body_x_max = params.footprint.front;
   float       zone_x_min = body_x_min;
   float       zone_x_max = body_x_max;
-  const float body_y_half_base = params.footprint.width / 2.0f;
-  float       zone_y_min = -body_y_half_base;
-  float       zone_y_max = body_y_half_base;
+  // The body's physical half-width. The emergency zone's inflation along the
+  // direction of travel lives in zone_y_min / zone_y_max below, never in this;
+  // it stays the bare footprint everywhere it is read.
+  const float body_y_half = params.footprint.width / 2.0f;
+  float       zone_y_min = -body_y_half;
+  float       zone_y_max = body_y_half;
   if (current_speed > 1e-6f)
   {
     const float ux = current.v / current_speed;
@@ -162,8 +165,6 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
       zone_y_min += brake_distance * uy;
     }
   }
-
-  const float body_y_half = body_y_half_base;
 
   // Unit direction of travel and the body's extents along it, used by the
   // governor slab test below. Reduces to (+-1, 0) with lead = front (or -rear)
