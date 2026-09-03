@@ -625,6 +625,15 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                           : station_total - station_s0) +
       0.5f;
 
+  // How far ahead any arc is evaluated for a given speed: one sim_time of
+  // travel, never shorter than min_eval_distance, never past the end of the
+  // path. One definition, used by the tightness probe, the turn-then-go row,
+  // every moving candidate, and the stopping test.
+  const auto eval_window = [&](float speed) {
+    return std::min(std::max(speed * params_.sim_time, params_.min_eval_distance),
+                    remaining_path);
+  };
+
   // Diagnostics: the reported local goal is the path point one preview
   // length ahead of the robot's own projection (display only - scoring uses
   // the projection itself).
@@ -780,8 +789,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float probe_center_bias = 0.0f;
   {
     float v_probe    = std::max(v_cap, 0.1f);
-    float probe_dist = std::max(v_probe * params_.sim_time, params_.min_eval_distance);
-    probe_dist       = std::min(probe_dist, remaining_path);
+    const float probe_dist = eval_window(v_probe);
     for (const Twist2D &probe : motion_model->clearanceProbeCommands(v_probe))
     {
       const float wp = probe.w;
@@ -1056,8 +1064,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           rotated_points.emplace_back(cs * p.x - sn * p.y, sn * p.x + cs * p.y);
         }
         float v_ref  = std::max(v_cap, 0.05f);
-        float dist   = std::max(v_ref * params_.sim_time, params_.min_eval_distance);
-        dist         = std::min(dist, remaining_path);
+        const float dist = eval_window(v_ref);
         ArcEvaluation eval = evaluateArcWindows(rotated_points, v_ref, 0.0f, dist, dist);
         clearance        = std::min(eval.clearance_left, eval.clearance_right);
         lateral_fraction = eval.lateral_fraction;
@@ -1093,8 +1100,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           return;
         }
         const float candidate_speed = command.speed();
-        float dist_block = std::max(candidate_speed * params_.sim_time, params_.min_eval_distance);
-        dist_block       = std::min(dist_block, remaining_path);
+        const float dist_block = eval_window(candidate_speed);
         float dist_clear = dist_block;
         if (std::fabs(w) > 1e-4f)
         {
@@ -1227,8 +1233,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     {
       return FLT_MAX;
     }
-    float dist_block = std::max(speed * params_.sim_time, params_.min_eval_distance);
-    dist_block = std::min(dist_block, remaining_path);
+    const float dist_block = eval_window(speed);
     const ArcEvaluation ev =
         evaluateArcWindows(filtered_points, command, 0.0f, dist_block);
     if (ev.blocking_s >= FLT_MAX)
