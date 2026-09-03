@@ -50,9 +50,24 @@ if(ament_cmake_FOUND)
   # walking every relative link in every installed .md and .rst). Rewriting the
   # links as absolute repository URLs would have fixed the same 12, but would
   # point a user of an installed copy at whatever `main` holds rather than at
-  # the harness that shipped with it - and these two directories together are
-  # 132 kB against the 4.2 MB of docs/ already installed. If either directory
-  # stops being installed, un-link it from the documentation in the same change.
+  # the harness that shipped with it.
+  #
+  # Cost, and SAY WHICH MEASURE, because they differ by more than a factor of
+  # two. `du -sk` on the two installed directories: docker 28 kB +
+  # examples 76 kB = 104 kB, against docs/ at 4292 kB by the same command.
+  # Installing twice into a prefix, with these two rules and without, moves
+  # share/${PROJECT_NAME} by the same +104 kB (4476 -> 4580 here; the absolute
+  # figures depend on the build options, the delta does not). The 14 installed
+  # files are 42387 bytes of actual content - the rest is 4 kiB block
+  # granularity over 14 files and 7 directories.
+  #
+  # An earlier revision of this comment said 132 kB and could not be
+  # reproduced. That figure was `du -sk` on the SOURCE tree - the wrong tree,
+  # and one that still holds the 28 kB of
+  # examples/gazebo/scripts/__pycache__ these rules exclude. 132 - 28 = 104.
+  #
+  # If either directory stops being installed, un-link it from the
+  # documentation in the same change.
   install(DIRECTORY docker DESTINATION share/${PROJECT_NAME}
       PATTERN "__pycache__" EXCLUDE
       PATTERN "*.pyc" EXCLUDE

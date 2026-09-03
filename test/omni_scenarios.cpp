@@ -489,8 +489,14 @@ shippedExampleParams()
 /// byte-identical `bac::Params` - measured, 0 of 212 bytes differ - so the two
 /// runs `testShippedExampleConfiguration()` used to make were bit-identical to
 /// runs the file already had (see that function). Deriving in this direction
-/// is what makes the yaml load-bearing: all 17 scenarios below now drive the
-/// configuration users copy, so an edit to it moves THEM.
+/// is what makes the yaml load-bearing: an edit to the file now moves the
+/// scenarios themselves. Counted at the call sites rather than asserted: of the
+/// 17 scenario functions main() runs, 13 take their parameters from here
+/// (directly or through `diffDriveReferenceParams()`), and 12 of those 13 drive
+/// the 26 closed-loop runs - the thirteenth,
+/// `testShippedExampleConfiguration()`, only asks for the verdict. The other
+/// four are the three sweeps and the deadband regression, which draw randomised
+/// parameters on purpose and are not testing the shipped configuration.
 ///
 /// The divergence set is currently EMPTY. A holonomic scenario that needs a
 /// value the shipped file does not carry overrides it here, one field at a
@@ -610,14 +616,21 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     //
     //  (a) One quantity, one name. All three closed-loop runners now report
     //      the same thing, from the same helper, under the same field.
-    //  (b) `min_clearance` is now a clearance. Over the 28 runOmni calls these
-    //      17 scenarios make, the 11 runs with walls reported 0.2501 to
+    //  (b) `min_clearance` is now a clearance. Over the 26 runOmni calls this
+    //      file makes, the 9 runs with walls reported 0.2501 to
     //      0.3500 m MORE than the true clearance; the 1.2 m corridor runs
     //      reported 0.5213-0.5449 m where the body was actually 0.2600-0.2886 m
     //      from a wall. testSafetyStopHoldsPosition prints the value: forced to
     //      fire, its message now reads 0.150000 m where it read 0.500000 m.
     //
-    // Switching changed no verdict here: all 28 runs are contact-free under
+    //      The two counts were 28 and 11 until the shipped-configuration
+    //      scenario stopped driving two runs that duplicated runs this file
+    //      already had. Both re-counted at a counter in this function: 26 and
+    //      9. The three RANGES are unchanged and were re-measured, not
+    //      inherited - the two runs that went away were bit-identical to runs
+    //      that stayed, so they contributed no endpoint.
+    //
+    // Switching changed no verdict here: all 26 runs are contact-free under
     // BOTH tests, measured, so the pass/fail set and the stdout are unchanged.
     //
     // THE NEW TEST HAS ITS OWN BLIND SPOT, and it is the larger one. Under this
@@ -2266,9 +2279,19 @@ testSafetyStopHoldsPosition()
 /// - commanded (v, vy, w) and integrated pose at every one of the 1200 / 2400
 /// ticks - hashes to the same value, and every OmniRun field agrees.
 ///
-/// What the retired assertions were worth, measured over the 52 mutations of
-/// `src/` and `bac_core.hpp` this suite is scored against. Six were dropped, and
-/// this is all six:
+/// Fourteen assertion signatures went away here and two arrived - counted
+/// across the whole suite, which went from 457 distinct signatures to 445 at
+/// this change. The fourteen are seven driving assertions (the table below),
+/// six from the two `expectLimitsRespected()` calls that belonged to the
+/// deleted runs (that function asserts three things, and it was called twice),
+/// and one that was REWORDED rather than dropped, "every value the scenario
+/// needs" becoming "every value the scenarios need". Inside THIS binary:
+/// 150 executed assertions became 126, of which the `expectLimitsRespected()`
+/// contribution went from 51 to 45.
+///
+/// What the seven retired driving assertions were worth, measured over the 52
+/// mutations of `src/` and `bac_core.hpp` this suite is scored against - all
+/// seven, in the two-per-row form the second corridor pair takes:
 ///
 ///   "no body contact" (detour)          kills 0; kept as "the holonomic detour
 ///                                       has no body contact"
@@ -2293,7 +2316,10 @@ testSafetyStopHoldsPosition()
 /// So the kill set is unchanged, and the R15 M5 finding the two worlds answer
 /// (with only the detour world, 13 of 16 value perturbations of the shipped yaml
 /// passed, `avoid_margin.side: 0.9 -> 0.5` among them) is answered more strongly
-/// than before: a perturbation now moves all 17 scenarios, not two.
+/// than before: a perturbation now moves the 26 closed-loop runs of 12
+/// scenarios, where it used to move two runs of this one. (12 and 26 counted at
+/// the call sites; see omniParams for the other four scenarios and why they do
+/// not participate.)
 ///
 /// What is left here is what no scenario can express - that the file PARSES,
 /// that every key in it is consumed by the reader or named in
