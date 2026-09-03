@@ -181,7 +181,10 @@ They are not probabilistic or universal claims about untested environments.
   contacts in **3 of the 101 cells, at 0.478, 0.488 and 0.498 m** (R18 H5 - this paragraph previously claimed the
   controller no longer drove into that position, which is false; R19 M3 - the count of 2 was also low, counted
   again with the `collided` flag the closed-loop runs already carry). The same corridor with 0.10 m walls
-  traverses all 101 cells without contact. The 0.478 m cell is sensitive to floating-point representation:
+  traverses all 101 cells without contact. Real walls present a face, so that configuration is a modelling
+  degeneracy rather than a scenario: the regressions use walls with thickness. Raising the resolution (2880
+  beams or more) or giving the wall thickness both remove it. The sensing limit is a property of the sensor,
+  not of the controller. The 0.478 m cell is sensitive to floating-point representation:
   building the sweep the obvious way as `start + step * i` gives `0.30f + 0.002f * 89` = 0.478000015, which
   contacts (closest approach 0.2874 m), while the literal `0.478f` is 0.477999985 and does not (0.5448 m). The
   difference is 3e-8, and any sweep built that way contacts. Across the four conditions swept (1.1 and 1.2 m
@@ -199,7 +202,7 @@ They are not probabilistic or universal claims about untested environments.
   that this package's own `testNarrowCorridorCentering` uses give **the same 72 and 16 in all four
   conditions** (measured). Drop the window and the threshold does matter: corridor width / 2 plus wall
   thickness gives the 83 detours and 5 non-traversals totalled below, and 0.35 taken over the whole run gives
-  324 detours and 0 non-traversals. Those are the four cells measured. The 72 / 16 the first pass of the R19
+  324 detours and 0 non-traversals. Those are the four cells measured. The 72 / 16 the first pass of the R19 M3
   response wrote here reproduces exactly under that windowed criterion, the one
   `testNarrowCorridorCentering` uses - so that split was not wrong, it simply never stated its criterion
   (established by the R19 verification).
@@ -211,10 +214,7 @@ They are not probabilistic or universal claims about untested environments.
   width / 2 plus wall thickness, the window with that same threshold, and the window with 0.35. **They do
   not agree under the whole run with 0.35** - that gives 327 failures, 85 / 82 / 80 / 80 per condition, and
   first failing offsets 0.332 / 0.338 / 0.340 / 0.342 (the 324 detours and 0 non-traversals stated above).
-  The 3 contacts are the same under all four criteria measured. The sensing limit is a property of the
-  sensor, not of the controller. Real walls
-  present a face, so that configuration is a modelling degeneracy rather than a scenario: the regressions use
-  walls with thickness. Raising the resolution (2880 beams or more) or giving the wall thickness both remove it
+  The 3 contacts are the same under all four criteria measured.
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
   regressions only
 - Reaching a rear goal with a forward-only Ackermann configuration (`limits.v_min = 0`). BAC stops and leaves the

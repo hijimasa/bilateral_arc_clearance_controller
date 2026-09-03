@@ -316,6 +316,7 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
 - [再現可能なGazebo evidence](examples/gazebo/README.md)
 - [リリースレビュー履歴](docs/release_review_history.md)
 - [Public 公開準備チェックリスト](docs/public_release_checklist.md)
+- [English documentation / 英語ドキュメント](docs/en/README.md)
 
 ## ライセンス
 

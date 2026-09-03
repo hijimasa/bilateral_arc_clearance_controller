@@ -185,7 +185,7 @@ which uses the same `bac_core`.
 | Body contacts | 0 |
 
 The video overlays time, state, pose, output command, and an explicit no-physical-validation label. It is
-accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_adaptive_clearance_telemetry.csv), an
+accompanied by frame-synchronized [telemetry CSV](../media/bac_gazebo_adaptive_clearance_telemetry.csv), a
 nine-gate [evidence JSON](../media/bac_gazebo_adaptive_clearance_evidence.json), and a
 [reproduction harness](../../examples/gazebo/README.md). The JSON records the capture commit and SHA-256 hashes
 for the principal inputs.

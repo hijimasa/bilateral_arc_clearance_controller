@@ -28,7 +28,10 @@ English | [日本語](../release_review_history.md)
   parallel to a thin wall is documented as a limit of the method. R16 is recorded in `3708fd4` and its
   response landed in `c74fe7d`, `68a8ed9`, `4739c6f`, `fa15112` and `dea7662`
 - R17 (reviewing `dea7662`, with the unreviewed R16 response commits foremost) had a verdict of **Hold** before
-  its response. The product code has converged - no body contact over some 5.7 M ticks - but the R16 response
+  its response (R19 M10, a second correction: this line alone still read "is Hold and unaddressed" while the
+  same paragraph goes on to say that the R17 response closed its five High findings and the Medium ones that
+  blocked the merge. The R15, R16 and R18 lines, in both languages, already read as a verdict BEFORE the
+  response). The product code has converged - no body contact over some 5.7 M ticks - but the R16 response
   itself introduced two code regressions and three claims that do not reproduce. Its five High findings blocked
   the merge and the R17 response closed them, along with the Medium ones that blocked it. R17 is recorded in
   `a89f0c4` and its response landed in `364fe1a`

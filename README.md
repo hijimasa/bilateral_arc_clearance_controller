@@ -45,7 +45,7 @@ coverage is limited to the deterministic unit checks and closed-loop regressions
 
 A matched-condition benchmark used ROS 2 Jazzy with a common robot footprint, NavFn, 1 Hz replanning, worlds,
 10 Hz local-costmap input, forward-only controller candidates, a common 0.4 m/s forward cap, and common
-actuator acceleration limits. The shared Nav2 recovery tree still includes `BackUp`. It contains
+actuator acceleration limits. The shared Nav2 recovery tree still includes `BackUp`, so the complete system is not forward-only. It contains
 18 scenarios × 3 runs × 4 controllers = 216 episodes. Controller-specific trajectory generation, horizons,
 critics, and tuning necessarily remain different.
 
@@ -89,7 +89,7 @@ obstacle while detouring by 0.80 m, returns to within 0.30 m of the centerline i
 requires 0.74 m. It reached x = 12.03 m with no stop or body contact. The demo uses a disclosed 2.5 m local
 obstacle horizon. Synchronized
 [telemetry](docs/media/bac_gazebo_adaptive_clearance_telemetry.csv),
-[machine-readable checks and input hashes](docs/media/bac_gazebo_adaptive_clearance_evidence.json), and the
+[9 machine-readable checks and input hashes](docs/media/bac_gazebo_adaptive_clearance_evidence.json), and the
 [reproduction harness](examples/gazebo/README.md) accompany the video.
 
 The replay supports only its selected matched run and aggregate annotation. The single BAC Gazebo run is
