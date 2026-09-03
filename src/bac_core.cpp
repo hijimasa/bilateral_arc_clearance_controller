@@ -569,6 +569,273 @@ StationPath::goalCost(float px, float py, float &bearing_out, float &heading_sca
   return (total - s_best) + lateral;
 }
 
+// Everything the candidate scorer reads. This was a lambda inside process()
+// capturing all of it by reference; naming the couplings changes none of them.
+struct ScoringContext
+{
+  const BacCore              &core;  // only for evaluateArcWindows
+  const Params               &params;
+  const detail::MotionModel  *motion_model;
+  const std::vector<Point2D> &filtered_points;
+  const StationPath          &station;
+
+  Twist2D current{};                   // this tick's measured twist
+  Twist2D prev_selected_command{};     // steering hysteresis reference
+  float   relative_path_heading = 0.0f;
+  float   remaining_path        = 0.0f;
+  float   v_cap                 = 0.0f;
+  float   tightness             = 0.0f;
+  float   clearance_cap         = 0.0f;
+  float   cap_eff               = 0.0f;
+  float   emergency_x           = 0.0f;  // direction to the offending point
+  float   emergency_y           = 0.0f;
+  bool    escape_only           = false;
+  bool    alignment_required    = false;
+  bool    rotation_admissible   = false;
+};
+
+// The running best over the candidate lattice and the counters process()
+// reports. One instance spans the coarse pass and the refinement pass, so the
+// refinement competes against the coarse winner exactly as it did inline.
+struct CandidateSearch
+{
+  // Reusable buffer for turn-then-go evaluation of the v=0 row
+  std::vector<Point2D> rotated_points;
+
+  float   best_score          = -FLT_MAX;
+  Twist2D best_cmd            = Twist2D(0.0f, 0.0f);
+  float   best_clearance      = 0.0f;
+  float   best_path_cost      = 0.0f;
+  int     admissible_count    = 0;
+  int     candidate_count     = 0;
+  int     forward_progressing = 0;  // gates reverse only when forward advances the ordered path
+
+  void evaluate(const ScoringContext &ctx, const Twist2D &command);
+};
+
+void
+CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
+{
+  // The scalars stay so the scoring body reads as it did; `command` is
+  // what reaches the motion model and the swept-geometry evaluator, so a
+  // holonomic candidate is scored on the trajectory it actually drives.
+  const float v = command.v;
+  const float w = command.w;
+  candidate_count++;
+  if (ctx.alignment_required && std::fabs(v) > 1e-3f)
+  {
+    return;  // explicit rotate-before-translate mode
+  }
+  if (ctx.escape_only)
+  {
+    const bool rotation = command.speed() <= 1e-3f && std::fabs(w) > 1e-3f;
+    // Closing on the offending point, measured on the whole velocity
+    // vector. Projecting only `v` onto `emergency_x` let a pure crab move
+    // straight at a point directly abeam of the body (R15 H3).
+    const bool towards =
+        v * ctx.emergency_x + command.vy * ctx.emergency_y > 1e-6f;
+    if (rotation || towards)
+    {
+      return;  // emergency standstill: only motion away from the point, or stop
+    }
+  }
+
+  // Endpoint pose and the point-free score parts first: they give an
+  // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
+  // skip the expensive arc evaluation for candidates that cannot win.
+  const detail::ProjectedPose2D projected =
+      ctx.motion_model->projectConstantCommand(command, ctx.params.sim_time);
+  float end_th_pre = projected.theta;
+  float end_x_pre = projected.x;
+  float end_y_pre = projected.y;
+  float gd_pre, bearing_pre, heading_scale_pre, candidate_progress;
+  gd_pre = ctx.station.goalCost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre,
+                                candidate_progress);
+  // Collision-free forward motion that does not advance the ordered path
+  // is not a navigation solution. In particular, this rejects the open-
+  // space straight-ahead candidate when the complete path is behind.
+  if (v > 1e-3f && candidate_progress <= 1e-4f && !ctx.escape_only)
+  {
+    return;
+  }
+  float fixed_penalties = ctx.params.weights.path_dist * gd_pre +
+                          ctx.params.weights.hysteresis *
+                              ctx.motion_model->commandChange(command, ctx.prev_selected_command);
+  // (Pruning waits until one admissible forward candidate is on record:
+  // the reverse gate depends on GOAL PROGRESS, and admissibility is
+  // only known after evaluation. The v=0 row is exempt - its goal
+  // distance improves after evaluation via the turn-then-go advance, so
+  // the pre-evaluation bound would not be an upper bound.)
+  if (v > 1e-3f && forward_progressing > 0 &&
+      ctx.params.weights.clearance * ctx.cap_eff - fixed_penalties <= best_score)
+  {
+    return;
+  }
+
+  float clearance, lateral_fraction, clear_left, clear_right;
+  // Not translating at all. `command.v` alone is the wrong test for a
+  // holonomic candidate: the v = 0 ROW of the lattice still translates,
+  // sideways, and scoring it as a turn-then-go rotation would route the
+  // whole family of pure-crab candidates around the contact test and the
+  // stopping test below (R15 H1).
+  if (command.speed() <= 1e-3f)
+  {
+    if (std::fabs(w) > 1e-3f && !ctx.rotation_admissible)
+    {
+      return;
+    }
+    // Turn-then-go: score the rotation (or stop) by the straight run the
+    // robot could make AFTER turning by w * sim_time. A myopic "clearance
+    // beside the body" would make stopping/rotating look artificially
+    // clean right in front of a blocked passage.
+    float dth = w * ctx.params.sim_time;
+    float cs = std::cos(-dth), sn = std::sin(-dth);
+    rotated_points.clear();
+    rotated_points.reserve(ctx.filtered_points.size());
+    for (const Point2D &p : ctx.filtered_points)
+    {
+      rotated_points.emplace_back(cs * p.x - sn * p.y, sn * p.x + cs * p.y);
+    }
+    float v_ref  = std::max(ctx.v_cap, 0.05f);
+    const float dist = evalWindow(ctx.params, ctx.remaining_path, v_ref);
+    ArcEvaluation eval = ctx.core.evaluateArcWindows(rotated_points, v_ref, 0.0f, dist, dist);
+    clearance        = std::min(eval.clearance_left, eval.clearance_right);
+    lateral_fraction = eval.lateral_fraction;
+    clear_left       = eval.far_left;
+    clear_right      = eval.far_right;
+
+    // The maneuver is turn-THEN-GO: its goal distance is scored at the
+    // post-rotation ADVANCE endpoint (capped by the first body hit on
+    // that run) PLUS the advance itself. A run straight at the goal then
+    // scores exactly the in-place gd (the family baseline against real
+    // moving candidates is unchanged), while a run pointing away pays up
+    // to twice the advance. Without this the v=0 family is scored fully
+    // in place, all sharing one goal distance, and a robot facing open
+    // space away from the goal freezes: the phantom clearance of the run
+    // it never makes rewards holding still, and the heading reward for
+    // turning back is smaller than the hysteresis of starting to turn.
+    float advance = std::min(v_ref * ctx.params.sim_time, ctx.station.goal_distance);
+    if (eval.blocking_s < FLT_MAX)
+    {
+      advance =
+          std::max(0.0f, std::min(advance, eval.blocking_s - ctx.params.safety_margin.front));
+    }
+    end_x_pre = advance * std::cos(end_th_pre);
+    end_y_pre = advance * std::sin(end_th_pre);
+    gd_pre = ctx.station.goalCost(end_x_pre, end_y_pre, bearing_pre, heading_scale_pre,
+                                  candidate_progress) +
+             advance;
+  }
+  else
+  {
+    if (!ctx.motion_model->isCommandKinematicallyValid(command))
+    {
+      return;
+    }
+    const float candidate_speed = command.speed();
+    const float dist_block = evalWindow(ctx.params, ctx.remaining_path, candidate_speed);
+    float dist_clear = dist_block;
+    if (std::fabs(w) > 1e-4f)
+    {
+      float radius = candidate_speed / std::fabs(w);
+      dist_clear   = std::min(dist_clear, radius * ctx.params.eval_angle_max);
+      if (ctx.params.eval_lateral_max < radius)
+      {
+        dist_clear = std::min(
+            dist_clear, radius * std::acos(1.0f - ctx.params.eval_lateral_max / radius));
+      }
+    }
+    ArcEvaluation eval =
+        ctx.core.evaluateArcWindows(ctx.filtered_points, command, dist_clear, dist_block);
+    if (eval.blocking_s < FLT_MAX)
+    {
+      // DWA admissibility: able to stop (keeping the directional safety
+      // margin) before first contact. blocking_s already accounts for
+      // the body extent (it is the body-origin travel at contact).
+      // Along the DIRECTION OF TRAVEL, not the forward axis. Computing
+      // either from `v` alone admits a pure crab with zero braking
+      // distance and the front margin instead of the side one (R15 H2).
+      float margin   = travelMargin(ctx.params, command);
+      float free_run = eval.blocking_s - margin;
+      float needed   = brakingDistance(candidate_speed, ctx.params);
+      if (free_run <= needed)
+      {
+        return;
+      }
+    }
+    clearance        = std::min(eval.clearance_left, eval.clearance_right);
+    lateral_fraction = eval.lateral_fraction;
+    clear_left       = eval.far_left;
+    clear_right      = eval.far_right;
+  }
+  // Reverse candidates are evaluated through geometry/admissibility even
+  // in ordinary tracking, but remain an escape alternative when a safe
+  // forward candidate actually advances the ordered path.
+  if (v < -1e-3f && forward_progressing > 0 && !ctx.escape_only)
+  {
+    return;
+  }
+  admissible_count++;
+  if (v > 1e-3f && candidate_progress > 1e-4f)
+  {
+    forward_progressing++;
+  }
+
+  // Bilateral balance over the FORWARD part of the arc (capped so wide
+  // spaces zero out): first-order centering gradient towards equal
+  // clearance on both sides of where the arc leads.
+  // Balance applies to PASSAGES only (both sides bounded below the cap):
+  // with one side open it would act as a plain wall-repulsion field and
+  // over-steer around isolated obstacles. It keeps the PARAMETER cap -
+  // the adaptive cap would saturate both sides at the worse side's level
+  // and zero the centering out.
+  float balance =
+      (clear_left < ctx.clearance_cap && clear_right < ctx.clearance_cap)
+          ? std::fabs(clear_left - clear_right)
+          : 0.0f;
+
+  // Rollout endpoint after sim_time (precomputed above)
+  float end_th      = end_th_pre;
+  float path_cost   = gd_pre;
+  const float motion_heading = end_th + (v < -1e-3f ? kPi : 0.0f);
+  float heading_err = wrapAngle(bearing_pre - motion_heading);
+
+  float score;
+  if (ctx.alignment_required)
+  {
+    // While braking translational motion, do not start sweeping the body.
+    // Once nearly stationary, choose the sampled in-place rotation that
+    // most reduces the relative path heading over the rollout horizon.
+    const float alignment_error = (std::fabs(ctx.current.v) > 0.05f)
+                                      ? std::fabs(w)
+                                      : std::fabs(wrapAngle(ctx.relative_path_heading - end_th));
+    score = -alignment_error -
+            0.05f * ctx.motion_model->commandChange(command, ctx.prev_selected_command);
+  }
+  else
+  {
+    score = ctx.params.weights.clearance * std::min(clearance, ctx.cap_eff) -
+            ctx.params.weights.balance * ctx.tightness * balance -
+            ctx.params.weights.path_dist * path_cost -
+            ctx.params.weights.heading * heading_scale_pre * std::fabs(heading_err) -
+            ctx.params.weights.hysteresis *
+                ctx.motion_model->commandChange(command, ctx.prev_selected_command) -
+            ctx.params.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
+  }
+#ifdef BAC_DEBUG_CANDIDATES
+  std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
+              std::min(clearance, ctx.clearance_cap), path_cost, heading_err,
+              lateral_fraction, score);
+#endif
+  if (score > best_score)
+  {
+    best_score     = score;
+    best_cmd       = command;
+    best_clearance = std::min(clearance, ctx.cap_eff);
+    best_path_cost = path_cost;
+  }
+}
+
 }  // namespace
 
 BacCore::BacCore()
@@ -1130,10 +1397,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                           : station.total - station.s0) +
       0.5f;
 
-  const auto eval_window = [&](float speed) {
-    return evalWindow(params_, remaining_path, speed);
-  };
-
   // Diagnostics: the reported local goal is the path point one preview
   // length ahead of the robot's own projection (display only - scoring uses
   // the projection itself).
@@ -1278,9 +1541,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   }
   const bool alignment_required = alignment_mode_ && alignment_available;
 
-  // Reusable buffer for turn-then-go evaluation of the v=0 row
-  std::vector<Point2D> rotated_points;
-
   // Adaptive saturation: aim for the configured avoid margin, but never DEMAND
   // more clearance than the passage towards the goal physically affords -
   // otherwise a corridor narrower than the cap scores permanently worse than
@@ -1288,238 +1548,26 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float cap_floor = params_.footprint.width / 2.0f + std::max(params_.safety_margin.side, 0.05f);
   float cap_eff   = std::min(governor.clearance_cap, std::max(governor.probe_best, cap_floor));
 
-  float best_score = -FLT_MAX;
-  Twist2D best_cmd(0.0f, 0.0f);
-  float best_clearance = 0.0f, best_path_cost = 0.0f;
-  int   admissible_count = 0, candidate_count = 0;
-  int   forward_progressing = 0;  // gates reverse only when forward advances the ordered path
+  ScoringContext ctx{*this, params_, motion_model, filtered_points, station};
+  ctx.current               = current;
+  ctx.prev_selected_command = prev_selected_command_;
+  ctx.relative_path_heading = relative_path_heading;
+  ctx.remaining_path        = remaining_path;
+  ctx.v_cap                 = governor.v_cap;
+  ctx.tightness             = governor.tightness;
+  ctx.clearance_cap         = governor.clearance_cap;
+  ctx.cap_eff               = cap_eff;
+  ctx.emergency_x           = proximity.emergency_x;
+  ctx.emergency_y           = proximity.emergency_y;
+  ctx.escape_only           = escape_only;
+  ctx.alignment_required    = alignment_required;
+  ctx.rotation_admissible   = rotation_admissible;
 
-  auto evaluate_candidate = [&](const Twist2D &command) {
-      // The scalars stay so the scoring body reads as it did; `command` is
-      // what reaches the motion model and the swept-geometry evaluator, so a
-      // holonomic candidate is scored on the trajectory it actually drives.
-      const float v = command.v;
-      const float w = command.w;
-      candidate_count++;
-      if (alignment_required && std::fabs(v) > 1e-3f)
-      {
-        return;  // explicit rotate-before-translate mode
-      }
-      if (escape_only)
-      {
-        const bool rotation = command.speed() <= 1e-3f && std::fabs(w) > 1e-3f;
-        // Closing on the offending point, measured on the whole velocity
-        // vector. Projecting only `v` onto `emergency_x` let a pure crab move
-        // straight at a point directly abeam of the body (R15 H3).
-        const bool towards =
-            v * proximity.emergency_x + command.vy * proximity.emergency_y > 1e-6f;
-        if (rotation || towards)
-        {
-          return;  // emergency standstill: only motion away from the point, or stop
-        }
-      }
-
-      // Endpoint pose and the point-free score parts first: they give an
-      // upper bound (clearance <= cap_eff, balance/squeeze >= 0) that lets us
-      // skip the expensive arc evaluation for candidates that cannot win.
-      const detail::ProjectedPose2D projected =
-          motion_model->projectConstantCommand(command, params_.sim_time);
-      float end_th_pre = projected.theta;
-      float end_x_pre = projected.x;
-      float end_y_pre = projected.y;
-      float gd_pre, bearing_pre, heading_scale_pre, candidate_progress;
-      gd_pre = station.goalCost(
-          end_x_pre, end_y_pre, bearing_pre, heading_scale_pre, candidate_progress);
-      // Collision-free forward motion that does not advance the ordered path
-      // is not a navigation solution. In particular, this rejects the open-
-      // space straight-ahead candidate when the complete path is behind.
-      if (v > 1e-3f && candidate_progress <= 1e-4f && !escape_only)
-      {
-        return;
-      }
-      float fixed_penalties = params_.weights.path_dist * gd_pre +
-                              params_.weights.hysteresis *
-                                  motion_model->commandChange(command, prev_selected_command_);
-      // (Pruning waits until one admissible forward candidate is on record:
-      // the reverse gate depends on GOAL PROGRESS, and admissibility is
-      // only known after evaluation. The v=0 row is exempt - its goal
-      // distance improves after evaluation via the turn-then-go advance, so
-      // the pre-evaluation bound would not be an upper bound.)
-      if (v > 1e-3f && forward_progressing > 0 &&
-          params_.weights.clearance * cap_eff - fixed_penalties <= best_score)
-      {
-        return;
-      }
-
-      float clearance, lateral_fraction, clear_left, clear_right;
-      // Not translating at all. `command.v` alone is the wrong test for a
-      // holonomic candidate: the v = 0 ROW of the lattice still translates,
-      // sideways, and scoring it as a turn-then-go rotation would route the
-      // whole family of pure-crab candidates around the contact test and the
-      // stopping test below (R15 H1).
-      if (command.speed() <= 1e-3f)
-      {
-        if (std::fabs(w) > 1e-3f && !rotation_admissible)
-        {
-          return;
-        }
-        // Turn-then-go: score the rotation (or stop) by the straight run the
-        // robot could make AFTER turning by w * sim_time. A myopic "clearance
-        // beside the body" would make stopping/rotating look artificially
-        // clean right in front of a blocked passage.
-        float dth = w * params_.sim_time;
-        float cs = std::cos(-dth), sn = std::sin(-dth);
-        rotated_points.clear();
-        rotated_points.reserve(filtered_points.size());
-        for (const Point2D &p : filtered_points)
-        {
-          rotated_points.emplace_back(cs * p.x - sn * p.y, sn * p.x + cs * p.y);
-        }
-        float v_ref  = std::max(governor.v_cap, 0.05f);
-        const float dist = eval_window(v_ref);
-        ArcEvaluation eval = evaluateArcWindows(rotated_points, v_ref, 0.0f, dist, dist);
-        clearance        = std::min(eval.clearance_left, eval.clearance_right);
-        lateral_fraction = eval.lateral_fraction;
-        clear_left       = eval.far_left;
-        clear_right      = eval.far_right;
-
-        // The maneuver is turn-THEN-GO: its goal distance is scored at the
-        // post-rotation ADVANCE endpoint (capped by the first body hit on
-        // that run) PLUS the advance itself. A run straight at the goal then
-        // scores exactly the in-place gd (the family baseline against real
-        // moving candidates is unchanged), while a run pointing away pays up
-        // to twice the advance. Without this the v=0 family is scored fully
-        // in place, all sharing one goal distance, and a robot facing open
-        // space away from the goal freezes: the phantom clearance of the run
-        // it never makes rewards holding still, and the heading reward for
-        // turning back is smaller than the hysteresis of starting to turn.
-        float advance = std::min(v_ref * params_.sim_time, station.goal_distance);
-        if (eval.blocking_s < FLT_MAX)
-        {
-          advance = std::max(0.0f,
-                             std::min(advance, eval.blocking_s -
-                                                  params_.safety_margin.front));
-        }
-        end_x_pre = advance * std::cos(end_th_pre);
-        end_y_pre = advance * std::sin(end_th_pre);
-        gd_pre = station.goalCost(
-                     end_x_pre, end_y_pre, bearing_pre, heading_scale_pre,
-                     candidate_progress) +
-                 advance;
-      }
-      else
-      {
-        if (!motion_model->isCommandKinematicallyValid(command))
-        {
-          return;
-        }
-        const float candidate_speed = command.speed();
-        const float dist_block = eval_window(candidate_speed);
-        float dist_clear = dist_block;
-        if (std::fabs(w) > 1e-4f)
-        {
-          float radius = candidate_speed / std::fabs(w);
-          dist_clear   = std::min(dist_clear, radius * params_.eval_angle_max);
-          if (params_.eval_lateral_max < radius)
-          {
-            dist_clear = std::min(
-                dist_clear, radius * std::acos(1.0f - params_.eval_lateral_max / radius));
-          }
-        }
-        ArcEvaluation eval = evaluateArcWindows(filtered_points, command, dist_clear, dist_block);
-        if (eval.blocking_s < FLT_MAX)
-        {
-          // DWA admissibility: able to stop (keeping the directional safety
-          // margin) before first contact. blocking_s already accounts for
-          // the body extent (it is the body-origin travel at contact).
-          // Along the DIRECTION OF TRAVEL, not the forward axis. Computing
-          // either from `v` alone admits a pure crab with zero braking
-          // distance and the front margin instead of the side one (R15 H2).
-          float margin   = travelMargin(params_, command);
-          float free_run = eval.blocking_s - margin;
-          float needed   = brakingDistance(candidate_speed, params_);
-          if (free_run <= needed)
-          {
-            return;
-          }
-        }
-        clearance        = std::min(eval.clearance_left, eval.clearance_right);
-        lateral_fraction = eval.lateral_fraction;
-        clear_left       = eval.far_left;
-        clear_right      = eval.far_right;
-      }
-      // Reverse candidates are evaluated through geometry/admissibility even
-      // in ordinary tracking, but remain an escape alternative when a safe
-      // forward candidate actually advances the ordered path.
-      if (v < -1e-3f && forward_progressing > 0 && !escape_only)
-      {
-        return;
-      }
-      admissible_count++;
-      if (v > 1e-3f && candidate_progress > 1e-4f)
-      {
-        forward_progressing++;
-      }
-
-      // Bilateral balance over the FORWARD part of the arc (capped so wide
-      // spaces zero out): first-order centering gradient towards equal
-      // clearance on both sides of where the arc leads.
-      // Balance applies to PASSAGES only (both sides bounded below the cap):
-      // with one side open it would act as a plain wall-repulsion field and
-      // over-steer around isolated obstacles. It keeps the PARAMETER cap -
-      // the adaptive cap would saturate both sides at the worse side's level
-      // and zero the centering out.
-      float balance =
-          (clear_left < governor.clearance_cap && clear_right < governor.clearance_cap)
-              ? std::fabs(clear_left - clear_right)
-              : 0.0f;
-
-      // Rollout endpoint after sim_time (precomputed above)
-      float end_th      = end_th_pre;
-      float path_cost   = gd_pre;
-      const float motion_heading = end_th + (v < -1e-3f ? kPi : 0.0f);
-      float heading_err = wrapAngle(bearing_pre - motion_heading);
-
-      float score;
-      if (alignment_required)
-      {
-        // While braking translational motion, do not start sweeping the body.
-        // Once nearly stationary, choose the sampled in-place rotation that
-        // most reduces the relative path heading over the rollout horizon.
-        const float alignment_error = (std::fabs(current.v) > 0.05f)
-                                          ? std::fabs(w)
-                                          : std::fabs(wrapAngle(relative_path_heading - end_th));
-        score = -alignment_error -
-                0.05f * motion_model->commandChange(command,
-                                                     prev_selected_command_);
-      }
-      else
-      {
-        score = params_.weights.clearance * std::min(clearance, cap_eff) -
-                params_.weights.balance * governor.tightness * balance -
-                params_.weights.path_dist * path_cost -
-                params_.weights.heading * heading_scale_pre * std::fabs(heading_err) -
-                params_.weights.hysteresis *
-                    motion_model->commandChange(command, prev_selected_command_) -
-                params_.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
-      }
-#ifdef BAC_DEBUG_CANDIDATES
-      std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
-                  std::min(clearance, governor.clearance_cap), path_cost, heading_err,
-                  lateral_fraction, score);
-#endif
-      if (score > best_score)
-      {
-        best_score     = score;
-        best_cmd       = command;
-        best_clearance = std::min(clearance, cap_eff);
-        best_path_cost = path_cost;
-      }
-  };
+  CandidateSearch search;
 
   for (const Twist2D &command : candidate_batch.commands)
   {
-    evaluate_candidate(command);
+    search.evaluate(ctx, command);
   }
 
   // Coarse-to-fine steering: re-sample w around the coarse winner at a finer
@@ -1527,20 +1575,20 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // 2 * w_max / (w_samples - 1); the hysteresis term then makes the coarse
   // pitch itself the smallest applicable correction, which shows up as
   // tick-scale zigzag in narrow passages.
-  for (const Twist2D &command : motion_model->refinementCandidates(best_cmd))
+  for (const Twist2D &command : motion_model->refinementCandidates(search.best_cmd))
   {
-    evaluate_candidate(command);
+    search.evaluate(ctx, command);
   }
 
-  const Twist2D output = finalizeOutputCommand(filtered_points, current, best_cmd,
+  const Twist2D output = finalizeOutputCommand(filtered_points, current, search.best_cmd,
                                                rotation_admissible, remaining_path);
 
-  prev_selected_command_ = output;
-  result.output          = output;
-  result.best_clearance = best_clearance;
-  result.best_path_cost = best_path_cost;
-  result.admissible_count = admissible_count;
-  result.candidate_count  = candidate_count;
+  prev_selected_command_  = output;
+  result.output           = output;
+  result.best_clearance   = search.best_clearance;
+  result.best_path_cost   = search.best_path_cost;
+  result.admissible_count = search.admissible_count;
+  result.candidate_count  = search.candidate_count;
 
   // A holding-still report has to mean holding still in EVERY axis. Testing
   // `out_v` and `out_w` alone reported STOP while the body was still sliding
