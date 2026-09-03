@@ -44,8 +44,9 @@ constexpr float kPi = 3.14159265358979323846f;
 /// stop_decel would make a braking distance infinite or negative, and the
 /// speed inverted from it meaningless. One constant, because the two users are
 /// two different formulas over the same deceleration - brakingDistance() below
-/// goes speed -> distance, safe_speed_for() in BacCore::process() inverts
-/// distance -> speed - so what they must share is the number, not a function.
+/// goes speed -> distance, safe_speed_for() in BacCore::finalizeOutputCommand()
+/// inverts distance -> speed - so what they must share is the number, not a
+/// function.
 ///
 /// PRODUCTION ONLY, and say so rather than let "one definition" be read wider
 /// than it is. test/omni_scenarios.cpp applies the same floor in three places
