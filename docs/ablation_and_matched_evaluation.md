@@ -157,7 +157,7 @@ world、出現時刻、初期状態で、BACは25.6 sで完走し、DWBは最終
 
 数値ベンチマークとは独立したBAC 1系列をGazebo Classic 11.10.2 / ROS 2 Humbleで収録した。上には
 GitHub上で再生できるGIF previewを掲載し、[高画質MP4](media/bac_gazebo_adaptive_clearance.mp4)も保存する。20 Hz
-ray sensor、odometry、body contact sensor、差動駆動を接続し、上流は最大0.35 m/sで中心線を追従する。
+ray sensor、odometry、body contact sensor、差動二輪を接続し、上流は最大0.35 m/sで中心線を追従する。
 静的offset障害物の回避・中心線復帰・幅1.0 mのgate通過を左から右への連続takeにした。局所障害物の
 入力horizonは2.5 mで、有限local costmap相当のデモ条件であり、default推奨値ではない。
 0.50 mのbodyと左右0.12 mの設定marginを合わせた必要幅は0.74 mである。Humble環境ではJazzy Nav2

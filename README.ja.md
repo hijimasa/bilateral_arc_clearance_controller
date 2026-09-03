@@ -188,17 +188,17 @@ python3 test/plot_traces.py --dir traces goal_lateral_near goal_behind
 
 ## 統合時の落とし穴
 
-4台の深度カメラを積んだ差動駆動の屋外ロボットにBACを導入した際に、実際に時間を
-取られた点。いずれもエラーメッセージは出ず、コントローラの挙動がおかしいという形で
+4台の深度カメラを積んだ差動二輪の屋外ロボットにBACを導入した際に、実際に時間を
+取られた点。いずれもエラーメッセージは出ず、controllerの挙動がおかしいという形で
 現れる。
 
-### コントローラに本物の現在速度を渡す
+### controllerに本物の現在速度を渡す
 
 BACは、Nav2が `computeVelocityCommands` に渡す速度を中心とした加速度制限ウィンドウ
 （`current.v ± acc_v * window_time`）から前進速度をサンプリングする。
-`controller_server` はその速度を自身のオドメトリスムーザから取り、その
+`controller_server` はその速度を自身のodometry smootherから取り、その
 `odom_topic` パラメータの**既定値は `odom`** である。そのトピックを誰も publish して
-いないとスムーザは毎周期ゼロを報告し、BACは `acc_v * window_time` を超える候補を
+いないとsmootherは毎周期ゼロを報告し、BACは `acc_v * window_time` を超える候補を
 出せない。`acc_v: 0.4` と既定の `window_time: 0.25` なら 0.1 m/s である。しかも
 停止していると伝えられ続けるため、二度と上がらない。
 
@@ -215,15 +215,15 @@ controller_server:
 存在するトピック名を指すだけでは足りない。`OdomSmoother` が読むのは `twist.twist`
 だけで `pose` は一切見ない。位置だけ埋めて twist をゼロのままにしている publisher は
 珍しくないが、その場合は購読が成立したまま、警告も出ないまま、まったく同じ症状に
-なる。差動駆動なら `twist.twist.linear.x` と `twist.twist.angular.z` に実際の機体速度が
+なる。差動二輪なら `twist.twist.linear.x` と `twist.twist.angular.z` に実際の機体速度が
 入っている必要がある（メッセージ規約どおり `child_frame_id` 系）。走行中に
 `ros2 topic echo` で覗けばそれで確認できる。
 
 通常の `ros2_control` 構成では、中身は問題にならない。`diff_drive_controller` も
 `robot_localization` の `ekf_node` も twist を正しく埋めて publish する。問題になるのは
 **名前**のほう。`diff_drive_controller` の publish 先は `~/odom`、つまりその名前の
-コントローラなら `/diff_drive_controller/odom` であり、Nav2 の既定は `odom` である。
-`odom_topic` に実際の名前を設定するか、コントローラの出力を `/odom` に remap するか、
+controllerなら `/diff_drive_controller/odom` であり、Nav2 の既定は `odom` である。
+`odom_topic` に実際の名前を設定するか、controllerの出力を `/odom` に remap するか、
 どちらかを行うこと。どちらもしていない構成が、黙って失敗する構成である。車輪と
 Nav2 の間にフィルタを挟む場合は、フィルタ後の推定値を Nav2 に渡す。計画に使う速度と
 自己位置に使う `odom -> base_link` が同じ出所になるようにするため。
@@ -269,16 +269,16 @@ Control loop missed its desired rate of 20.0000 Hz. Current loop rate is 6.4103
   たいていロボットが既に自身のマージンの内側に入っている。
 - `admissible_count` は十分あるのに指令がゼロのまま: スコアリングが停止か旋回を
   選んでいる。前進していた候補があるかは `best_path_cost_m` で分かる。
-- `obstacle_source` は生スキャンとコストマップのどちらを見ているかを示す。
-  コントローラを疑う前に、何を見せていたのかを確認する価値がある。
+- `obstacle_source` は生スキャンとcostmapのどちらを見ているかを示す。
+  controllerを疑う前に、何を見せていたのかを確認する価値がある。
 
 ### ロボット自身の構造を障害物入力から除く
 
 デッキに載せたカメラは、全フレームの下端に自機のシャシーを写す。その点は距離ゼロの
 障害物としてロボットと一緒に動き回り、クリアランス項は永久に前進を許さなくなる。
-コストマップやスキャンがBACに届く前に、画像の帯をクロップし、自機の体積を点群から
+costmapやスキャンがBACに届く前に、画像の帯をクロップし、自機の体積を点群から
 差し引くこと（`base_link` での負の `CropBox`）。そのボックスはシャシーに密着させる。
-削った領域はコントローラから見えないので、広すぎるボックスはバンパー直前の本物の
+削った領域はcontrollerから見えないので、広すぎるボックスはバンパー直前の本物の
 障害物を静かに消してしまう。
 
 ## 制約
