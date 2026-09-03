@@ -207,7 +207,7 @@ They are not probabilistic or universal claims about untested environments.
   that this package's own `testNarrowCorridorCentering` uses give **the same 72 and 16 in all four
   conditions** (measured). Drop the window and the threshold does matter: corridor width / 2 plus wall
   thickness gives the 83 detours and 5 non-traversals totalled below, and 0.35 taken over the whole run gives
-  324 detours and 0 non-traversals. Those are the four cells measured. The 72 / 16 the first pass of the R19 M3
+  324 detours and 0 non-traversals. Those are the four criteria measured. The 72 / 16 the first pass of the R19 M3
   response wrote here reproduces exactly under that windowed criterion, the one
   `testNarrowCorridorCentering` uses - so that split was not wrong, it simply never stated its criterion
   (established by the R19 verification).
