@@ -113,7 +113,10 @@ The published benchmark observations below use the differential-drive model.
   that is driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
   rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
   degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is gated to passages — bounded on both
-  sides and open straight ahead. **The measurement conditions are stated here** because R15 M12 found that a table
+  sides and open straight ahead. The cap is `footprint.width / 2 + avoid_margin.side`: for the shipped
+  holonomic body, 0.5 m wide, an `avoid_margin.side` of 0.5 puts that cap at 0.75 m, so an ordinary 1.6 m
+  corridor reads as "open" on the far side and the term never fires at all.
+  **The measurement conditions are stated here** because R15 M12 found that a table
   without them did not reproduce on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH
   models, a 7.5 m corridor (x = 2.0 to 9.5 m), `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
   1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, with 0.10 m thick walls, is 0.0131 / 0.0148 / 0.0171 / 0.0159 / 0.0160 m against
@@ -136,7 +139,8 @@ The published benchmark observations below use the differential-drive model.
   this kind was FOUND above 0.739; that is a measurement at 0.0002 resolution and does not rule out a narrower
   one. (R19, fourth pass: the interval given here was 0.0157-0.0163, which 28 of the 807 points fall outside;
   it had been carried over from a coarser subsample. Re-measured over all 807.) The shipped 0.9
-  sits well clear of the region, and 0.8 (0.016102) reaches essentially the same value as 0.9 (0.015945). R19 H4:
+  sits well clear of the region, and 0.8 (0.016102) reaches essentially the same value as 0.9 (0.015945),
+  so the shipped 0.9 is a margin over that boundary rather than a required value. R19 H4:
   this paragraph previously said 0.705 and 0.710 are back above 0.18 and that it is stable from 0.715 - the
   0.1900 and 0.1869 belong to 0.695 and 0.705, one and two cells off, and 0.725 is a counterexample that was
   missing. The first pass of the R19 response replaced that with "stable below 0.017 from 0.730 up", which is
