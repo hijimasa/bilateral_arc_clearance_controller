@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -346,135 +345,47 @@ bool g_shipped_config_loaded = false;
 bac::Params
 shippedExampleParams()
 {
-  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_OMNI_CONFIG_PATH);
   bac::Params params;
-  if (!config.readable || config.entries.empty())
+  bac_sim::ShippedConfigSpec spec;
+  spec.path       = BAC_OMNI_CONFIG_PATH;
+  spec.label      = "holonomic";
+  spec.model_name = "omni";
+  spec.allowed    = kAllowedUnconsumedKeys;
+  spec.bindings   = {
+      bac_sim::bindNumber("footprint.front", params.footprint.front),
+      bac_sim::bindNumber("footprint.rear", params.footprint.rear),
+      bac_sim::bindNumber("footprint.width", params.footprint.width),
+      bac_sim::bindNumber("safety_margin.front", params.safety_margin.front),
+      bac_sim::bindNumber("safety_margin.rear", params.safety_margin.rear),
+      bac_sim::bindNumber("safety_margin.side", params.safety_margin.side),
+      bac_sim::bindNumber("avoid_margin.side", params.avoid_margin.side),
+      bac_sim::bindNumber("limits.v_max", params.limits.v_max),
+      bac_sim::bindNumber("limits.v_min", params.limits.v_min),
+      bac_sim::bindNumber("limits.vy_max", params.limits.vy_max),
+      bac_sim::bindNumber("limits.w_max", params.limits.w_max),
+      bac_sim::bindNumber("limits.acc_v", params.limits.acc_v),
+      bac_sim::bindNumber("limits.acc_w", params.limits.acc_w),
+      bac_sim::bindNumber("control_period", params.control_period),
+      bac_sim::bindNumber("stop_decel", params.stop_decel),
+      bac_sim::bindNumber("brake_reaction_time", params.brake_reaction_time),
+      bac_sim::bindNumber("heading_gain", params.heading_gain),
+      bac_sim::bindInteger("vy_samples", params.vy_samples),
+      bac_sim::bindNumber("weights.clearance", params.weights.clearance),
+      bac_sim::bindNumber("weights.path_dist", params.weights.path_dist),
+      bac_sim::bindNumber("weights.balance", params.weights.balance),
+      bac_sim::bindNumber("weights.heading", params.weights.heading),
+      bac_sim::bindNumber("weights.hysteresis", params.weights.hysteresis),
+      bac_sim::bindNumber("weights.squeeze", params.weights.squeeze),
+      bac_sim::bindNumber("sim_time", params.sim_time),
+  };
+
+  const bac_sim::ShippedConfigVerdict verdict = bac_sim::checkShippedConfig(spec, expect);
+  if (!verdict.readable)
   {
-    expect(false, "the shipped holonomic configuration is readable at " BAC_OMNI_CONFIG_PATH);
     return params;
   }
-
-  bool complete = true;
-  std::vector<std::string> consumed;
-  const auto value_of = [&](const char *key) -> const bac_sim::ConfigEntry * {
-    consumed.push_back(key);
-    const auto found = config.entries.find(key);
-    if (found == config.entries.end())
-    {
-      expect(false, std::string("the shipped configuration declares ") + key);
-      complete = false;
-      return nullptr;
-    }
-    if (found->second.section != "FollowPath")
-    {
-      expect(false, std::string("the shipped configuration keeps ") + key +
-                        " inside the FollowPath block users copy (found under '" +
-                        found->second.section + "' on line " +
-                        std::to_string(found->second.line) + ")");
-      complete = false;
-      return nullptr;
-    }
-    return &found->second;
-  };
-  const auto number = [&](const char *key, float &field) {
-    const bac_sim::ConfigEntry *entry = value_of(key);
-    if (entry == nullptr)
-    {
-      return;
-    }
-    char *end = nullptr;
-    const float parsed = std::strtof(entry->value.c_str(), &end);
-    if (end == entry->value.c_str() || *end != '\0' || !std::isfinite(parsed))
-    {
-      expect(false, std::string("the shipped configuration gives ") + key +
-                        " a plain finite number (got '" + entry->value + "' on line " +
-                        std::to_string(entry->line) + ")");
-      complete = false;
-      return;
-    }
-    field = parsed;
-  };
-  const auto integer = [&](const char *key, int &field) {
-    float value = 0.0f;
-    number(key, value);
-    field = static_cast<int>(value);
-  };
-
-  const bac_sim::ConfigEntry *model = value_of("motion_model.type");
-  std::string model_value = (model == nullptr) ? std::string("<missing>") : model->value;
-  // The loader takes this one as a STRING, so `"omni"` is legal YAML for it and
-  // yields the same value as the bare form - unlike a quoted number, which is a
-  // type error there too. The Ackermann guard has always stripped these quotes;
-  // this one did not, so `motion_model.type: "omni"` failed the holonomic suite
-  // alone. Measured before the change on a copy of the shipped yaml with only
-  // the quotes added: this suite reported 3 failed checks
-  // ("selects the holonomic model (got '\"omni\"')" twice, plus "every value
-  // the scenario needs was read from the shipped configuration"), while the
-  // Ackermann suite passed on the identical edit to its own yaml. The two
-  // implementations are still separate; only the quote handling is aligned
-  // here, the common guard is stage 3.
-  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
-  {
-    model_value = model_value.substr(1, model_value.size() - 2U);
-  }
-  if (model == nullptr || model_value != "omni")
-  {
-    expect(false, std::string("the shipped configuration selects the holonomic model (got '") +
-                      model_value + "')");
-    complete = false;
-  }
   params.motion_model.type = bac::MotionModelType::OMNI;
-
-  number("footprint.front", params.footprint.front);
-  number("footprint.rear", params.footprint.rear);
-  number("footprint.width", params.footprint.width);
-  number("safety_margin.front", params.safety_margin.front);
-  number("safety_margin.rear", params.safety_margin.rear);
-  number("safety_margin.side", params.safety_margin.side);
-  number("avoid_margin.side", params.avoid_margin.side);
-  number("limits.v_max", params.limits.v_max);
-  number("limits.v_min", params.limits.v_min);
-  number("limits.vy_max", params.limits.vy_max);
-  number("limits.w_max", params.limits.w_max);
-  number("limits.acc_v", params.limits.acc_v);
-  number("limits.acc_w", params.limits.acc_w);
-  number("control_period", params.control_period);
-  number("stop_decel", params.stop_decel);
-  number("brake_reaction_time", params.brake_reaction_time);
-  number("heading_gain", params.heading_gain);
-  integer("vy_samples", params.vy_samples);
-  number("weights.clearance", params.weights.clearance);
-  number("weights.path_dist", params.weights.path_dist);
-  number("weights.balance", params.weights.balance);
-  number("weights.heading", params.weights.heading);
-  number("weights.hysteresis", params.weights.hysteresis);
-  number("weights.squeeze", params.weights.squeeze);
-  number("sim_time", params.sim_time);
-
-  for (const std::string &duplicate : config.duplicates)
-  {
-    expect(false, "the shipped configuration declares " + duplicate +
-                      " only once; a repeated key means a second block is "
-                      "masking the one users copy");
-  }
-  for (const std::string &section : config.sections)
-  {
-    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
-           "the shipped configuration block '" + section + "' is one this suite knows about");
-  }
-  for (const auto &entry : config.entries)
-  {
-    if (std::find(consumed.begin(), consumed.end(), entry.first) != consumed.end())
-    {
-      continue;
-    }
-    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
-           "the shipped configuration key " + entry.first + " (line " +
-               std::to_string(entry.second.line) +
-               ") is exercised by this suite or listed in kAllowedUnconsumedKeys on purpose");
-  }
-
-  g_shipped_config_loaded = complete;
+  g_shipped_config_loaded = verdict.complete;
   return params;
 }
 

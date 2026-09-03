@@ -29,6 +29,7 @@
 #include "sim_world.hpp"
 #include "sim_runner.hpp"
 #include "metrics.hpp"
+#include "shipped_config.hpp"
 
 using namespace bac_sim;
 
@@ -74,6 +75,93 @@ struct WeightOverrides
   float hysteresis = -1.0f;
 };
 WeightOverrides g_weight_overrides;
+
+int failures = 0;
+
+void
+expect(bool condition, const std::string &message)
+{
+  if (!condition)
+  {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+/// Keys config/bac_controller.yaml may carry without this harness binding
+/// them. The same twelve the holonomic and Ackermann suites allow: three block
+/// headers plus the Nav2- and adapter-level settings that are not BacCore
+/// parameters. Everything else in the file must be bound below, so a new
+/// parameter cannot enter the differential-drive configuration without being
+/// named here on purpose.
+const std::vector<std::string> kAllowedUnconsumedKeys = {
+    "controller_server",           // block header
+    "ros__parameters",             // block header
+    "FollowPath",                  // block header: the plugin block itself
+    "controller_frequency",        // Nav2 control loop rate, not a BAC parameter
+    "controller_plugins",          // Nav2 plugin list
+    "plugin",                      // plugin class name (checked by the docker gate)
+    "scan_topic",                  // BacController scan adapter, not BacCore
+    "scan_timeout",                //   "
+    "scan_downsample",             //   "
+    "scan_min_points",             //   "
+    "scan_inf_is_valid",           //   "
+    "diagnostics_publish_period",  // diagnostics only
+};
+
+/// Guards config/bac_controller.yaml - the differential-drive file users copy
+/// first, and until now the one shipped configuration no suite could fail.
+///
+/// SAY WHAT THIS IS NOT. The holonomic and Ackermann suites RUN their shipped
+/// yaml: the Params they read drive the scenarios, so editing a value there
+/// moves a measured trajectory. The scenarios in this file run bac::Params
+/// defaults with a v_max override and do not read any yaml, so this is a check
+/// on the FILE - every key bound or allow-listed, none repeated, every bound
+/// value a plain finite number inside the FollowPath block users copy, and
+/// motion_model.type selecting diff_drive. Making the harness run the shipped
+/// values instead would be a different change: it would move every number this
+/// harness prints.
+///
+/// Failures go to stderr and to the exit code only, never to stdout, so the
+/// harness's reported output is byte-for-byte what it always was.
+void
+checkShippedDiffDriveConfig()
+{
+  bac::Params params;
+  bac_sim::ShippedConfigSpec spec;
+  spec.path       = BAC_DIFF_DRIVE_CONFIG_PATH;
+  spec.label      = "differential-drive";
+  spec.model_name = "diff_drive";
+  spec.allowed    = kAllowedUnconsumedKeys;
+  spec.bindings   = {
+      bac_sim::bindNumber("footprint.front", params.footprint.front),
+      bac_sim::bindNumber("footprint.rear", params.footprint.rear),
+      bac_sim::bindNumber("footprint.width", params.footprint.width),
+      bac_sim::bindNumber("safety_margin.front", params.safety_margin.front),
+      bac_sim::bindNumber("safety_margin.rear", params.safety_margin.rear),
+      bac_sim::bindNumber("safety_margin.side", params.safety_margin.side),
+      bac_sim::bindNumber("avoid_margin.side", params.avoid_margin.side),
+      bac_sim::bindNumber("limits.v_max", params.limits.v_max),
+      bac_sim::bindNumber("limits.v_min", params.limits.v_min),
+      bac_sim::bindNumber("limits.w_max", params.limits.w_max),
+      bac_sim::bindNumber("limits.acc_v", params.limits.acc_v),
+      bac_sim::bindNumber("limits.acc_w", params.limits.acc_w),
+      bac_sim::bindNumber("control_period", params.control_period),
+      bac_sim::bindNumber("stop_decel", params.stop_decel),
+      bac_sim::bindNumber("brake_reaction_time", params.brake_reaction_time),
+      bac_sim::bindNumber("weights.clearance", params.weights.clearance),
+      bac_sim::bindNumber("weights.path_dist", params.weights.path_dist),
+      bac_sim::bindNumber("weights.balance", params.weights.balance),
+      bac_sim::bindNumber("weights.heading", params.weights.heading),
+      bac_sim::bindNumber("weights.hysteresis", params.weights.hysteresis),
+      bac_sim::bindNumber("weights.squeeze", params.weights.squeeze),
+      bac_sim::bindNumber("sim_time", params.sim_time),
+  };
+  const bac_sim::ShippedConfigVerdict verdict = bac_sim::checkShippedConfig(spec, expect);
+  expect(verdict.complete,
+         "every value the shipped differential-drive configuration declares was read "
+         "from the FollowPath block users copy");
+}
 
 bac::BacCore
 makeCore(float v_max = 0.4f)
@@ -860,6 +948,8 @@ main(int argc, char *argv[])
     { "clutter_field", scenarioClutterField },
   };
 
+  checkShippedDiffDriveConfig();
+
   std::vector<ScenarioResult> results;
   for (const ScenarioEntry &scenario : scenarios)
   {
@@ -905,6 +995,11 @@ main(int argc, char *argv[])
             << target_failures << " target-not-met" << std::endl;
   std::cout << "Traces written to '" << csv_dir << "/' (plot with plot_traces.py)" << std::endl;
 
+  if (failures > 0)
+  {
+    std::cerr << failures << " shipped differential-drive configuration check(s) failed\n";
+    return 1;
+  }
   if (regression_failures > 0)
   {
     return 1;

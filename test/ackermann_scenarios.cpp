@@ -20,11 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
-#include <fstream>
 #include <iostream>
-#include <map>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -732,124 +728,45 @@ bool g_shipped_config_loaded = false;
 bac::Params
 shippedExampleParams()
 {
-  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_ACKERMANN_CONFIG_PATH);
   bac::Params params;
-  if (!config.readable || config.entries.empty())
+  bac_sim::ShippedConfigSpec spec;
+  spec.path       = BAC_ACKERMANN_CONFIG_PATH;
+  spec.label      = "Ackermann";
+  spec.model_name = "ackermann";
+  spec.allowed    = kAllowedUnconsumedKeys;
+  spec.bindings   = {
+      bac_sim::bindNumber("turn_radius_min", params.turn_radius_min),
+      bac_sim::bindNumber("footprint.front", params.footprint.front),
+      bac_sim::bindNumber("footprint.rear", params.footprint.rear),
+      bac_sim::bindNumber("footprint.width", params.footprint.width),
+      bac_sim::bindNumber("safety_margin.front", params.safety_margin.front),
+      bac_sim::bindNumber("safety_margin.rear", params.safety_margin.rear),
+      bac_sim::bindNumber("safety_margin.side", params.safety_margin.side),
+      bac_sim::bindNumber("avoid_margin.side", params.avoid_margin.side),
+      bac_sim::bindNumber("limits.v_max", params.limits.v_max),
+      bac_sim::bindNumber("limits.v_min", params.limits.v_min),
+      bac_sim::bindNumber("limits.w_max", params.limits.w_max),
+      bac_sim::bindNumber("limits.acc_v", params.limits.acc_v),
+      bac_sim::bindNumber("limits.acc_w", params.limits.acc_w),
+      bac_sim::bindNumber("control_period", params.control_period),
+      bac_sim::bindNumber("stop_decel", params.stop_decel),
+      bac_sim::bindNumber("brake_reaction_time", params.brake_reaction_time),
+      bac_sim::bindNumber("weights.clearance", params.weights.clearance),
+      bac_sim::bindNumber("weights.path_dist", params.weights.path_dist),
+      bac_sim::bindNumber("weights.balance", params.weights.balance),
+      bac_sim::bindNumber("weights.heading", params.weights.heading),
+      bac_sim::bindNumber("weights.hysteresis", params.weights.hysteresis),
+      bac_sim::bindNumber("weights.squeeze", params.weights.squeeze),
+      bac_sim::bindNumber("sim_time", params.sim_time),
+  };
+
+  const bac_sim::ShippedConfigVerdict verdict = bac_sim::checkShippedConfig(spec, expect);
+  if (!verdict.readable)
   {
-    expect(false, "the shipped Ackermann configuration is readable at "
-                      BAC_ACKERMANN_CONFIG_PATH);
     return params;
   }
-
-  bool complete = true;
-  std::set<std::string> consumed;
-
-  // A quoted or unit-suffixed number is a type error for the real parameter
-  // loader, and `.inf` / `nan` are values no vehicle can drive; report the KEY
-  // rather than letting std::stof abort the process without one (R14 L5).
-  const auto parseNumber = [](const std::string &text, float &out) {
-    const char *begin = text.c_str();
-    char *end = nullptr;
-    const float parsed = std::strtof(begin, &end);
-    if (end == begin || *end != '\0' || !std::isfinite(parsed))
-    {
-      return false;
-    }
-    out = parsed;
-    return true;
-  };
-
-  const auto number = [&](const char *key, float &field) {
-    consumed.insert(key);
-    const auto found = config.entries.find(key);
-    if (found == config.entries.end())
-    {
-      expect(false, std::string("the shipped configuration declares ") + key);
-      complete = false;
-      return;
-    }
-    if (!parseNumber(found->second.value, field))
-    {
-      expect(false, std::string("the shipped configuration gives ") + key +
-                        " a plain finite number (got '" + found->second.value +
-                        "' on line " + std::to_string(found->second.line) + ")");
-      complete = false;
-    }
-  };
-
-  consumed.insert("motion_model.type");
-  const auto model = config.entries.find("motion_model.type");
-  std::string model_value = model == config.entries.end() ? std::string{} : model->second.value;
-  // The loader takes this one as a string, so `"ackermann"` is legal YAML for
-  // it - unlike a quoted number above, which is a type error there too.
-  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
-  {
-    model_value = model_value.substr(1, model_value.size() - 2U);
-  }
-  if (model_value != "ackermann")
-  {
-    expect(false, "the shipped configuration selects the Ackermann model (got '" +
-                      model_value + "')");
-    complete = false;
-  }
   params.motion_model.type = bac::MotionModelType::ACKERMANN;
-
-  number("turn_radius_min", params.turn_radius_min);
-  number("footprint.front", params.footprint.front);
-  number("footprint.rear", params.footprint.rear);
-  number("footprint.width", params.footprint.width);
-  number("safety_margin.front", params.safety_margin.front);
-  number("safety_margin.rear", params.safety_margin.rear);
-  number("safety_margin.side", params.safety_margin.side);
-  number("avoid_margin.side", params.avoid_margin.side);
-  number("limits.v_max", params.limits.v_max);
-  number("limits.v_min", params.limits.v_min);
-  number("limits.w_max", params.limits.w_max);
-  number("limits.acc_v", params.limits.acc_v);
-  number("limits.acc_w", params.limits.acc_w);
-  number("control_period", params.control_period);
-  number("stop_decel", params.stop_decel);
-  number("brake_reaction_time", params.brake_reaction_time);
-  number("weights.clearance", params.weights.clearance);
-  number("weights.path_dist", params.weights.path_dist);
-  number("weights.balance", params.weights.balance);
-  number("weights.heading", params.weights.heading);
-  number("weights.hysteresis", params.weights.hysteresis);
-  number("weights.squeeze", params.weights.squeeze);
-  number("sim_time", params.sim_time);
-
-  // --- the guard is on the FILE, not on the key list above (R14 H1) ---
-  for (const std::string &duplicate : config.duplicates)
-  {
-    expect(false, "the shipped configuration declares " + duplicate +
-                      " only once; a repeated key means a second block is "
-                      "masking the one users copy");
-  }
-  for (const std::string &section : config.sections)
-  {
-    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
-           "the shipped configuration block '" + section +
-               "' is one this suite knows about");
-  }
-  for (const auto &entry : config.entries)
-  {
-    if (consumed.count(entry.first) != 0U)
-    {
-      expect(entry.second.section == "FollowPath",
-             "the shipped configuration keeps " + entry.first +
-                 " inside the FollowPath block users copy (found under '" +
-                 entry.second.section + "' on line " +
-                 std::to_string(entry.second.line) + ")");
-      continue;
-    }
-    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
-           "the shipped configuration key " + entry.first + " (line " +
-               std::to_string(entry.second.line) +
-               ") is exercised by this suite or listed in "
-               "kAllowedUnconsumedKeys on purpose");
-  }
-
-  g_shipped_config_loaded = complete;
+  g_shipped_config_loaded = verdict.complete;
   return params;
 }
 

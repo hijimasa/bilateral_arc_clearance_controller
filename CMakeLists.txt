@@ -196,6 +196,12 @@ if(BUILD_TESTING)
 
   add_executable(bac_scenario_harness test/scenarios.cpp)
   target_include_directories(bac_scenario_harness PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  # The harness guards the shipped DIFFERENTIAL-DRIVE configuration - the file
+  # users copy first, and until this define existed the one shipped yaml no
+  # suite could fail. Structure only: the scenarios below run bac::Params
+  # defaults, not these values. See checkShippedDiffDriveConfig().
+  target_compile_definitions(bac_scenario_harness PRIVATE
+      BAC_DIFF_DRIVE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/bac_controller.yaml")
   target_link_libraries(bac_scenario_harness bac_core)
   target_compile_options(bac_scenario_harness PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME BacScenarioHarness COMMAND bac_scenario_harness --strict)
