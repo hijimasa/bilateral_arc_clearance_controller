@@ -1986,11 +1986,26 @@ testGoalOrientationIsHeld()
   float diff_error = 1e9f;
   float worst_yaw = 0.0f;
   float worst_position = 0.0f;
+
+  // The reference run is made ONCE, not once per orientation.
+  // DiffDriveMotionModel::acceptsGoalHeading() is false, so BacCore drops
+  // goal_heading before it reaches the scoring and the differential-drive
+  // vehicle drives the same trajectory whatever orientation is asked for.
+  // MEASURED, not reasoned from the flag: the six runs this loop used to make
+  // were bit-identical - same 1800 ticks, same FNV-1a hash over every tick's
+  // pose, commanded twist and status, and the same final pose
+  // (3.75313568, 1.84155524, 0.540624559) - so five of them were 9000 ticks of
+  // repeated arithmetic. 0.0f is passed because that is the case measured; the
+  // other five produced the identical run.
+  bac::BacCore reference(diffDriveReferenceParams());
+  const OmniRun diff_run = runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f,
+                                   90.0f, LateralWindow{}, 0.0f);
+
+  // diff_error is still the minimum over the SET of orientations - the
+  // reference heading is one number, but how far it lands from what was asked
+  // for is not - so hoisting the run does not change it.
   for (const float goal_yaw : { 0.0f, -1.2f, 1.5f, 2.5f, -2.8f, 3.0f })
   {
-    bac::BacCore reference(diffDriveReferenceParams());
-    const OmniRun diff_run = runOmni(reference, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f,
-                                     90.0f, LateralWindow{}, goal_yaw);
     bac::BacCore core(omniParams());
     const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 4.0f, 2.0f, 90.0f,
                                 LateralWindow{}, goal_yaw);
