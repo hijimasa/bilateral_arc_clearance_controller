@@ -13,6 +13,15 @@
 namespace bac::detail
 {
 
+// Declared in the header: the emergency governor in bac_core.cpp needs the
+// same support function for its slab test.
+float
+supportExtent(const Footprint &body, float dx, float dy)
+{
+  const float along = (dx >= 0.0f) ? body.front * dx : body.rear * dx;
+  return along + (body.width / 2.0f) * std::fabs(dy);
+}
+
 namespace
 {
 
@@ -51,16 +60,6 @@ struct SweptFrame
   float sweep_r_min = 0.0f;  // nearest body point to the centre
   float sweep_r_max = 0.0f;  // farthest body point from it
 };
-
-/// Largest projection of the footprint rectangle onto `d`. For `d = (1, 0)`
-/// this is `front`, and for `d = (0, 1)` it is `width / 2`, so a
-/// non-holonomic command reproduces the front/rear/half-width extents exactly.
-float
-supportExtent(const Footprint &body, float dx, float dy)
-{
-  const float along = (dx >= 0.0f) ? body.front * dx : body.rear * dx;
-  return along + (body.width / 2.0f) * std::fabs(dy);
-}
 
 SweptFrame
 makeSweptFrame(const Footprint &body, const Twist2D &command)

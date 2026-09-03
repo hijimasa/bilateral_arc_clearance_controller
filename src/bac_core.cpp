@@ -165,9 +165,12 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   }
   const float travel_nx = -travel_uy;
   const float travel_ny = travel_ux;
+  // The footprint's support function, shared with the swept-arc frame in
+  // arc_trajectory_evaluator.cpp. The governor and the arc evaluator are
+  // required to measure the body the same way; a second copy of the formula
+  // here let them drift apart silently.
   const auto support = [&](float dx, float dy) {
-    const float along = (dx >= 0.0f) ? params.footprint.front * dx : params.footprint.rear * dx;
-    return along + body_y_half_base * std::fabs(dy);
+    return detail::supportExtent(params.footprint, dx, dy);
   };
   const float travel_lead = support(travel_ux, travel_uy) + brake_distance;
   // The swept box's lateral interval is [-travel_right, travel_left] and is NOT
