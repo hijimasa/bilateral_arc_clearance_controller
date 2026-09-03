@@ -165,7 +165,6 @@ testCurvatureCandidateLattice()
     }
   }
   expect(!found_in_place_rotation, "Ackermann lattice never offers in-place rotation");
-  expect(!model.supportsInPlaceRotation(), "Ackermann reports no in-place rotation support");
   expect(!model.isCommandKinematicallyValid({ 0.0f, 0.2f }),
          "zero-speed yaw command is rejected");
 
@@ -321,7 +320,10 @@ testBodyReachabilityAndFactory()
 
   const std::unique_ptr<bac::detail::MotionModel> from_factory =
       bac::detail::makeMotionModel(params);
-  expect(!from_factory->supportsInPlaceRotation(),
+  // The predicate that distinguishes this model from BOTH others: the
+  // differential-drive and holonomic models answer true here for a far
+  // obstacle, and Ackermann answers false unconditionally.
+  expect(!from_factory->isInPlaceRotationAdmissible({ { 2.0f, 0.0f } }),
          "factory selects the configured Ackermann policy");
 }
 

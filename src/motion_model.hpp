@@ -60,9 +60,6 @@ public:
   /// heading is whatever the path tangent leaves behind.
   virtual bool acceptsGoalHeading() const = 0;
 
-  /// The model can emit a standstill rotation `(0, w)` at all.
-  virtual bool supportsInPlaceRotation() const = 0;
-
   /// The model needs to rotate onto the path tangent BEFORE it can translate
   /// along it. True for differential drive; false for Ackermann, which cannot
   /// rotate on the spot, and false for holonomic models, which can translate

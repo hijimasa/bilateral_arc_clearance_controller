@@ -138,12 +138,6 @@ DiffDriveMotionModel::acceptsGoalHeading() const
 }
 
 bool
-DiffDriveMotionModel::supportsInPlaceRotation() const
-{
-  return true;
-}
-
-bool
 DiffDriveMotionModel::usesRotateBeforeTranslate() const
 {
   // A differential-drive body cannot translate sideways, so a path tangent

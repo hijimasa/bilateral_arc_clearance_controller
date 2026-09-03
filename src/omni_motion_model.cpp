@@ -208,15 +208,6 @@ OmniMotionModel::acceptsGoalHeading() const
 }
 
 bool
-OmniMotionModel::supportsInPlaceRotation() const
-{
-  // A holonomic body can yaw while holding station, and the pose regulator
-  // asks it to whenever translation is blocked but the heading is still off
-  // the tangent. The sweep is checked like any other rotation.
-  return true;
-}
-
-bool
 OmniMotionModel::usesRotateBeforeTranslate() const
 {
   // Rotating onto the tangent before moving buys a holonomic body nothing: it

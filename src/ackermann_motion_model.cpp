@@ -195,12 +195,6 @@ AckermannMotionModel::acceptsGoalHeading() const
 }
 
 bool
-AckermannMotionModel::supportsInPlaceRotation() const
-{
-  return false;
-}
-
-bool
 AckermannMotionModel::usesRotateBeforeTranslate() const
 {
   // A steered vehicle cannot rotate on the spot at all, so it never aligns
@@ -214,8 +208,9 @@ AckermannMotionModel::isInPlaceRotationAdmissible(
 {
   // Unconditional, and load-bearing: a steered vehicle cannot rotate on the
   // spot at any clearance, so no point cloud can make a standstill rotation
-  // admissible. BacCore relies on this to gate rotation on this predicate
-  // alone, without a separate `supportsInPlaceRotation()` conjunct.
+  // admissible. BacCore gates rotation on this predicate ALONE, which is only
+  // correct because of that. There is no separate capability predicate on
+  // MotionModel to fall back on - this answer is the whole of it.
   return false;
 }
 

@@ -298,8 +298,6 @@ testRotationPredicatesAreSeparate()
 {
   const bac::Params params = omniParams();
   const bac::detail::OmniMotionModel model(params);
-  expect(model.supportsInPlaceRotation(),
-         "a holonomic body can hold station and yaw onto the tangent");
   expect(!model.usesRotateBeforeTranslate(),
          "a holonomic body never has to align before translating");
   expect(model.acceptsGoalHeading(),
@@ -336,7 +334,7 @@ testInvalidConfigurationsAreRejected()
     try
     {
       const bac::detail::OmniMotionModel model(params);
-      (void)model.supportsInPlaceRotation();
+      (void)model.usesRotateBeforeTranslate();
       construct_threw = validate_threw;  // the class trusts the validator
     }
     catch (const std::invalid_argument &)

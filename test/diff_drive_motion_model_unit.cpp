@@ -93,7 +93,6 @@ testInPlaceRotationSweep()
          "far obstacle permits in-place rotation");
   expect(!model.isInPlaceRotationAdmissible({ { 0.55f, 0.0f } }),
          "point inside circumscribed sweep blocks in-place rotation");
-  expect(model.supportsInPlaceRotation(), "differential drive supports in-place rotation");
 
   const bac::Twist2D limited = model.limitReachableCommand(
       bac::Twist2D(0.2f, 0.1f), bac::Twist2D(0.2f, 0.8f));

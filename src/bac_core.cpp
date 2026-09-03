@@ -917,8 +917,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // in-place rotation sweeps the disk of the circumscribed radius.
   // `isInPlaceRotationAdmissible` alone: a model that cannot rotate on the
   // spot answers false unconditionally (see AckermannMotionModel), so the
-  // former `supportsInPlaceRotation() && ...` conjunction could never differ
-  // from its right-hand side, and the short circuit saved nothing.
+  // capability predicate this used to be conjoined with could never differ
+  // from its right-hand side. It saved nothing and has since been removed
+  // from MotionModel entirely.
   const bool rotation_admissible =
       motion_model->isInPlaceRotationAdmissible(filtered_points);
   // Rotating onto the tangent before translating is a differential-drive
