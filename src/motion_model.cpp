@@ -6,6 +6,7 @@
 
 #include "motion_model.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <stdexcept>
@@ -31,6 +32,23 @@ projectNonHolonomic(const Twist2D &command, float duration)
   pose.x = radius * std::sin(pose.theta);
   pose.y = radius * (1.0f - std::cos(pose.theta));
   return pose;
+}
+
+bool
+circumscribedDiskFree(const Footprint &body, const std::vector<Point2D> &points)
+{
+  const float longitudinal = std::max(body.front, -body.rear);
+  const float half_width = body.width / 2.0f;
+  const float circumscribed =
+      std::sqrt(longitudinal * longitudinal + half_width * half_width);
+  for (const Point2D &point : points)
+  {
+    if (std::sqrt(point.x * point.x + point.y * point.y) < circumscribed + 0.02f)
+    {
+      return false;
+    }
+  }
+  return true;
 }
 
 void

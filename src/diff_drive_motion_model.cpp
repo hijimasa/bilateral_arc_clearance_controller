@@ -155,19 +155,9 @@ bool
 DiffDriveMotionModel::isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const
 {
   // A full in-place rotation sweeps the disk of the circumscribed radius.
-  // This deliberately preserves the former conservative BacCore test.
-  const float longitudinal = std::max(params_.footprint.front, -params_.footprint.rear);
-  const float half_width = params_.footprint.width / 2.0f;
-  const float circumscribed =
-      std::sqrt(longitudinal * longitudinal + half_width * half_width);
-  for (const Point2D &point : points)
-  {
-    if (std::sqrt(point.x * point.x + point.y * point.y) < circumscribed + 0.02f)
-    {
-      return false;
-    }
-  }
-  return true;
+  // This deliberately preserves the former conservative BacCore test, and is
+  // shared with the holonomic model, which sweeps the same disk.
+  return circumscribedDiskFree(params_.footprint, points);
 }
 
 float

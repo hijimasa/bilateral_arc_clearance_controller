@@ -228,20 +228,10 @@ OmniMotionModel::usesRotateBeforeTranslate() const
 bool
 OmniMotionModel::isInPlaceRotationAdmissible(const std::vector<Point2D> &points) const
 {
-  // Identical conservative test to the differential-drive model: a full
-  // in-place rotation sweeps the disk of the circumscribed radius.
-  const float longitudinal = std::max(params_.footprint.front, -params_.footprint.rear);
-  const float half_width = params_.footprint.width / 2.0f;
-  const float circumscribed =
-      std::sqrt(longitudinal * longitudinal + half_width * half_width);
-  for (const Point2D &point : points)
-  {
-    if (std::sqrt(point.x * point.x + point.y * point.y) < circumscribed + 0.02f)
-    {
-      return false;
-    }
-  }
-  return true;
+  // A full in-place rotation sweeps the disk of the circumscribed radius.
+  // The same conservative test the differential-drive model uses - now the
+  // same code, so the two cannot drift apart.
+  return circumscribedDiskFree(params_.footprint, points);
 }
 
 float

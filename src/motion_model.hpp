@@ -103,6 +103,16 @@ public:
 ProjectedPose2D projectNonHolonomic(const Twist2D &command, float duration);
 
 /**
+ * True when no point lies inside the disk that a full in-place rotation of
+ * `body` sweeps, plus a 2 cm allowance.
+ *
+ * The conservative standstill-rotation test, shared by the differential-drive
+ * and holonomic models: both sweep the same circumscribed disk, so both ask
+ * the same question. Preserves the former BacCore test exactly.
+ */
+bool circumscribedDiskFree(const Footprint &body, const std::vector<Point2D> &points);
+
+/**
  * Rejects a kinematic configuration no model can honour.
  *
  * Separated from makeMotionModel so a caller can validate BEFORE mutating the
