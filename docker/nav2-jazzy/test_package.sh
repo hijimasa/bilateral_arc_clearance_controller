@@ -51,6 +51,18 @@ if [[ ! -f "${PLUGIN_DESCRIPTION}" ]]; then
   exit 3
 fi
 
+# --- installed documentation links ------------------------------------------
+# The installed documentation links INTO docker/ and examples/, which is the
+# only reason those two directories are installed at all. Nothing but a comment
+# in CMakeLists.txt held that coupling until this ran. It lives here and not in
+# ctest because it needs an install tree: every install() rule is inside
+# `if(ament_cmake_FOUND)`, so a plain host build installs nothing, and the
+# ctest entries run against the build tree.
+if ! python3 "${SOURCE_DIR}/test/check_installed_links.py" "${PACKAGE_PREFIX}"; then
+  echo "Installed documentation has broken relative links" >&2
+  exit 7
+fi
+
 # --- Ackermann motion model -------------------------------------------------
 # The suite above passes even if the Ackermann tests were never registered, so
 # require the labelled subset to exist and run.
