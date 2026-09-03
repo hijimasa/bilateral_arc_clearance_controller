@@ -360,6 +360,102 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   return result;
 }
 
+// Station goal: decimated projection polyline with cumulative arc length.
+// Candidates are scored by projection station (progress) and path tangent.
+struct StationPath
+{
+  std::vector<Point2D> pts;
+  std::vector<float>   s;
+  std::vector<bool>    blocked;
+  size_t               i0 = 0;           // robot's own projection segment
+  float                s0 = 0.0f;        // robot's own projection station
+  bool                 degenerate = true;
+  float                total      = 0.0f;
+};
+
+StationPath
+buildStationPath(const std::vector<Point2D> &path,
+                 const std::vector<Point2D> &filtered_points, const Params &params)
+{
+  StationPath station;
+  if (path.size() >= 2)
+  {
+    station.pts.reserve(path.size());
+    station.pts.push_back(path.front());
+    for (const Point2D &p : path)
+    {
+      const Point2D &last = station.pts.back();
+      const float dx = p.x - last.x, dy = p.y - last.y;
+      if (dx * dx + dy * dy >= 0.04f)  // resample at >= 0.2 m spacing
+      {
+        station.pts.push_back(p);
+      }
+    }
+    {
+      const Point2D &last = station.pts.back();
+      const float dx = path.back().x - last.x, dy = path.back().y - last.y;
+      if (dx * dx + dy * dy > 1e-6f)
+      {
+        station.pts.push_back(path.back());
+      }
+    }
+    station.s.assign(station.pts.size(), 0.0f);
+    for (size_t i = 1; i < station.pts.size(); ++i)
+    {
+      const float dx = station.pts[i].x - station.pts[i - 1].x;
+      const float dy = station.pts[i].y - station.pts[i - 1].y;
+      station.s[i]   = station.s[i - 1] + std::sqrt(dx * dx + dy * dy);
+    }
+    // Segments blocked by an obstacle (degraded plan) exert no LATERAL
+    // attraction: pulling back onto a blocked line fights the swerve the
+    // clearance terms are trying to make. Progress and tangent still apply.
+    station.blocked.assign(station.pts.size(), false);
+    const float block_radius   = params.footprint.width / 2.0f;
+    const float block_r2       = block_radius * block_radius;
+    for (size_t i = 0; i + 1 < station.pts.size(); ++i)
+    {
+      const float ax = station.pts[i].x, ay = station.pts[i].y;
+      const float vx = station.pts[i + 1].x - ax, vy = station.pts[i + 1].y - ay;
+      const float len2 = std::max(vx * vx + vy * vy, 1e-9f);
+      for (const Point2D &o : filtered_points)
+      {
+        float t = std::max(0.0f, std::min(1.0f, ((o.x - ax) * vx + (o.y - ay) * vy) / len2));
+        const float qx = ax + t * vx, qy = ay + t * vy;
+        if ((o.x - qx) * (o.x - qx) + (o.y - qy) * (o.y - qy) < block_r2)
+        {
+          station.blocked[i] = true;
+          break;
+        }
+      }
+    }
+    // Robot projection (origin). Candidate projections search only from this
+    // segment forward, which keeps the station monotone on paths that pass
+    // near themselves.
+    float best_d2 = FLT_MAX;
+    for (size_t i = 0; i + 1 < station.pts.size(); ++i)
+    {
+      const float ax = station.pts[i].x, ay = station.pts[i].y;
+      const float vx = station.pts[i + 1].x - ax, vy = station.pts[i + 1].y - ay;
+      const float len2 = vx * vx + vy * vy;
+      if (len2 < 1e-9f) continue;
+      float t = std::max(0.0f, std::min(1.0f, (-ax * vx - ay * vy) / len2));
+      const float qx = ax + t * vx, qy = ay + t * vy;
+      const float d2 = qx * qx + qy * qy;
+      if (d2 < best_d2)
+      {
+        best_d2    = d2;
+        station.i0 = i;
+        station.s0 = station.s[i] + t * std::sqrt(len2);
+      }
+    }
+  }
+  // A single-point (or sub-resolution) path degenerates to a plain point
+  // goal: the cost lambda then returns the Euclidean distance to it.
+  station.degenerate = station.pts.size() < 2;
+  station.total      = station.degenerate ? 0.0f : station.s.back();
+  return station;
+}
+
 }  // namespace
 
 BacCore::BacCore()
@@ -567,88 +663,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     return result;
   }
 
-  // Station goal: decimated projection polyline with cumulative arc length.
-  // Candidates are scored by projection station (progress) and path tangent.
-  std::vector<Point2D> station_pts;
-  std::vector<float>   station_s;
-  std::vector<bool>    station_blocked;
-  size_t               station_i0 = 0;   // robot's own projection segment
-  float                station_s0 = 0.0f;  // robot's own projection station
-  if (path.size() >= 2)
-  {
-    station_pts.reserve(path.size());
-    station_pts.push_back(path.front());
-    for (const Point2D &p : path)
-    {
-      const Point2D &last = station_pts.back();
-      const float dx = p.x - last.x, dy = p.y - last.y;
-      if (dx * dx + dy * dy >= 0.04f)  // resample at >= 0.2 m spacing
-      {
-        station_pts.push_back(p);
-      }
-    }
-    {
-      const Point2D &last = station_pts.back();
-      const float dx = path.back().x - last.x, dy = path.back().y - last.y;
-      if (dx * dx + dy * dy > 1e-6f)
-      {
-        station_pts.push_back(path.back());
-      }
-    }
-    station_s.assign(station_pts.size(), 0.0f);
-    for (size_t i = 1; i < station_pts.size(); ++i)
-    {
-      const float dx = station_pts[i].x - station_pts[i - 1].x;
-      const float dy = station_pts[i].y - station_pts[i - 1].y;
-      station_s[i]   = station_s[i - 1] + std::sqrt(dx * dx + dy * dy);
-    }
-    // Segments blocked by an obstacle (degraded plan) exert no LATERAL
-    // attraction: pulling back onto a blocked line fights the swerve the
-    // clearance terms are trying to make. Progress and tangent still apply.
-    station_blocked.assign(station_pts.size(), false);
-    const float block_radius   = params_.footprint.width / 2.0f;
-    const float block_r2       = block_radius * block_radius;
-    for (size_t i = 0; i + 1 < station_pts.size(); ++i)
-    {
-      const float ax = station_pts[i].x, ay = station_pts[i].y;
-      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
-      const float len2 = std::max(vx * vx + vy * vy, 1e-9f);
-      for (const Point2D &o : filtered_points)
-      {
-        float t = std::max(0.0f, std::min(1.0f, ((o.x - ax) * vx + (o.y - ay) * vy) / len2));
-        const float qx = ax + t * vx, qy = ay + t * vy;
-        if ((o.x - qx) * (o.x - qx) + (o.y - qy) * (o.y - qy) < block_r2)
-        {
-          station_blocked[i] = true;
-          break;
-        }
-      }
-    }
-    // Robot projection (origin). Candidate projections search only from this
-    // segment forward, which keeps the station monotone on paths that pass
-    // near themselves.
-    float best_d2 = FLT_MAX;
-    for (size_t i = 0; i + 1 < station_pts.size(); ++i)
-    {
-      const float ax = station_pts[i].x, ay = station_pts[i].y;
-      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
-      const float len2 = vx * vx + vy * vy;
-      if (len2 < 1e-9f) continue;
-      float t = std::max(0.0f, std::min(1.0f, (-ax * vx - ay * vy) / len2));
-      const float qx = ax + t * vx, qy = ay + t * vy;
-      const float d2 = qx * qx + qy * qy;
-      if (d2 < best_d2)
-      {
-        best_d2    = d2;
-        station_i0 = i;
-        station_s0 = station_s[i] + t * std::sqrt(len2);
-      }
-    }
-  }
-  // A single-point (or sub-resolution) path degenerates to a plain point
-  // goal: the cost lambda then returns the Euclidean distance to it.
-  const bool  station_degenerate = station_pts.size() < 2;
-  const float station_total      = station_degenerate ? 0.0f : station_s.back();
+  const StationPath station = buildStationPath(path, filtered_points, params_);
 
   // Candidate evaluation never looks meaningfully past the END of the path:
   // the run stops at the goal, so clearance differences beyond it (the wall
@@ -657,9 +672,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // curl the robot away from the goal (the terminal whip). Safety is
   // unaffected: the emergency layer and the governor act on raw points.
   const float remaining_path =
-      (station_degenerate ? std::sqrt(path.back().x * path.back().x +
+      (station.degenerate ? std::sqrt(path.back().x * path.back().x +
                                       path.back().y * path.back().y)
-                          : station_total - station_s0) +
+                          : station.total - station.s0) +
       0.5f;
 
   // How far ahead any arc is evaluated for a given speed: one sim_time of
@@ -677,12 +692,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   {
     constexpr float kGoalPreview = 2.5f;  // [m]
     Point2D goal = path.back();
-    if (!station_degenerate)
+    if (!station.degenerate)
     {
-      for (size_t i = 0; i < station_pts.size(); ++i)
+      for (size_t i = 0; i < station.pts.size(); ++i)
       {
-        goal = station_pts[i];
-        if (station_s[i] >= station_s0 + kGoalPreview)
+        goal = station.pts[i];
+        if (station.s[i] >= station.s0 + kGoalPreview)
         {
           break;
         }
@@ -703,7 +718,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   auto station_goal_cost = [&](float px, float py, float &bearing_out, float &heading_scale,
                                float &progress_out) {
     heading_scale = 1.0f;
-    if (station_degenerate)
+    if (station.degenerate)
     {
       const float dx = path.back().x - px, dy = path.back().y - py;
       const float d  = std::sqrt(dx * dx + dy * dy);
@@ -715,10 +730,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
     float best_qx = 0.0f, best_qy = 0.0f;
     bool  clamped = false, clamped_end = false, blocked = false;
-    for (size_t i = station_i0; i + 1 < station_pts.size(); ++i)
+    for (size_t i = station.i0; i + 1 < station.pts.size(); ++i)
     {
-      const float ax = station_pts[i].x, ay = station_pts[i].y;
-      const float vx = station_pts[i + 1].x - ax, vy = station_pts[i + 1].y - ay;
+      const float ax = station.pts[i].x, ay = station.pts[i].y;
+      const float vx = station.pts[i + 1].x - ax, vy = station.pts[i + 1].y - ay;
       const float len2 = vx * vx + vy * vy;
       if (len2 < 1e-9f) continue;
       float t = std::max(0.0f, std::min(1.0f, ((px - ax) * vx + (py - ay) * vy) / len2));
@@ -727,7 +742,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       if (d2 < best_d2)
       {
         best_d2    = d2;
-        s_best     = station_s[i] + t * std::sqrt(len2);
+        s_best     = station.s[i] + t * std::sqrt(len2);
         tan_best   = std::atan2(vy, vx);
         best_qx    = qx;
         best_qy    = qy;
@@ -738,13 +753,13 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         // outside the path's longitudinal span (facing away at the path
         // start, or overshooting the end) can wander at only the weak
         // lateral cost.
-        clamped_end = (i + 2 == station_pts.size()) && t >= 1.0f - 1e-4f;
-        clamped     = clamped_end || (i == station_i0 && t <= 1e-4f);
-        blocked     = station_blocked[i];
+        clamped_end = (i + 2 == station.pts.size()) && t >= 1.0f - 1e-4f;
+        clamped     = clamped_end || (i == station.i0 && t <= 1e-4f);
+        blocked     = station.blocked[i];
       }
     }
     const float d = std::sqrt(best_d2);
-    progress_out = s_best - station_s0;
+    progress_out = s_best - station.s0;
     if (clamped && d > 1e-3f)
     {
       bearing_out = std::atan2(best_qy - py, best_qx - px);
@@ -759,11 +774,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         // minimal-overshoot slow straight approach.
         heading_scale = std::min(1.0f, d / 0.5f);
       }
-      return (station_total - s_best) + d;
+      return (station.total - s_best) + d;
     }
     bearing_out = tan_best;
     const float lateral = blocked ? 0.0f : params_.station_lateral_weight * d;
-    return (station_total - s_best) + lateral;
+    return (station.total - s_best) + lateral;
   };
 
   // Alignment follows the ordered path TANGENT, not the bearing to its first
@@ -771,14 +786,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // using that point bearing would rotate towards a harmless lateral path
   // offset near the goal and fight BAC's geometric centering.
   float relative_path_heading;
-  if (station_degenerate)
+  if (station.degenerate)
   {
     relative_path_heading = std::atan2(path.back().y, path.back().x);
   }
   else
   {
-    const Point2D &a = station_pts[station_i0];
-    const Point2D &b = station_pts[station_i0 + 1];
+    const Point2D &a = station.pts[station.i0];
+    const Point2D &b = station.pts[station.i0 + 1];
     relative_path_heading = std::atan2(b.y - a.y, b.x - a.x);
   }
   relative_path_heading = wrapAngle(relative_path_heading);
