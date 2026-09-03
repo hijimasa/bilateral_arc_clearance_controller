@@ -219,6 +219,19 @@ testSweptFootprintProperty()
       ++over;  // phantom contact where the body never touches the point
     }
   }
+  // A COVERAGE GUARD, and a ONE-SIDED one: only the passing side of it has ever
+  // been observed. `checked` is incremented unconditionally after every call
+  // that survives the two skip filters above, and both filters read only the
+  // LCG and the default footprint - nothing in src/ or bac_core.hpp can move
+  // the count. Measured: 291 unmutated (threshold 200), and 291 again under
+  // geo_param_eval_angle_half (which halves the very `eval_angle_max` the
+  // ground truth below uses for its own window), geo_rho_max_drop_absw and
+  // emerg_normalized_lat_removed. Over the 52 mutations this suite is scored
+  // against, this assertion fails under none of them.
+  //
+  // So it defends against an EDIT TO THIS LOOP that quietly stops sampling -
+  // shrinking the 400, tightening the filters - and against nothing else. It is
+  // not a mutation detector and no destructive band for it has been measured.
   expect(checked > 200, "swept property test exercised enough samples");
   expect(missed == 0, "no physical contact is missed by blocking_s (" +
                           std::to_string(missed) + " missed)");
@@ -273,6 +286,12 @@ testSweptFootprintProperty()
       }
     }
   }
+  // A COVERAGE GUARD, one-sided in the same way and more strongly: this grid is
+  // a fixed nest of four loops with a fixed skip test, so `g_checked` is a
+  // compile-time-determined constant that no product code participates in.
+  // Measured: 6272 unmutated (threshold 5000) and 6272 under the same three
+  // mutations, and it fails under none of the 52. Its destructive band has
+  // never been observed, and can only be reached by editing this loop.
   expect(g_checked > 5000, "quadrant grid exercised enough samples");
   expect(g_missed == 0, "quadrant grid: no missed contact (" + std::to_string(g_missed) + ")");
   expect(g_over == 0, "quadrant grid: no phantom contact (" + std::to_string(g_over) + ")");

@@ -1004,6 +1004,9 @@ testEmittedCommandCanAlwaysStop()
   // where the vehicle merely moved. R16 M5 found the previous guard
   // anti-correlated with coverage: pushing the obstacles away raised `moving`
   // and lowered the number of checks to 16.
+  // A COVERAGE GUARD, not a mutation detector - see the note on
+  // `independent_checks` below, which measures that for all five of this
+  // file's coverage counts at once.
   expect(evaluated > 60,
          "the sweep reached the invariant often enough to mean something (" +
              std::to_string(evaluated) + " of " + std::to_string(moving) + " moving ticks)");
@@ -1077,8 +1080,25 @@ testEmittedCommandCanAlwaysStop()
   // `evaluated`. Unmutated it still is - 117 == 117 here, and 3150 == 3150 in
   // the second sweep - but under mutation it is not (`rho_max * 0.95` gives 118
   // here against 90 there, the sigma flip 115 against 884).
+  //
+  // WORDING. This message and the one in the second sweep were character-for-
+  // character identical until this change, so a CI log could not say which of
+  // the two had failed - and they do not fail together. Measured over the 52
+  // mutations by position rather than by message text, this one fails under
+  // {emerg_normalized_lat_removed, geo_param_eval_angle_half,
+  // omni_project_no_vy} and the second sweep's under
+  // {emerg_normalized_lat_removed, geo_param_eval_angle_half,
+  // omni_limit_reachable_bypass}. Each names its own sweep now.
+  //
+  // THIS IS A COVERAGE GUARD, NOT A MUTATION DETECTOR. Over those 52 mutations
+  // no mutation dies on this assertion, or on any of the other four coverage
+  // counts in this file, alone: every mutation that trips one also fails at
+  // least one assertion that is not a coverage count. Read a failure here as
+  // "the sweep stopped reaching its own invariant", and go find what made it
+  // stop; do not read it as a safety violation.
   expect(independent_checks > 80,
-         "the independently derived contact test ran often enough to mean something (" +
+         "the first sweep's independently derived contact test ran often enough to mean "
+         "something (" +
              std::to_string(independent_checks) + " checks)");
   expect(independent_violations == 0,
          "every emitted twist can stop before a contact distance derived independently "
@@ -1257,6 +1277,7 @@ testEmittedCommandCanStopWhenAccelerationBinds()
     }
   }
 
+  // A COVERAGE GUARD, not a mutation detector; see the note in the first sweep.
   expect(checked > 2000,
          "the binding-acceleration sweep reached the invariant often enough to matter (" +
              std::to_string(checked) + ")");
@@ -1310,8 +1331,15 @@ testEmittedCommandCanStopWhenAccelerationBinds()
   // Unmutated the count is still numerically identical to `checked`
   // (3150 == 3150); under mutation it is not (`rho_max` without |w| gives 3164
   // here against 5614 there).
+  //
+  // WORDING, and A COVERAGE GUARD rather than a mutation detector: see the
+  // first sweep's note. This message used to be identical to that one; the two
+  // now name their sweep, because the mutations they fail under differ
+  // (measured - this one adds omni_limit_reachable_bypass and drops
+  // omni_project_no_vy relative to the first).
   expect(independent_checks > 2000,
-         "the independently derived contact test ran often enough to mean something (" +
+         "the binding-acceleration sweep's independently derived contact test ran often "
+         "enough to mean something (" +
              std::to_string(independent_checks) + " checks)");
   expect(independent_violations == 0,
          "every emitted twist can stop before a contact distance derived independently "
@@ -1575,6 +1603,7 @@ testStraightCommandsClearTheirOwnFootprint()
   // separates the set - but on one point only, and that mutation fails
   // assertions in five other test binaries as well. Like the two above, read
   // this as a vacuity guard, not as a kill.
+  // A COVERAGE GUARD, not a mutation detector; see the note in the first sweep.
   expect(checks > 600,
          "the straight-command sweep reached the invariant often enough to matter (" +
              std::to_string(checks) + " checks, " + std::to_string(rotating) +
