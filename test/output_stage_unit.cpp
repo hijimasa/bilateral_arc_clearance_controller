@@ -24,6 +24,7 @@
  */
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
+#include "test_expect.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -33,23 +34,9 @@
 namespace
 {
 
-int failures = 0;
-
-void
-expect(bool condition, const std::string &message)
-{
-  if (!condition)
-  {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
-
-bool
-near(float actual, float expected, float tolerance = 1e-5f)
-{
-  return std::fabs(actual - expected) <= tolerance;
-}
+using bac_test::expect;
+using bac_test::failures;
+using bac_test::near;
 
 std::string
 num(float value)

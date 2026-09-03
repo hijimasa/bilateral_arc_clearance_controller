@@ -15,6 +15,7 @@
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "shipped_config.hpp"
+#include "test_expect.hpp"
 #include "sim_runner.hpp"
 #include "sim_world.hpp"
 
@@ -27,33 +28,15 @@
 namespace
 {
 
-int failures = 0;
-
-void
-expect(bool condition, const std::string &message)
-{
-  if (!condition)
-  {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
+using bac_test::expect;
+using bac_test::failures;
+using bac_sim::LateralWindow;
 
 /// Acceleration- and steering-rate-limited plant driven by a body Twist.
 struct AckermannPlant
 {
   float acc_v = 0.8f;           // [m/s^2] forward-speed tracking
   float curvature_rate = 1.0f;  // [1/(m*s)] steering slew at the body level
-};
-
-/// Optional corridor-centering window: lateral error is aggregated only while
-/// the vehicle is between x_from and x_to, i.e. inside the corridor proper.
-struct LateralWindow
-{
-  bool enabled = false;
-  float center_y = 0.0f;
-  float x_from = 0.0f;
-  float x_to = 0.0f;
 };
 
 struct AckermannRun

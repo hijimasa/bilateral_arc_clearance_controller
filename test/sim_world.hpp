@@ -32,6 +32,19 @@ struct Segment
   float x1, y1, x2, y2;
 };
 
+/// Optional corridor-centering window: lateral error is aggregated only while
+/// the vehicle is between x_from and x_to, i.e. inside the corridor proper.
+/// Shared because the holonomic and Ackermann rigs aggregate lateral error the
+/// same way even though their kinematics differ; the rigs themselves are NOT
+/// shared and are not meant to be.
+struct LateralWindow
+{
+  bool enabled = false;
+  float center_y = 0.0f;
+  float x_from = 0.0f;
+  float x_to = 0.0f;
+};
+
 struct World
 {
   std::vector<Segment> walls;

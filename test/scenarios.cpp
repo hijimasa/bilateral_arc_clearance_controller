@@ -30,6 +30,7 @@
 #include "sim_runner.hpp"
 #include "metrics.hpp"
 #include "shipped_config.hpp"
+#include "test_expect.hpp"
 
 using namespace bac_sim;
 
@@ -76,17 +77,8 @@ struct WeightOverrides
 };
 WeightOverrides g_weight_overrides;
 
-int failures = 0;
-
-void
-expect(bool condition, const std::string &message)
-{
-  if (!condition)
-  {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
+using bac_test::expect;
+using bac_test::failures;
 
 /// Keys config/bac_controller.yaml may carry without this harness binding
 /// them. The same twelve the holonomic and Ackermann suites allow: three block

@@ -11,6 +11,7 @@
 
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "omni_motion_model.hpp"
+#include "test_expect.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,17 +22,8 @@
 namespace
 {
 
-int failures = 0;
-
-void
-expect(bool condition, const std::string &message)
-{
-  if (!condition)
-  {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
+using bac_test::expect;
+using bac_test::failures;
 
 bac::Params
 omniParams()

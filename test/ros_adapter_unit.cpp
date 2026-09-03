@@ -5,6 +5,7 @@
  */
 
 #include "bilateral_arc_clearance_controller/bac_controller.hpp"
+#include "test_expect.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -25,16 +26,8 @@ using namespace std::chrono_literals;
 namespace
 {
 
-int failures = 0;
-
-void expect(bool condition, const std::string &message)
-{
-  if (!condition)
-  {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
+using bac_test::expect;
+using bac_test::failures;
 
 std::string diagnosticValue(const diagnostic_msgs::msg::DiagnosticStatus &status,
                             const std::string &key)
