@@ -94,7 +94,10 @@ score = 2.0 * min(clearance, adaptive_cap)
   0.86 m、直進なら0.5 m）。この項は通路条件（両側がcap以内かつ正面が開いている）でのみ働く。
   capは`footprint.width / 2 + avoid_margin.side`である。
   孤立障害物の迂回では`max|w|`が0.0437 rad/s（差動二輪は0.3125 rad/s）で、ヨーをほとんど使わずに横へ
-  避ける。決定論的試験27件（単体10・閉ループ17）を通過する。
+  避ける。姿勢規範は既定では経路接線だが、nav2 adapterの`plan_yaw_mode: "plan"`でplanのpose
+  orientation列に置き換えられる。その場合、機体は指定された姿勢列を追跡してカニ歩きや走行中の
+  姿勢遷移を行い、上記の狭所不均衡項は加えない（前提が崩れるため。
+  [parameters.md](parameters.md)参照）。決定論的試験29件（単体10・閉ループ19）を通過する。
   候補数の実測と`avoid_margin.side`の実測は、この節末の小節にある。
 - Ackermann policyは、速度が加速度制限され曲率が有限速度で変化するplantに対する決定論的試験
   13件を通過する。前方側方goal、offset通路、障害物迂回、行き止まり停止、後方goal、旋回半径拘束、

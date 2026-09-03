@@ -320,7 +320,9 @@ obstacles just in front of the bumper.
   holonomic model reaches it by translating.
 - Only the holonomic model honours the goal ORIENTATION Nav2 carries on the last plan pose. `diff_drive` and
   `ackermann` steer with yaw and cannot choose their orientation independently of their direction of travel, so
-  they follow the path tangent instead.
+  they follow the path tangent instead. The holonomic model can go further: `plan_yaw_mode: "plan"` hands the
+  orientation of the whole journey to the plan's pose orientations (see
+  [docs/en/nav2_integration.md](docs/en/nav2_integration.md)).
 - Holonomic lateral motion presumes sensor coverage abeam the body. A front-only lidar cannot see where a
   crabbing robot is going.
 - It does not estimate obstacle velocity or future obstacle positions.

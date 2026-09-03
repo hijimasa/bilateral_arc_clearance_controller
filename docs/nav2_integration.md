@@ -119,6 +119,17 @@ goal姿勢が渡されるのは、pruning後の経路にgoal自身が残って�
 先の末尾は通過点であり、その向きはgoal姿勢ではない）。`heading_gain: 0.0`とすれば機体方位を固定した
 まま並進する（360°センシングを持つplatform向け）。
 
+**姿勢は経路全体にわたってplanに持たせることもできる。** `plan_yaw_mode: "plan"`（既定は`"off"`）と
+すると、planの各poseのorientationがbase frameへ変換されて姿勢規範になり、経路接線は使われない。
+横に引いた経路を機体の向きを保ったまま進ませる、start姿勢とgoal姿勢の差を走行中に線形に埋める、
+といった指定をplanのpose orientationとして書ける。planのorientationが意味を持つことが前提であり、
+NavFn/Smacはそこに経路接線を書き込むため、標準plannerのままでは実質`"off"`と変わらない（姿勢を
+書き込むwaypoint followerや自作plannerが使い先である）。goal姿勢のフェードは従来どおり働き、planの
+末尾poseのorientationとgoal姿勢は同じ値なので二重指定にはならない。`diff_drive`・`ackermann`や
+未知の値ではconfigure時にthrowする。狭所では機首バイアス（隙間へ機体を向ける補正）が働かなくなる
+ため、姿勢指定つきの通路走行は機体が回れない分の幅の余裕を要求する。詳細は
+[parameters.md](parameters.md)の運動モデルの節を参照。
+
 `diff_drive`と`ackermann`はヨーで操舵するため方位を独立に選べず、goal姿勢を渡しても無視して従来どおり
 経路接線に従う。これらのモデルで特定のgoal姿勢が必要なら、Nav2側のrecoveryやcontroller切り替えで
 対応する。

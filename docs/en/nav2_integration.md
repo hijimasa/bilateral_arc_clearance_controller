@@ -125,6 +125,18 @@ The orientation is passed on only when the goal itself survives pruning: pruning
 orientation of an intermediate waypoint is a path tangent, not a goal. `heading_gain: 0.0` holds the heading
 fixed while translating, which suits a platform with 360-degree sensing.
 
+**The whole journey's orientation can be handed to the plan.** With `plan_yaw_mode: "plan"` (the default is
+`"off"`) each plan pose's orientation, rotated into the base frame, becomes the pose reference and the path
+tangent is not used. Driving a path drawn to the robot's side while keeping its orientation, or spreading a
+start-to-goal orientation change linearly over the journey, are both expressed by what the plan writes into
+its pose orientations. That is the prerequisite: NavFn/Smac write path tangents there, so under a standard
+planner "plan" behaves like "off" — the intended users are yaw-aware waypoint followers and custom planners.
+The goal-orientation fade above still applies and does not double up: the last plan pose's orientation and
+the goal orientation are the same value. `diff_drive`, `ackermann`, and unknown values fail configure. In
+passages the centering bias (pointing the body into the gap) is disabled under "plan", so a commanded
+orientation through a passage demands the full width the body cannot rotate away; see the Motion model
+section of [parameters.md](parameters.md).
+
 `diff_drive` and `ackermann` steer with yaw and cannot choose their orientation independently of their direction
 of travel, so they ignore a commanded goal orientation and follow the path tangent as before. A specific goal yaw
 for those models needs a Nav2 recovery or a controller switch.

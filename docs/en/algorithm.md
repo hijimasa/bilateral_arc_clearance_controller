@@ -101,7 +101,11 @@ The published benchmark observations below use the differential-drive model.
   than a straight one (0.86 m at 55 degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is
   gated to passages — bounded on both sides and open straight ahead. The cap is `footprint.width / 2 +
   avoid_margin.side`. Rounding an isolated obstacle it commands a peak |yaw rate| of 0.0437 rad/s where
-  differential drive needs 0.3125. It passes twenty-seven deterministic tests, ten unit and seventeen
+  differential drive needs 0.3125. The pose reference defaults to the path tangent, but the nav2 adapter's
+  `plan_yaw_mode: "plan"` replaces it with the plan's own pose-orientation sequence: the body then tracks the
+  commanded orientations — crabbing along a sideways path, or rotating gradually between two orientations
+  while it travels — and the passage imbalance term above is not added, because its assumptions no longer
+  hold (see [parameters.md](parameters.md)). It passes twenty-nine deterministic tests, ten unit and nineteen
   closed-loop. The measured candidate counts and the measured `avoid_margin.side` behaviour are in the
   subsections at the end of this section.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle

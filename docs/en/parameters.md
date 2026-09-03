@@ -98,6 +98,19 @@ At 1.0 and below the final yaw can miss Nav2's default `yaw_goal_tolerance` of 0
 orientation is met, but an extreme goal yaw nearly doubles the distance travelled and widens the final position
 error from 0.29 m to 0.37-0.49 m. The shipped 1.5 is the smallest value that meets the tolerance.
 
+The pose reference can also be handed to the **plan** instead of the path tangent (the nav2 adapter's
+`plan_yaw_mode: "plan"`; the default is `"off"`). Each plan pose's orientation then rides through pruning
+attached to its own point (`BacCore::process` `path_yaw`), and the body tracks that sequence, interpolated
+by arc length and always the short way across the ±π branch cut. A path drawn to the robot's side is
+crabbed along without turning, and a difference between the start and goal orientations is spread over the
+journey — both are expressed by what the plan writes into its pose orientations. Two caveats. (1) Standard
+planners (NavFn/Smac) write path TANGENTS into pose orientations, so under them "plan" reproduces "off";
+a path source that writes orientations deliberately is the prerequisite. (2) When the plan owns the
+orientation, the passage centering bias above (the tightness-weighted imbalance term) is NOT added: it
+assumes the body faces its direction of travel and is measured by probes that look straight ahead, and a
+crabbing body breaks both assumptions. A commanded orientation through a passage therefore demands the
+full width the body cannot rotate away. Searching yaw in tight passages is a candidate for a next cycle.
+
 `omni` requires a positive `limits.vy_max`; selecting the model with zero lateral authority would silently
 degrade it to a drive that cannot steer, so the controller throws during configuration. **Sideways motion needs
 sensor coverage abeam the body** — the same caveat `limits.v_min` carries for reverse.
@@ -198,6 +211,7 @@ Always re-run `bac_scenario_harness --strict` after changing weights. In particu
 | `cmd_timeout` | filter | 0.5 | Upstream command timeout [s]; output becomes zero |
 | `odom_timeout` | filter | 0.5 | Velocity-feedback timeout [s]; output stops |
 | `costmap_margin_compensation` | Nav2 | automatic | Compensation for cell-center quantization [m] |
+| `plan_yaw_mode` | Nav2 | `"off"` | `omni` only. `"plan"` hands the pose reference to the plan's pose orientations (replacing tangent following; see the end of [Motion model](#motion-model)). Any other model, or an unknown value, fails configure. Quote the value: bare `off` is a YAML 1.1 boolean |
 | `diagnostics_publish_period` | Nav2 | 1.0 | Period for standard `diagnostics` messages; non-positive disables publication [s] |
 | `sensor.x/y/yaw` | filter | 0 | Fixed 2D extrinsics of the LaserScan frame |
 | `virtual_path_length` | filter | 3.0 | Length of the virtual path created from input `cmd_vel` [m] |

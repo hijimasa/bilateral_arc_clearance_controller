@@ -91,6 +91,17 @@ road-wheel kinematicsは下位の車両controllerの責務とする。
 極端なgoal姿勢では走行距離が倍近くなり、最終位置誤差も0.29 mから0.37〜0.49 mへ広がる。同梱設定の
 1.5は、姿勢を満たす最小の値として選んでいる。
 
+姿勢規範は経路接線ではなく**planに持たせる**こともできる（nav2 adapterの`plan_yaw_mode: "plan"`、
+既定は`"off"`）。planの各poseのorientationがpruningと同じ判定で点に付いたままcoreへ渡り
+（`BacCore::process`の`path_yaw`）、機体はその姿勢列を弧長内挿（±πの分岐は常に短い側）で追跡する。
+横に引いた経路を機体の向きを保ったままカニ歩きで進む、走行の前後で異なる姿勢の差を移動中に埋める、
+のどちらもplanのpose orientationに書けば表現できる。注意が2つある。(1) NavFn/Smacなど標準plannerは
+pose orientationに経路接線を書き込むため、標準plannerのままでは実質`"off"`と同じ挙動になる。姿勢を
+意図して書き込む経路源が前提である。(2) planが姿勢を握るとき、上記の狭所の機首バイアス（tightness
+重み付きの不均衡項）は**加えない**。この項は機体が進行方向を向いている前提で、正面向きの探査
+コマンドから測っており、カニ歩き中はどちらの前提も崩れる。したがって通路中の姿勢指定は、機体が
+回れない分の幅の余裕をそのまま要求する。狭所でヨーも探索する案は次サイクルの検討項目である。
+
 `omni`では`limits.vy_max`が正でなければならない。0のままモデルを選ぶと、操舵できない差動二輪へ黙って
 degradeするため、configure時にthrowする。**横移動は車体の側方に対するセンサ被覆を要求する。**
 これは`limits.v_min`が後退について負うのと同じ注意である。
@@ -189,6 +200,7 @@ Ackermann設定例（`turn_radius_min` 1.0、`w_max` 0.8）では前者2.0に対
 | `cmd_timeout` | filter | 0.5 | 上位指令の途絶判定 [s]。途絶時は出力ゼロ |
 | `odom_timeout` | filter | 0.5 | 速度フィードバックの途絶判定 [s]。途絶時は停止 |
 | `costmap_margin_compensation` | nav2 | 自動 | セル中心量子化の補償 [m] |
+| `plan_yaw_mode` | nav2 | `"off"` | `omni`のみ。`"plan"`でplanのpose orientationが姿勢規範を握る（接線追従を置換、[運動モデル](#運動モデル)の節末尾を参照）。他モデルや未知の値はconfigure失敗。YAML 1.1では裸の`off`が真偽値になるため引用符が必須 |
 | `diagnostics_publish_period` | nav2 | 1.0 | 標準 `diagnostics` message の周期。0以下で無効 [s] |
 | `sensor.x/y/yaw` | filter | 0 | LaserScan フレームの固定 2D 外部パラメータ |
 | `virtual_path_length` | filter | 3.0 | 入力 `cmd_vel` から作る仮想経路長 [m] |

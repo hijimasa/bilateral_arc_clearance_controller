@@ -399,13 +399,17 @@ shippedExampleParams()
 /// runs `testShippedExampleConfiguration()` used to make were bit-identical to
 /// runs the file already had (see that function). Deriving in this direction
 /// is what makes the yaml load-bearing: an edit to the file now moves the
-/// scenarios themselves. Counted at the call sites rather than asserted: of the
-/// 17 scenario functions main() runs, 13 take their parameters from here
-/// (directly or through `diffDriveReferenceParams()`), and 12 of those 13 drive
-/// the 26 closed-loop runs - the thirteenth,
-/// `testShippedExampleConfiguration()`, only asks for the verdict. The other
-/// four are the three sweeps and the deadband regression, which draw randomised
-/// parameters on purpose and are not testing the shipped configuration.
+/// scenarios themselves. Counted at the call sites and re-measured at a
+/// run-time counter when the plan-orientation scenarios were added: of the 19
+/// scenario functions main() runs, 15 take their parameters from here
+/// (directly or through `diffDriveReferenceParams()`), and 10 of those 15
+/// drive the 25 closed-loop runs. The other five still run the shipped
+/// parameters but not the closed-loop runner: four exercise `process()`
+/// directly (the lateral-row rejection, the emergency layer, stop-and-heading,
+/// and the governor pins) and `testShippedExampleConfiguration()` only asks
+/// for the verdict. The remaining four of the 19 are the three sweeps and the
+/// deadband regression, which draw randomised parameters on purpose and are
+/// not testing the shipped configuration.
 ///
 /// The divergence set is currently EMPTY. A holonomic scenario that needs a
 /// value the shipped file does not carry overrides it here, one field at a
@@ -414,8 +418,8 @@ shippedExampleParams()
 ///
 /// Read once. The yaml guard's assertions are about the FILE, not about each
 /// of the calls that ask for its values, and the first caller pays for them.
-/// Measured on this file as it stands: `omniParams()` is called 33 times and
-/// drives 26 closed-loop runs, so the guard would otherwise assert 33 times
+/// Measured on this file as it stands: `omniParams()` is called 32 times and
+/// drives 25 closed-loop runs, so the guard would otherwise assert 32 times
 /// over.
 bac::Params
 omniParams()
@@ -555,6 +559,15 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     //
     // Switching changed no verdict here: all 26 runs are contact-free under
     // BOTH tests, measured, so the pass/fail set and the stdout are unchanged.
+    //
+    // (Census update, re-measured at a counter in this function on both
+    // trees. The 26 above had already drifted: immediately before the
+    // plan-orientation scenarios this file executed 21 runOmni calls, 9 with
+    // walls. The five runs that had gone were all wall-free - that much the
+    // unchanged walled count shows - but when and why was not tracked. The
+    // plan-orientation scenarios add four more wall-free runs: the file now
+    // executes 25, still 9 with walls. Every RANGE above belongs to those 9
+    // walled runs and is exactly as measured.)
     //
     // THE NEW TEST HAS ITS OWN BLIND SPOT, and it is the larger one. Under this
     // loop's tick sampling robotClearance misses contacts the old point test
@@ -2279,10 +2292,10 @@ testSafetyStopHoldsPosition()
 /// The retired absolute bound really was the sole detector of that perturbation
 /// before; it is now caught twice, by two different scenarios, one of which
 /// could not see a yaml edit at all while the parameters were hand-copied.
-/// That is the whole point of the reversal: a perturbation now moves the 26
-/// closed-loop runs of 12 scenarios, where it used to move two runs of this
-/// one. (12 and 26 counted at the call sites; see omniParams for the other four
-/// scenarios and why they do not participate.)
+/// That is the whole point of the reversal: a perturbation now moves the 25
+/// closed-loop runs of 10 scenarios, where it used to move two runs of this
+/// one. (10 and 25 re-measured at a run-time counter; see omniParams for the
+/// full census and for the scenarios that do not participate.)
 ///
 /// What is left here is what no scenario can express - that the file PARSES,
 /// that every key in it is consumed by the reader or named in
