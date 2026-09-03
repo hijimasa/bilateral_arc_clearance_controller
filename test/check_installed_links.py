@@ -39,6 +39,14 @@ import urllib.parse
 
 # `[text](target)` and `![text](target)`, with an optional "title" after the
 # target. The same expression the stage 2 audit used on this tree.
+#
+# MARKDOWN ONLY, and that is a limit of the checker, not a property of the
+# tree. A reStructuredText link, `text <target>`_, CANNOT be matched by this
+# expression at all - it is not that none happens to be present. The walk
+# opens .rst files, so a future .rst relative link would be read and silently
+# not checked. Measured today: the only installed .rst is CHANGELOG.rst and it
+# carries no relative link in either form, so the gap costs nothing yet. Add a
+# second pattern here before that changes.
 LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 
 # Relative to the package's share directory. See the docstring.

@@ -11,7 +11,7 @@
  *
  * This file exists because the SAME nine lines had been copied into every one
  * of them - ten by the time the differential-drive configuration guard was
- * added - and near() into six. A copy that drifts is the failure this package
+ * added - and near() into five. A copy that drifts is the failure this package
  * keeps meeting; one definition cannot.
  *
  * THE OUTPUT SHAPE IS PART OF THE CONTRACT. A passing check is silent and a

@@ -46,6 +46,16 @@ constexpr float kPi = 3.14159265358979323846f;
 /// two different formulas over the same deceleration - brakingDistance() below
 /// goes speed -> distance, safe_speed_for() in BacCore::process() inverts
 /// distance -> speed - so what they must share is the number, not a function.
+///
+/// PRODUCTION ONLY, and say so rather than let "one definition" be read wider
+/// than it is. test/omni_scenarios.cpp applies the same floor in three places
+/// of its own (the three sweeps' independent re-derivation of the braking
+/// distance, R18 H1 / R19 H1). Those are NOT called from here and must not be:
+/// they check this formula by restating it separately, and sharing the
+/// constant would make both sides move together. Measured: mutating the floor
+/// here from 0.1f to 1.5f is killed by bac_omni_scenarios and
+/// bac_output_stage_unit, and would be invisible if the test used this
+/// definition.
 float
 effectiveStopDecel(const Params &params)
 {
