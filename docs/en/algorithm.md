@@ -126,7 +126,8 @@ The published benchmark observations below use the differential-drive model.
   0.690 = 0.2009, 0.695 = 0.1900, 0.700 = 0.0330, 0.705 = 0.1869, 0.710 = 0.0152, 0.715 = 0.0156,
   0.720 = 0.0150, **0.725 = 0.1600**, 0.730 = 0.0156, and 0.735 upwards 0.0131-0.0162.
   **Do not read those 81 points as "0.730 and up is safe."** They all reproduce, but the 0.005 grid ALIASES:
-  re-swept at 0.001 (and at 0.0002 above 0.730) the bad cells are BANDS, not points. Measured: 0.702-0.708 is
+  re-swept at 0.001 (and at 0.0002 above 0.730) the bad cells are BANDS, not points, and the grid lands
+  inside or outside them almost at random. Measured: 0.702-0.708 is
   0.1863-0.1952 (the 0.005 grid touches only 0.705); 0.721-0.729 is 0.1444-0.1600, with 0.723 = 0.0146 the one
   good cell inside it (the 0.005 grid touches only 0.725); and **0.7370-0.7386 is 0.0846-0.1074**, peaking at
   0.1074 at 0.7380 and 0.7382 with two good cells inside it as well (0.7376 and 0.7378 are 0.0160) - a band

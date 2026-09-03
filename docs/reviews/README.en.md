@@ -55,10 +55,14 @@ instead of dedicated metadata fields.
    outside this tree, so some of their links do not resolve in an installed copy under `share/<package>/`.
    Measured on the installed tree: of 393 relative link targets, 72 do not resolve, and **all 72 are under
    this directory - none outside it**. They are 48 into the sibling `nav2_benchmark/` repository, 15 into
-   `../../src/`, 8 into `../../test/`, and 1 into `../../include/`. The first three name trees this package
-   does not install, so no install rule can resolve them. The last one names a header that IS installed,
-   but at `<prefix>/include/` rather than under `share/`, so reaching it would mean rewriting the link -
-   which rule 3 forbids. **These 72 are therefore left broken on purpose.**
+   `../../src/`, 8 into `../../test/`, and 1 into `../../include/`. **The reason differs across the three
+   groups.** The 48 into the sibling repository are in another tree, which no install rule can reach. The
+   23 into `../../src/` and `../../test/` WOULD resolve if `install(DIRECTORY src ...)` were added -
+   measured, that drops the breaks from 72 to 49. They are left anyway, because that would ship build
+   inputs as a documentation payload, which is not what belongs in an installed package. The 1 into
+   `../../include/` names a header that IS installed, at `<prefix>/include/` rather than under `share/`,
+   so only rewriting the link would reach it - which rule 3 forbids. **These 72 are therefore left broken
+   on purpose.**
    `test/check_installed_links.py` excludes this directory alone and prints how many it skipped; a break
    anywhere outside it is still a failure.
 7. The package commit named in the history's `Current state` cannot be written by the response commit itself - a
