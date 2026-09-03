@@ -439,24 +439,65 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     //
     // This loop used to ask instead whether any LiDAR RETURN landed inside the
     // footprint rectangle, and reported the shortest return RANGE FROM THE
-    // BODY ORIGIN under the name `min_clearance`. Both were wrong, and
-    // measured before the change:
+    // BODY ORIGIN under the name `min_clearance`. Two reasons for the change,
+    // and NEITHER of them is "the exact test catches contacts the old one
+    // missed" - see the blind spot below, which cuts the other way:
     //
-    //  - The point test slips between beams. Sliding a wall segment that truly
-    //    crosses the front edge along that edge (4000 placements, 720 beams,
-    //    the footprint below), the point test called a real contact
-    //    contact-free at 0.9% of placements for a 20 mm segment, 22.1% for a
-    //    10 mm one, and 25.1% for a 6 mm one. It agreed for 30 mm.
-    //  - The reported number was not a clearance. Over the 28 runOmni calls
-    //    these 17 scenarios make, the 11 with walls reported 0.2501 to 0.3500 m
-    //    MORE than the true clearance; the 1.2 m corridor runs reported
-    //    0.5213-0.5449 m where the body was actually 0.2600-0.2886 m from a
-    //    wall. The name and the quantity disagreed.
+    //  (a) One quantity, one name. All three closed-loop runners now report
+    //      the same thing, from the same helper, under the same field.
+    //  (b) `min_clearance` is now a clearance. Over the 28 runOmni calls these
+    //      17 scenarios make, the 11 runs with walls reported 0.2501 to
+    //      0.3500 m MORE than the true clearance; the 1.2 m corridor runs
+    //      reported 0.5213-0.5449 m where the body was actually 0.2600-0.2886 m
+    //      from a wall. testSafetyStopHoldsPosition prints the value: forced to
+    //      fire, its message now reads 0.150000 m where it read 0.500000 m.
     //
-    // Switching to robotClearance changed no verdict in these scenarios: all
-    // 28 runs were contact-free under BOTH tests, measured, so the suite's
-    // pass/fail set and its stdout are unchanged. The point is that the weak
-    // test would not have caught a contact that the strict one catches.
+    // Switching changed no verdict here: all 28 runs are contact-free under
+    // BOTH tests, measured, so the pass/fail set and the stdout are unchanged.
+    //
+    // THE NEW TEST HAS ITS OWN BLIND SPOT, and it is the larger one. Under this
+    // loop's tick sampling robotClearance misses contacts the old point test
+    // caught. Measured with this runner's own numbers - footprint 0.70 x 0.50 m,
+    // dt 0.05 s at limits.v_max 0.4 m/s, so 0.02 m of travel per tick, the
+    // largest step this loop can take; 720 beams, max_range 10 m; a trial is one
+    // of 400 sub-tick start phases x 3 lateral offsets (0.00 / 0.10 / 0.20 m),
+    // the body marched straight past a fixed zero-thickness wall segment; ground
+    // truth is the CONTINUOUS pass sampled at 1e-5 m, and a test "misses" when
+    // it never fires at any tick of a trial that truly overlaps:
+    //
+    //   segment ALONG travel     old point test     robotClearance
+    //      1 mm                       31.7%              95.0%
+    //     10 mm                       16.7%              50.0%
+    //     20 mm and longer             0.0%               0.0%
+    //
+    //   segment ACROSS travel    old point test     robotClearance
+    //      1 mm .. 10 mm               0.0%             100.0%
+    //    100 mm                        0.0%              66.7%
+    //    300 mm                        0.0%              33.3%
+    //    500 mm and longer             0.0%               0.0%
+    //
+    // The reason is geometric, not statistical. robotClearance is a distance
+    // between the body's four EDGES and the wall, so a wall that fits strictly
+    // inside the rectangle never touches an edge and reads POSITIVE: a segment
+    // at the body origin returns +0.2500 m, the body's inscribed radius
+    // min(front, width/2) = min(0.35, 0.25). A zero-thickness segment across
+    // the travel direction only touches an edge over a measure-zero set of
+    // positions, which a 0.02 m tick steps over - hence 100%.
+    //
+    // These 17 scenarios cannot reach it. Every obstacle in all three worlds
+    // they build is a connected component at least 0.800 m across (measured:
+    // the 0.8 x 0.8 m detour box, a 2.0 m wall, and 7.5 x 0.10 m corridor wall
+    // boxes - the 0.10 m segments are the end caps of the 7.5 m boxes, not
+    // isolated features), and 0.800 m exceeds the 0.700 m footprint length, so
+    // nothing can hide inside the body.
+    //
+    // THIS IS A CONSTRAINT ON NEW SCENARIOS. An obstacle small enough to fit
+    // inside the footprint - a post, a table leg, thin debris - or any bare
+    // zero-thickness segment shorter than the body width, will be driven
+    // through without this runner noticing. Model such things as closed boxes
+    // (World::addBox) whose extent exceeds the footprint, as the existing
+    // worlds do, or give this loop a swept-volume test instead of a per-tick
+    // one.
     const float clearance = bac_sim::robotClearance(pose, params.footprint, world);
     run.min_clearance = std::min(run.min_clearance, clearance);
     if (clearance <= 0.0f)
