@@ -371,6 +371,12 @@ struct StationPath
   float                s0 = 0.0f;        // robot's own projection station
   bool                 degenerate = true;
   float                total      = 0.0f;
+  Point2D              goal_point;             // last plan point (body frame)
+  float                goal_distance = 0.0f;   // straight-line range to it
+  float                lateral_weight = 0.0f;  // Params::station_lateral_weight
+
+  float goalCost(float px, float py, float &bearing_out, float &heading_scale,
+                 float &progress_out) const;
 };
 
 StationPath
@@ -378,6 +384,9 @@ buildStationPath(const std::vector<Point2D> &path,
                  const std::vector<Point2D> &filtered_points, const Params &params)
 {
   StationPath station;
+  station.goal_point     = path.back();
+  station.goal_distance  = std::hypot(path.back().x, path.back().y);
+  station.lateral_weight = params.station_lateral_weight;
   if (path.size() >= 2)
   {
     station.pts.reserve(path.size());
@@ -454,6 +463,81 @@ buildStationPath(const std::vector<Point2D> &path,
   station.degenerate = station.pts.size() < 2;
   station.total      = station.degenerate ? 0.0f : station.s.back();
   return station;
+}
+
+// Project a point onto the polyline (from the robot's segment forward).
+// Returns the goal COST (remaining station + weighted lateral offset; full
+// Euclidean distance once past the path end) and the reference bearing
+// (path tangent, or the direction to the final point at the terminal).
+// progress_out is signed progress from the robot's current projection;
+// it prevents collision-free motion AWAY from the ordered path from being
+// mistaken for a useful candidate.
+float
+StationPath::goalCost(float px, float py, float &bearing_out, float &heading_scale,
+                      float &progress_out) const
+{
+  heading_scale = 1.0f;
+  if (degenerate)
+  {
+    const float dx = goal_point.x - px, dy = goal_point.y - py;
+    const float d  = std::sqrt(dx * dx + dy * dy);
+    bearing_out    = (d > 1e-3f) ? std::atan2(dy, dx) : 0.0f;
+    heading_scale  = std::min(1.0f, d / 0.5f);
+    progress_out   = goal_distance - d;
+    return d;
+  }
+  float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
+  float best_qx = 0.0f, best_qy = 0.0f;
+  bool  clamped = false, clamped_end = false, blocked_segment = false;
+  for (size_t i = i0; i + 1 < pts.size(); ++i)
+  {
+    const float ax = pts[i].x, ay = pts[i].y;
+    const float vx = pts[i + 1].x - ax, vy = pts[i + 1].y - ay;
+    const float len2 = vx * vx + vy * vy;
+    if (len2 < 1e-9f) continue;
+    float t = std::max(0.0f, std::min(1.0f, ((px - ax) * vx + (py - ay) * vy) / len2));
+    const float qx = ax + t * vx, qy = ay + t * vy;
+    const float d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+    if (d2 < best_d2)
+    {
+      best_d2    = d2;
+      s_best     = s[i] + t * std::sqrt(len2);
+      tan_best   = std::atan2(vy, vx);
+      best_qx    = qx;
+      best_qy    = qy;
+      // Clamped past either END of the projected span: beyond the last
+      // vertex, or before the first considered segment. In the clamp
+      // region the progress term has no gradient, so the full Euclidean
+      // distance to the clamp point must take over - otherwise a robot
+      // outside the path's longitudinal span (facing away at the path
+      // start, or overshooting the end) can wander at only the weak
+      // lateral cost.
+      clamped_end = (i + 2 == pts.size()) && t >= 1.0f - 1e-4f;
+      clamped     = clamped_end || (i == i0 && t <= 1e-4f);
+      blocked_segment = blocked[i];
+    }
+  }
+  const float d = std::sqrt(best_d2);
+  progress_out = s_best - s0;
+  if (clamped && d > 1e-3f)
+  {
+    bearing_out = std::atan2(best_qy - py, best_qx - px);
+    if (clamped_end)
+    {
+      // Endpoint past the path END: the bearing to the goal point
+      // degenerates as the distance shrinks (it flips to "behind" for any
+      // overshoot), and a full-weight heading term then REWARDS arcs that
+      // curl in beside the goal - the terminal whip. Fade the heading
+      // authority out with the remaining distance; a far overshoot
+      // (recovery) keeps it. The distance cost alone already prefers the
+      // minimal-overshoot slow straight approach.
+      heading_scale = std::min(1.0f, d / 0.5f);
+    }
+    return (total - s_best) + d;
+  }
+  bearing_out = tan_best;
+  const float lateral = blocked_segment ? 0.0f : lateral_weight * d;
+  return (total - s_best) + lateral;
 }
 
 }  // namespace
@@ -707,80 +791,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     result.goal_y = goal.y;
   }
 
-  // Project a point onto the polyline (from the robot's segment forward).
-  // Returns the goal COST (remaining station + weighted lateral offset; full
-  // Euclidean distance once past the path end) and the reference bearing
-  // (path tangent, or the direction to the final point at the terminal).
-  // progress_out is signed progress from the robot's current projection;
-  // it prevents collision-free motion AWAY from the ordered path from being
-  // mistaken for a useful candidate.
-  const float local_goal_distance = std::hypot(path.back().x, path.back().y);
-  auto station_goal_cost = [&](float px, float py, float &bearing_out, float &heading_scale,
-                               float &progress_out) {
-    heading_scale = 1.0f;
-    if (station.degenerate)
-    {
-      const float dx = path.back().x - px, dy = path.back().y - py;
-      const float d  = std::sqrt(dx * dx + dy * dy);
-      bearing_out    = (d > 1e-3f) ? std::atan2(dy, dx) : 0.0f;
-      heading_scale  = std::min(1.0f, d / 0.5f);
-      progress_out   = local_goal_distance - d;
-      return d;
-    }
-    float best_d2 = FLT_MAX, s_best = 0.0f, tan_best = 0.0f;
-    float best_qx = 0.0f, best_qy = 0.0f;
-    bool  clamped = false, clamped_end = false, blocked = false;
-    for (size_t i = station.i0; i + 1 < station.pts.size(); ++i)
-    {
-      const float ax = station.pts[i].x, ay = station.pts[i].y;
-      const float vx = station.pts[i + 1].x - ax, vy = station.pts[i + 1].y - ay;
-      const float len2 = vx * vx + vy * vy;
-      if (len2 < 1e-9f) continue;
-      float t = std::max(0.0f, std::min(1.0f, ((px - ax) * vx + (py - ay) * vy) / len2));
-      const float qx = ax + t * vx, qy = ay + t * vy;
-      const float d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
-      if (d2 < best_d2)
-      {
-        best_d2    = d2;
-        s_best     = station.s[i] + t * std::sqrt(len2);
-        tan_best   = std::atan2(vy, vx);
-        best_qx    = qx;
-        best_qy    = qy;
-        // Clamped past either END of the projected span: beyond the last
-        // vertex, or before the first considered segment. In the clamp
-        // region the progress term has no gradient, so the full Euclidean
-        // distance to the clamp point must take over - otherwise a robot
-        // outside the path's longitudinal span (facing away at the path
-        // start, or overshooting the end) can wander at only the weak
-        // lateral cost.
-        clamped_end = (i + 2 == station.pts.size()) && t >= 1.0f - 1e-4f;
-        clamped     = clamped_end || (i == station.i0 && t <= 1e-4f);
-        blocked     = station.blocked[i];
-      }
-    }
-    const float d = std::sqrt(best_d2);
-    progress_out = s_best - station.s0;
-    if (clamped && d > 1e-3f)
-    {
-      bearing_out = std::atan2(best_qy - py, best_qx - px);
-      if (clamped_end)
-      {
-        // Endpoint past the path END: the bearing to the goal point
-        // degenerates as the distance shrinks (it flips to "behind" for any
-        // overshoot), and a full-weight heading term then REWARDS arcs that
-        // curl in beside the goal - the terminal whip. Fade the heading
-        // authority out with the remaining distance; a far overshoot
-        // (recovery) keeps it. The distance cost alone already prefers the
-        // minimal-overshoot slow straight approach.
-        heading_scale = std::min(1.0f, d / 0.5f);
-      }
-      return (station.total - s_best) + d;
-    }
-    bearing_out = tan_best;
-    const float lateral = blocked ? 0.0f : params_.station_lateral_weight * d;
-    return (station.total - s_best) + lateral;
-  };
-
   // Alignment follows the ordered path TANGENT, not the bearing to its first
   // emitted point. A replanned/decimated path commonly starts 0.1 m ahead;
   // using that point bearing would rotate towards a harmless lateral path
@@ -936,7 +946,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     constexpr float kGoalHeadingFade = 1.5f;  // [m] where the goal starts to matter
     constexpr float kGoalHeadingFull = 0.5f;  // [m] where it fully governs
     const float blend =
-        1.0f - std::max(0.0f, std::min(1.0f, (local_goal_distance - kGoalHeadingFull) /
+        1.0f - std::max(0.0f, std::min(1.0f, (station.goal_distance - kGoalHeadingFull) /
                                                  (kGoalHeadingFade - kGoalHeadingFull)));
     pose_reference =
         wrapAngle(pose_reference + blend * wrapAngle(*goal_heading - pose_reference));
@@ -992,7 +1002,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     }
   }
   else if (alignment_available &&
-           ((local_goal_distance < kAlignNearDistance &&
+           ((station.goal_distance < kAlignNearDistance &&
              abs_path_heading > kAlignNearEnterAngle) ||
             abs_path_heading > kAlignRearEnterAngle))
   {
@@ -1068,7 +1078,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
       float end_x_pre = projected.x;
       float end_y_pre = projected.y;
       float gd_pre, bearing_pre, heading_scale_pre, candidate_progress;
-      gd_pre = station_goal_cost(
+      gd_pre = station.goalCost(
           end_x_pre, end_y_pre, bearing_pre, heading_scale_pre, candidate_progress);
       // Collision-free forward motion that does not advance the ordered path
       // is not a navigation solution. In particular, this rejects the open-
@@ -1133,14 +1143,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         // space away from the goal freezes: the phantom clearance of the run
         // it never makes rewards holding still, and the heading reward for
         // turning back is smaller than the hysteresis of starting to turn.
-        float advance = std::min(v_ref * params_.sim_time, local_goal_distance);
+        float advance = std::min(v_ref * params_.sim_time, station.goal_distance);
         if (eval.blocking_s < FLT_MAX)
         {
           advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_margin));
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
-        gd_pre = station_goal_cost(
+        gd_pre = station.goalCost(
                      end_x_pre, end_y_pre, bearing_pre, heading_scale_pre,
                      candidate_progress) +
                  advance;
