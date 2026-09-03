@@ -203,37 +203,8 @@ They are not probabilistic or universal claims about untested environments.
   traverses all 101 cells without contact. Real walls present a face, so that configuration is a modelling
   degeneracy rather than a scenario: the regressions use walls with thickness. Raising the resolution (2880
   beams or more) or giving the wall thickness both remove it. The sensing limit is a property of the sensor,
-  not of the controller. The 0.478 m cell is sensitive to floating-point representation:
-  building the sweep the obvious way as `start + step * i` gives `0.30f + 0.002f * 89` = 0.478000015, which
-  contacts (closest approach 0.2874 m), while the literal `0.478f` is 0.477999985 and does not (0.5448 m). The
-  difference is 3e-8, and any sweep built that way contacts. Across the four conditions swept (1.1 and 1.2 m
-  widths, 0.10 m and zero thickness, 404 cells) there are **91 failures, of which 3 are contacts**, all in the
-  zero-thickness 1.2 m corridor. **Splitting the rest into detours and non-traversals depends on a criterion**
-  that was never written down (R19 L9), so the criterion is stated here: a contact is a scan point inside the
-  body rectangle (the closed loop's `collided`), a detour is a lateral excursion past corridor width / 2 plus
-  wall thickness, a non-traversal is neither of those with a final x short of 9.0 m, and the three are applied
-  in that order, **with the lateral excursion taken over the whole run**. **Inside the measurement window the
-  detour / non-traversal split is the same under either threshold; drop the window and the threshold changes
-  it.** Taking the excursion only INSIDE the corridor (the x = 3.0 to 9.0 m measurement window) turns the
-  same data into **72 detours and 16 non-traversals**, and inside that window the two thresholds measured
-  give the same split: corridor width / 2 plus wall thickness (0.70 / 0.65 / 0.60 / 0.55 m across the four
-  conditions) and the `kInsideCorridor` = 0.35
-  that this package's own `testNarrowCorridorCentering` uses give **the same 72 and 16 in all four
-  conditions** (measured). Drop the window and the threshold does matter: corridor width / 2 plus wall
-  thickness gives the 83 detours and 5 non-traversals totalled below, and 0.35 taken over the whole run gives
-  324 detours and 0 non-traversals. Those are the four criteria measured. The 72 / 16 the first pass of the R19 M3
-  response wrote here reproduces exactly under that windowed criterion, the one
-  `testNarrowCorridorCentering` uses - so that split was not wrong, it simply never stated its criterion
-  (established by the R19 verification).
-  Measured over the whole run: 1.2 m / 0.10 m fails 0; 1.1 m / 0.10 m fails 35 (34 detours, 1
-  non-traversal, first at 0.418); 1.2 m / zero fails 10 (3 contacts, 3 detours, 4 non-traversals, first at
-  0.476); 1.1 m / zero fails 46 (46 detours, first at 0.372) - 3 contacts, 83 detours and 5 non-traversals in
-  total. Of the four criteria measured, the 91 total, the per-condition failure counts (0 / 35 / 10 / 46) and
-  the first failing offsets (- / 0.418 / 0.476 / 0.372) agree under three: the whole run with corridor
-  width / 2 plus wall thickness, the window with that same threshold, and the window with 0.35. **They do
-  not agree under the whole run with 0.35** - that gives 327 failures, 85 / 82 / 80 / 80 per condition, and
-  first failing offsets 0.332 / 0.338 / 0.340 / 0.342 (the 324 detours and 0 non-traversals stated above).
-  The 3 contacts are the same under all four criteria measured.
+  not of the controller. The criteria used for that sweep and the measured results are in the subsection at
+  the end of this section.
 - Physical-vehicle evidence for the holonomic model; its validation is deterministic unit checks and closed-loop
   regressions only
 - Reaching a rear goal with a forward-only Ackermann configuration (`limits.v_min = 0`). BAC stops and leaves the
@@ -241,3 +212,37 @@ They are not probabilistic or universal claims about untested environments.
 
 For final protection on a physical robot, use an independent layer such as Collision Monitor with separately
 configured sensor coverage and timeouts.
+
+#### Thin-wall sweep: criteria and measurements
+
+The 0.478 m cell is sensitive to floating-point representation: building the sweep the obvious way as
+`start + step * i` gives `0.30f + 0.002f * 89` = 0.478000015, which
+contacts (closest approach 0.2874 m), while the literal `0.478f` is 0.477999985 and does not (0.5448 m). The
+difference is 3e-8, and any sweep built that way contacts. Across the four conditions swept (1.1 and 1.2 m
+widths, 0.10 m and zero thickness, 404 cells) there are **91 failures, of which 3 are contacts**, all in the
+zero-thickness 1.2 m corridor. **Splitting the rest into detours and non-traversals depends on a criterion**
+that was never written down (R19 L9), so the criterion is stated here: a contact is a scan point inside the
+body rectangle (the closed loop's `collided`), a detour is a lateral excursion past corridor width / 2 plus
+wall thickness, a non-traversal is neither of those with a final x short of 9.0 m, and the three are applied
+in that order, **with the lateral excursion taken over the whole run**. **Inside the measurement window the
+detour / non-traversal split is the same under either threshold; drop the window and the threshold changes
+it.** Taking the excursion only INSIDE the corridor (the x = 3.0 to 9.0 m measurement window) turns the
+same data into **72 detours and 16 non-traversals**, and inside that window the two thresholds measured
+give the same split: corridor width / 2 plus wall thickness (0.70 / 0.65 / 0.60 / 0.55 m across the four
+conditions) and the `kInsideCorridor` = 0.35
+that this package's own `testNarrowCorridorCentering` uses give **the same 72 and 16 in all four
+conditions** (measured). Drop the window and the threshold does matter: corridor width / 2 plus wall
+thickness gives the 83 detours and 5 non-traversals totalled below, and 0.35 taken over the whole run gives
+324 detours and 0 non-traversals. Those are the four criteria measured. The 72 / 16 the first pass of the R19 M3
+response wrote here reproduces exactly under that windowed criterion, the one
+`testNarrowCorridorCentering` uses - so that split was not wrong, it simply never stated its criterion
+(established by the R19 verification).
+Measured over the whole run: 1.2 m / 0.10 m fails 0; 1.1 m / 0.10 m fails 35 (34 detours, 1
+non-traversal, first at 0.418); 1.2 m / zero fails 10 (3 contacts, 3 detours, 4 non-traversals, first at
+0.476); 1.1 m / zero fails 46 (46 detours, first at 0.372) - 3 contacts, 83 detours and 5 non-traversals in
+total. Of the four criteria measured, the 91 total, the per-condition failure counts (0 / 35 / 10 / 46) and
+the first failing offsets (- / 0.418 / 0.476 / 0.372) agree under three: the whole run with corridor
+width / 2 plus wall thickness, the window with that same threshold, and the window with 0.35. **They do
+not agree under the whole run with 0.35** - that gives 327 failures, 85 / 82 / 80 / 80 per condition, and
+first failing offsets 0.332 / 0.338 / 0.340 / 0.342 (the 324 detours and 0 non-traversals stated above).
+The 3 contacts are the same under all four criteria measured.
