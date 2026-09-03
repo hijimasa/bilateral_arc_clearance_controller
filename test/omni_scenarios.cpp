@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -304,7 +305,20 @@ struct OmniRun
   float mean_abs_lateral = 0.0f;
   float max_abs_lateral = 0.0f;
   int   lateral_samples = 0;
+  /// Plan-orientation runs only. The largest orientation error the body ever
+  /// carried against what the plan asked for at its own end of the path
+  /// [rad], and the orientation it held when it had covered half the distance
+  /// to the goal. Both stay at 0 when no orientation was requested.
+  float max_yaw_tracking_error = 0.0f;
+  float yaw_at_half_distance = 0.0f;
+  bool  half_distance_seen = false;
 };
+
+/// Orientation the plan asks the body to HOLD at each point of the local path,
+/// in the CURRENT body frame - the convention BacCore::process documents, and
+/// the one BacController will fill in from the plan's pose orientations.
+using OmniYawSource =
+    std::function<std::vector<float>(const bac_sim::Pose &, const std::vector<bac::Point2D> &)>;
 
 /// Keys config/bac_controller_omni.yaml may carry without this scenario
 /// consuming them. See shipped_config.hpp for what the guard enforces.
@@ -437,8 +451,11 @@ OmniRun
 runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &start,
         const bac_sim::PathSource &path_source, float goal_x, float goal_y,
         float simulation_time, const LateralWindow &window = LateralWindow{},
-        std::optional<float> goal_heading_world = std::nullopt)
+        std::optional<float> goal_heading_world = std::nullopt,
+        const OmniYawSource &yaw_source = nullptr)
 {
+  const float start_goal_distance = std::sqrt((start.x - goal_x) * (start.x - goal_x) +
+                                              (start.y - goal_y) * (start.y - goal_y));
   constexpr float dt = 0.05f;
   OmniRun run;
   bac_sim::Pose pose = start;
@@ -463,8 +480,19 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     {
       goal_heading = wrapAngle(*goal_heading_world - pose.th);
     }
+    // The orientation sequence is regenerated every tick from the current
+    // pose, exactly as the adapter will regenerate it from a replanned plan.
+    std::vector<float> path_yaw;
+    if (yaw_source && !path.empty())
+    {
+      path_yaw = yaw_source(pose, path);
+      // Already an error in the body frame, so its first entry IS the
+      // orientation error the body is carrying at its own end of the path.
+      run.max_yaw_tracking_error =
+          std::max(run.max_yaw_tracking_error, std::fabs(wrapAngle(path_yaw.front())));
+    }
     const bac::Result result =
-        core.process(points, path, bac::Twist2D(vx, w, vy), goal_heading);
+        core.process(points, path, bac::Twist2D(vx, w, vy), goal_heading, path_yaw);
     const bac::Twist2D command = result.output;
 
     run.total_ticks++;
@@ -584,6 +612,13 @@ runOmni(bac::BacCore &core, const bac_sim::World &world, const bac_sim::Pose &st
     if (goal_distance < 0.35f)
     {
       run.reached_goal = true;
+    }
+    // First tick past the halfway mark: a body that tracks a ramp is already
+    // part way round here, a body that turns on arrival is not.
+    if (!run.half_distance_seen && goal_distance <= 0.5f * start_goal_distance)
+    {
+      run.half_distance_seen  = true;
+      run.yaw_at_half_distance = pose.th;
     }
 
     if (window.enabled && pose.x >= window.x_from && pose.x <= window.x_to)
@@ -2264,6 +2299,114 @@ testShippedExampleConfiguration()
          "the parsed shipped configuration is the one the holonomic scenarios run");
 }
 
+/// The simplest orientation a plan can ask for: hold this one, whatever the
+/// path does. Returned in the CURRENT body frame, the convention
+/// BacCore::process documents and the one BacController fills in from the
+/// plan's pose orientations.
+OmniYawSource
+holdWorldYaw(float world_yaw)
+{
+  return [world_yaw](const bac_sim::Pose &pose, const std::vector<bac::Point2D> &path) {
+    return std::vector<float>(path.size(), wrapAngle(world_yaw - pose.th));
+  };
+}
+
+/// A linear ramp between the orientation the run starts in and the one the
+/// goal asks for, in the distance covered. Every path point gets the value for
+/// ITS OWN remaining distance, not the robot's: that is what makes this a
+/// sequence the body can look along, rather than one number repeated.
+OmniYawSource
+rampWorldYaw(float start_yaw, float goal_yaw, float goal_x, float goal_y, float total)
+{
+  return [start_yaw, goal_yaw, goal_x, goal_y, total](
+             const bac_sim::Pose &pose, const std::vector<bac::Point2D> &path) {
+    std::vector<float> yaw;
+    yaw.reserve(path.size());
+    const float cs = std::cos(pose.th), sn = std::sin(pose.th);
+    const float sweep = wrapAngle(goal_yaw - start_yaw);
+    for (const bac::Point2D &p : path)
+    {
+      const float wx = pose.x + cs * p.x - sn * p.y;
+      const float wy = pose.y + sn * p.x + cs * p.y;
+      const float remaining =
+          std::sqrt((wx - goal_x) * (wx - goal_x) + (wy - goal_y) * (wy - goal_y));
+      const float covered = std::max(0.0f, std::min(1.0f, 1.0f - remaining / total));
+      yaw.push_back(wrapAngle(start_yaw + covered * sweep - pose.th));
+    }
+    return yaw;
+  };
+}
+
+/// A path drawn straight to the robot's SIDE. Tangent following turns onto it
+/// and drives forward; a plan that asks the body to keep its orientation makes
+/// the same journey sideways. Asserted as the DIFFERENCE between the two runs
+/// of the same world, the way this file separates the models, rather than
+/// against a picked yaw threshold.
+void
+testPlanOrientationCrabsAlongASidewaysPath()
+{
+  bac_sim::World world;
+  const bac_sim::PathSource path = bac_sim::gotoPointPath(0.0f, 5.0f);
+
+  bac::BacCore tangent(omniParams());
+  const OmniRun turned = runOmni(tangent, world, { 0.0f, 0.0f, 0.0f }, path, 0.0f, 5.0f, 60.0f);
+
+  bac::BacCore planned(omniParams());
+  const OmniRun crabbed = runOmni(planned, world, { 0.0f, 0.0f, 0.0f }, path, 0.0f, 5.0f, 60.0f,
+                                  LateralWindow{}, std::nullopt, holdWorldYaw(0.0f));
+
+  expect(turned.reached_goal, "tangent following reaches a goal abeam the robot");
+  expect(crabbed.reached_goal,
+         "a held orientation still reaches a goal abeam the robot (closest " +
+             std::to_string(crabbed.min_goal_distance) + " m)");
+  expect(!crabbed.collided, "the held-orientation run has no body contact");
+  expect(std::fabs(crabbed.final_pose.th) < std::fabs(turned.final_pose.th),
+         "the plan's orientation is held where tangent following turns (" +
+             std::to_string(crabbed.final_pose.th) + " vs " +
+             std::to_string(turned.final_pose.th) + " rad)");
+  expect(crabbed.max_abs_vy > turned.max_abs_vy,
+         "holding the orientation moves the journey into lateral velocity (" +
+             std::to_string(crabbed.max_abs_vy) + " vs " +
+             std::to_string(turned.max_abs_vy) + " m/s)");
+  expectLimitsRespected(crabbed, "held orientation");
+}
+
+/// Start and goal orientations differ, and the plan spends the journey getting
+/// from one to the other. The claim under test is that the body ARRIVES in the
+/// requested orientation rather than reaching the goal and then turning.
+void
+testPlanOrientationRampsWhileItTravels()
+{
+  constexpr float kHalfPi = 1.57079633f;
+  bac_sim::World world;
+  const bac_sim::PathSource path = bac_sim::gotoPointPath(5.0f, 0.0f);
+
+  bac::BacCore plain(omniParams());
+  const OmniRun untouched = runOmni(plain, world, { 0.0f, 0.0f, 0.0f }, path, 5.0f, 0.0f, 60.0f);
+
+  bac::BacCore core(omniParams());
+  const OmniRun ramped =
+      runOmni(core, world, { 0.0f, 0.0f, 0.0f }, path, 5.0f, 0.0f, 60.0f, LateralWindow{},
+              std::nullopt, rampWorldYaw(0.0f, kHalfPi, 5.0f, 0.0f, 5.0f));
+
+  expect(ramped.reached_goal, "the ramping run reaches the goal (closest " +
+                                  std::to_string(ramped.min_goal_distance) + " m)");
+  expect(!ramped.collided, "the ramping run has no body contact");
+  expect(std::fabs(wrapAngle(ramped.final_pose.th - kHalfPi)) <
+             std::fabs(wrapAngle(untouched.final_pose.th - kHalfPi)),
+         "the ramp ends nearer the requested orientation than tangent following (" +
+             std::to_string(ramped.final_pose.th) + " vs " +
+             std::to_string(untouched.final_pose.th) + " rad, asked for 1.570796)");
+  // Half way THERE is half way ROUND. The bound is derived, not tuned: it says
+  // the body is nearer the middle of the sweep than either of its ends. A body
+  // that turned only on arrival sits at 0 here and a body that turned first
+  // sits at pi/2 - both fail it, in opposite directions.
+  expect(std::fabs(ramped.yaw_at_half_distance - 0.5f * kHalfPi) < 0.25f * kHalfPi,
+         "half the distance covered is half the orientation swept (" +
+             std::to_string(ramped.yaw_at_half_distance) + " rad at half distance)");
+  expectLimitsRespected(ramped, "ramped orientation");
+}
+
 }  // namespace
 
 int
@@ -2285,6 +2428,8 @@ main()
   testZeroGainHoldsHeadingAndStillArrives();
   testNarrowCorridorCentering();
   testSafetyStopHoldsPosition();
+  testPlanOrientationCrabsAlongASidewaysPath();
+  testPlanOrientationRampsWhileItTravels();
   testShippedExampleConfiguration();
 
   if (failures != 0)

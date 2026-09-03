@@ -412,9 +412,23 @@ public:
    *   travel, so for those the value is ignored and the final heading follows
    *   the path tangent as before.
    */
+  /**
+   * @param path_yaw Orientation the body should HOLD at each point of `path`,
+   *   relative to the current body frame - the same frame and convention as
+   *   `goal_heading`, one entry per `path` entry. Supplying it hands the
+   *   orientation to the plan: the body then tracks this sequence instead of
+   *   turning onto the path tangent, which is how a holonomic vehicle crabs
+   *   along a path drawn to its side, or rotates gradually while it travels.
+   *   Only a holonomic model can act on it (`acceptsGoalHeading`); the others
+   *   ignore it, as they must. Empty means "no orientation requested" and
+   *   restores tangent following. A length that does not match `path` is a
+   *   caller error: the sequence is ignored rather than guessed at, since a
+   *   mis-aligned entry would silently steer the body.
+   */
   Result process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
                  const Twist2D &current,
-                 std::optional<float> goal_heading = std::nullopt);
+                 std::optional<float> goal_heading = std::nullopt,
+                 const std::vector<float> &path_yaw = {});
 
   /// Evaluate a single candidate arc (exposed for tests and tuning tools)
   ArcEvaluation evaluateArc(const std::vector<Point2D> &points, float v, float w, float horizon) const;

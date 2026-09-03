@@ -10,6 +10,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -358,6 +359,112 @@ testEmergencyEscapePreemptsAlignment()
          "emergency escape does not rotate inside the emergency margin");
 }
 
+/// Parameters for the plan-orientation tests. `heading_gain` is deliberately
+/// small and `acc_w` deliberately huge so that the commanded yaw rate is
+/// exactly `heading_gain * pose_reference`: neither the +-w_max saturation nor
+/// the one-cycle acceleration bound may mask what the interpolation produced.
+bac::Params
+planYawParams()
+{
+  bac::Params params;
+  params.motion_model.type = bac::MotionModelType::OMNI;
+  params.limits.vy_max     = 0.3f;
+  params.limits.acc_w      = 1000.0f;
+  params.heading_gain      = 0.1f;
+  return params;
+}
+
+void
+testPlanYawHoldsOrientation()
+{
+  // A path drawn straight to the robot's LEFT. Tangent following turns onto
+  // it; a supplied orientation of "stay as you are" must not.
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 6; ++i)
+  {
+    path.emplace_back(0.0f, 0.5f * static_cast<float>(i));
+  }
+
+  bac::BacCore tangent(planYawParams());
+  const bac::Twist2D turned = tangent.process({}, path, bac::Twist2D{}).output;
+  // pose_reference = atan2(0.5, 0) = pi/2, times heading_gain 0.1.
+  expect(near(turned.w, 0.15708f, 1e-4f), "tangent following turns onto a sideways path");
+
+  bac::BacCore planned(planYawParams());
+  const std::vector<float> hold(path.size(), 0.0f);
+  const bac::Twist2D crab =
+      planned.process({}, path, bac::Twist2D{}, std::nullopt, hold).output;
+  expect(crab.w == 0.0f, "a supplied orientation of zero holds the heading");
+  // Not a tuned bound: the whole journey goes into lateral velocity (v is
+  // exactly zero - forward motion buys no progress towards a path abeam the
+  // body), pushed as hard as ONE cycle allows, acc_v 0.8 * control_period
+  // 0.05 = 0.04 m/s. A single process() call cannot show more than that.
+  expect(crab.v == 0.0f, "holding the heading, no part of the journey goes forward (v " +
+                             std::to_string(crab.v) + ")");
+  expect(near(crab.vy, 0.04f, 1e-6f),
+         "holding the heading, the body crabs towards the path at the one-cycle "
+         "acceleration bound (vy " +
+             std::to_string(crab.vy) + ")");
+}
+
+void
+testPlanYawInterpolatesTheShortWayRound()
+{
+  // The robot's projection lands 80% along the segment whose two ends sit on
+  // OPPOSITE sides of the +-pi branch cut. Interpolating the raw values takes
+  // the long way: 3.10 + 0.8 * (-6.20) = -1.86 rad, an entire turn away from
+  // the -3.1166 rad the plan actually asks for.
+  std::vector<bac::Point2D> path;
+  std::vector<float>        yaw;
+  for (int i = 0; i < 9; ++i)
+  {
+    path.emplace_back(-0.9f + 0.5f * static_cast<float>(i), 0.0f);
+    yaw.push_back(0.0f);
+  }
+  yaw[1] = 3.10f;
+  yaw[2] = -3.10f;
+
+  bac::BacCore core(planYawParams());
+  const bac::Twist2D out = core.process({}, path, bac::Twist2D{}, std::nullopt, yaw).output;
+  expect(near(out.w, -0.31166f, 1e-4f), "yaw interpolation crosses the branch cut the short way");
+  expect(out.w < -0.25f, "the long way round (-0.186 rad/s) is not what is commanded");
+}
+
+void
+testPlanYawIgnoredWhenItCannotBeTrusted()
+{
+  std::vector<bac::Point2D> path;
+  for (int i = 1; i <= 6; ++i)
+  {
+    path.emplace_back(0.0f, 0.5f * static_cast<float>(i));
+  }
+
+  bac::BacCore reference(planYawParams());
+  const bac::Twist2D tangent = reference.process({}, path, bac::Twist2D{}).output;
+
+  // One entry short: which end is missing decides which point every remaining
+  // orientation belongs to, so the sequence is dropped, not realigned.
+  bac::BacCore mismatched(planYawParams());
+  const std::vector<float> short_yaw(path.size() - 1U, 0.0f);
+  const bac::Twist2D from_mismatch =
+      mismatched.process({}, path, bac::Twist2D{}, std::nullopt, short_yaw).output;
+  expect(from_mismatch.w == tangent.w, "a mismatched orientation count falls back to the tangent");
+
+  // A model that steers with yaw cannot hold a commanded orientation, so it
+  // must ignore one rather than fight its own kinematics.
+  bac::Params diff = planYawParams();
+  diff.motion_model.type = bac::MotionModelType::DIFF_DRIVE;
+  diff.limits.vy_max     = 0.0f;
+  bac::BacCore steered(diff);
+  bac::BacCore steered_plain(diff);
+  const std::vector<float> hold(path.size(), 0.0f);
+  const bac::Twist2D steered_yaw =
+      steered.process({}, path, bac::Twist2D{}, std::nullopt, hold).output;
+  const bac::Twist2D steered_ref = steered_plain.process({}, path, bac::Twist2D{}).output;
+  expect(steered_yaw.v == steered_ref.v && steered_yaw.w == steered_ref.w,
+         "a differential-drive model ignores a commanded orientation");
+}
+
 }  // namespace
 
 int
@@ -372,6 +479,9 @@ main()
   testSweptFootprintProperty();
   testFaceAwayRecovery();
   testEmergencyEscapePreemptsAlignment();
+  testPlanYawHoldsOrientation();
+  testPlanYawInterpolatesTheShortWayRound();
+  testPlanYawIgnoredWhenItCannotBeTrusted();
 
   if (failures != 0)
   {

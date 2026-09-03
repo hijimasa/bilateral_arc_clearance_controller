@@ -396,6 +396,10 @@ struct StationPath
 {
   std::vector<Point2D> pts;
   std::vector<float>   s;
+  /// Requested body orientation at each retained point, body frame [rad].
+  /// Empty unless the caller supplied one; decimated in lockstep with `pts`,
+  /// so `yaw[i]` always belongs to `pts[i]`.
+  std::vector<float>   yaw;
   std::vector<bool>    blocked;
   size_t               i0 = 0;           // robot's own projection segment
   float                s0 = 0.0f;        // robot's own projection station
@@ -407,10 +411,14 @@ struct StationPath
 
   float goalCost(float px, float py, float &bearing_out, float &heading_scale,
                  float &progress_out) const;
+
+  /// Requested orientation at arc-length station `at`, clamped to the ends.
+  /// Meaningless (returns 0) when the caller supplied no orientations.
+  float yawAt(float at) const;
 };
 
 StationPath
-buildStationPath(const std::vector<Point2D> &path,
+buildStationPath(const std::vector<Point2D> &path, const std::vector<float> *path_yaw,
                  const std::vector<Point2D> &filtered_points, const Params &params)
 {
   StationPath station;
@@ -421,13 +429,26 @@ buildStationPath(const std::vector<Point2D> &path,
   {
     station.pts.reserve(path.size());
     station.pts.push_back(path.front());
-    for (const Point2D &p : path)
+    // Orientations ride along the SAME decision, never a second pass: an
+    // independent decimation could keep a different subset and silently pair
+    // pts[i] with the orientation of another point.
+    if (path_yaw != nullptr)
     {
+      station.yaw.reserve(path.size());
+      station.yaw.push_back(path_yaw->front());
+    }
+    for (std::size_t k = 0; k < path.size(); ++k)
+    {
+      const Point2D &p = path[k];
       const Point2D &last = station.pts.back();
       const float dx = p.x - last.x, dy = p.y - last.y;
       if (dx * dx + dy * dy >= 0.04f)  // resample at >= 0.2 m spacing
       {
         station.pts.push_back(p);
+        if (path_yaw != nullptr)
+        {
+          station.yaw.push_back((*path_yaw)[k]);
+        }
       }
     }
     {
@@ -436,6 +457,10 @@ buildStationPath(const std::vector<Point2D> &path,
       if (dx * dx + dy * dy > 1e-6f)
       {
         station.pts.push_back(path.back());
+        if (path_yaw != nullptr)
+        {
+          station.yaw.push_back(path_yaw->back());
+        }
       }
     }
     station.s.assign(station.pts.size(), 0.0f);
@@ -502,6 +527,35 @@ buildStationPath(const std::vector<Point2D> &path,
 // progress_out is signed progress from the robot's current projection;
 // it prevents collision-free motion AWAY from the ordered path from being
 // mistaken for a useful candidate.
+float
+StationPath::yawAt(float at) const
+{
+  if (yaw.empty())
+  {
+    return 0.0f;
+  }
+  if (yaw.size() == 1U || at <= s.front())
+  {
+    return yaw.front();
+  }
+  if (at >= s.back())
+  {
+    return yaw.back();
+  }
+  std::size_t i = 0;
+  while (i + 2U < s.size() && s[i + 1U] < at)
+  {
+    ++i;
+  }
+  const float span = s[i + 1U] - s[i];
+  const float t    = (span > 1e-6f) ? (at - s[i]) / span : 0.0f;
+  // Interpolate the DIFFERENCE, wrapped: interpolating the raw values takes
+  // the long way round across the +-pi branch cut, so a plan that steps from
+  // +3.1 to -3.1 rad would command a whole turn backwards instead of the
+  // 0.08 rad it asks for.
+  return wrapAngle(yaw[i] + t * wrapAngle(yaw[i + 1U] - yaw[i]));
+}
+
 float
 StationPath::goalCost(float px, float py, float &bearing_out, float &heading_scale,
                       float &progress_out) const
@@ -1331,7 +1385,8 @@ BacCore::runSpeedGovernor(const std::vector<Point2D> &filtered_points,
 
 Result
 BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> &path,
-                 const Twist2D &current, std::optional<float> goal_heading)
+                 const Twist2D &current, std::optional<float> goal_heading,
+                 const std::vector<float> &path_yaw)
 {
   Result result;
 
@@ -1384,7 +1439,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     return result;
   }
 
-  const StationPath station = buildStationPath(path, filtered_points, params_);
+  // One orientation per path point or none at all. A mismatched length cannot
+  // be repaired here - which end is missing decides which point every
+  // orientation belongs to - so the sequence is dropped and the tangent
+  // governs, rather than steering the body from a guess.
+  const std::vector<float> *requested_yaw =
+      (!path_yaw.empty() && path_yaw.size() == path.size()) ? &path_yaw : nullptr;
+  const StationPath station =
+      buildStationPath(path, requested_yaw, filtered_points, params_);
 
   // Candidate evaluation never looks meaningfully past the END of the path:
   // the run stops at the goal, so clearance differences beyond it (the wall
@@ -1454,12 +1516,33 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // probe, this is inactive in the open and inactive in front of an obstacle,
   // where the candidate search does the avoiding.
   constexpr float kCenteringHeading = 0.6f;  // [rad] at full imbalance
-  // Wrapped: past +-pi the proportional error stops being the short way round,
-  // and the body would take the long way while inside a narrow passage - the
-  // opposite of what this term exists for (R15 M9).
-  float pose_reference = wrapAngle(relative_path_heading + governor.tightness *
-                                                               kCenteringHeading *
-                                                               governor.probe_center_bias);
+  float pose_reference;
+  if (!station.yaw.empty() && motion_model->acceptsGoalHeading())
+  {
+    // The plan carries an orientation for every station, so the PLAN owns the
+    // orientation and the tangent does not enter at all. This is what lets a
+    // holonomic body crab along a path drawn to its side, and what lets it
+    // rotate gradually between two orientations while it travels, instead of
+    // arriving and then turning.
+    //
+    // The centering bias is deliberately NOT added here. Both of its premises
+    // fail once the plan asks the body to crab: it assumes the body faces its
+    // direction of travel, and probe_center_bias is measured by
+    // clearanceProbeCommands, which probe straight AHEAD. Adding it would
+    // rotate the body out of the requested orientation using a measurement
+    // taken in the wrong direction. A commanded orientation therefore has no
+    // centering aid in a passage yet - a known gap, not an oversight.
+    pose_reference = station.yawAt(station.s0);
+  }
+  else
+  {
+    // Wrapped: past +-pi the proportional error stops being the short way round,
+    // and the body would take the long way while inside a narrow passage - the
+    // opposite of what this term exists for (R15 M9).
+    pose_reference = wrapAngle(relative_path_heading + governor.tightness *
+                                                          kCenteringHeading *
+                                                          governor.probe_center_bias);
+  }
 
   // Arriving in the orientation the goal asks for. A model that steers with
   // yaw cannot choose its orientation independently of where it is going, so
