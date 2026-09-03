@@ -360,6 +360,35 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
   return result;
 }
 
+// How far ahead any arc is evaluated for a given speed: one sim_time of
+// travel, never shorter than min_eval_distance, never past the end of the
+// path. One definition, used by the tightness probe, the turn-then-go row,
+// every moving candidate, and the stopping test.
+float
+evalWindow(const Params &params, float remaining_path, float speed)
+{
+  return std::min(std::max(speed * params.sim_time, params.min_eval_distance), remaining_path);
+}
+
+// Margin facing the direction of travel. This is the support function of the
+// margin box in that direction, so a forward command sees safety_margin.front
+// exactly, a reversing one safety_margin.rear, and a purely lateral one
+// safety_margin.side. Only a holonomic model can produce the blended case.
+float
+travelMargin(const Params &params, const Twist2D &command)
+{
+  const float speed = command.speed();
+  if (speed <= 1e-6f)
+  {
+    return params.safety_margin.front;
+  }
+  const float ux = command.v / speed;
+  const float uy = command.vy / speed;
+  const float along =
+      (ux >= 0.0f) ? params.safety_margin.front * ux : params.safety_margin.rear * -ux;
+  return along + params.safety_margin.side * std::fabs(uy);
+}
+
 // Station goal: decimated projection polyline with cumulative arc length.
 // Candidates are scored by projection station (progress) and path tangent.
 struct StationPath
@@ -761,13 +790,8 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
                           : station.total - station.s0) +
       0.5f;
 
-  // How far ahead any arc is evaluated for a given speed: one sim_time of
-  // travel, never shorter than min_eval_distance, never past the end of the
-  // path. One definition, used by the tightness probe, the turn-then-go row,
-  // every moving candidate, and the stopping test.
   const auto eval_window = [&](float speed) {
-    return std::min(std::max(speed * params_.sim_time, params_.min_eval_distance),
-                    remaining_path);
+    return evalWindow(params_, remaining_path, speed);
   };
 
   // Diagnostics: the reported local goal is the path point one preview
@@ -1020,24 +1044,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float cap_floor = params_.footprint.width / 2.0f + std::max(params_.safety_margin.side, 0.05f);
   float cap_eff   = std::min(clearance_cap, std::max(probe_best, cap_floor));
 
-  float lead_margin   = params_.safety_margin.front;
-
-  // Margin facing the direction of travel. This is the support function of the
-  // margin box in that direction, so a forward command sees safety_margin.front
-  // exactly, a reversing one safety_margin.rear, and a purely lateral one
-  // safety_margin.side. Only a holonomic model can produce the blended case.
-  const auto travel_margin = [&](const Twist2D &command) {
-    const float speed = command.speed();
-    if (speed <= 1e-6f)
-    {
-      return lead_margin;
-    }
-    const float ux = command.v / speed;
-    const float uy = command.vy / speed;
-    const float along = (ux >= 0.0f) ? lead_margin * ux : params_.safety_margin.rear * -ux;
-    return along + params_.safety_margin.side * std::fabs(uy);
-  };
-
   float best_score = -FLT_MAX;
   Twist2D best_cmd(0.0f, 0.0f);
   float best_clearance = 0.0f, best_path_cost = 0.0f;
@@ -1146,7 +1152,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
         float advance = std::min(v_ref * params_.sim_time, station.goal_distance);
         if (eval.blocking_s < FLT_MAX)
         {
-          advance = std::max(0.0f, std::min(advance, eval.blocking_s - lead_margin));
+          advance = std::max(0.0f,
+                             std::min(advance, eval.blocking_s -
+                                                  params_.safety_margin.front));
         }
         end_x_pre = advance * std::cos(end_th_pre);
         end_y_pre = advance * std::sin(end_th_pre);
@@ -1183,7 +1191,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           // Along the DIRECTION OF TRAVEL, not the forward axis. Computing
           // either from `v` alone admits a pure crab with zero braking
           // distance and the front margin instead of the side one (R15 H2).
-          float margin   = travel_margin(command);
+          float margin   = travelMargin(params_, command);
           float free_run = eval.blocking_s - margin;
           float needed   = brakingDistance(candidate_speed, params_);
           if (free_run <= needed)
@@ -1301,7 +1309,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     {
       return FLT_MAX;
     }
-    const float free_run = ev.blocking_s - travel_margin(command);
+    const float free_run = ev.blocking_s - travelMargin(params_, command);
     const float a = effectiveStopDecel(params_);
     const float tr = params_.brake_reaction_time;
     return free_run > 0.0f ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr) : 0.0f;
