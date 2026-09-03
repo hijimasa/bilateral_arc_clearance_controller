@@ -489,7 +489,7 @@ buildStationPath(const std::vector<Point2D> &path,
     }
   }
   // A single-point (or sub-resolution) path degenerates to a plain point
-  // goal: the cost lambda then returns the Euclidean distance to it.
+  // goal: the goal cost then returns the Euclidean distance to it.
   station.degenerate = station.pts.size() < 2;
   station.total      = station.degenerate ? 0.0f : station.s.back();
   return station;
@@ -1592,9 +1592,10 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.candidate_count  = search.candidate_count;
 
   // A holding-still report has to mean holding still in EVERY axis. Testing
-  // `out_v` and `out_w` alone reported STOP while the body was still sliding
-  // sideways, which `avoid_status` subscribers and the filter node's
-  // arbitration both act on (R16 M4).
+  // the forward and angular components alone reported STOP while the body was
+  // still sliding sideways, which `avoid_status` subscribers and the filter
+  // node's arbitration both act on (R16 M4). speed() is what covers the
+  // lateral axis here; `output.v` written in its place brings the bug back.
   if (output.speed() == 0.0f && output.w == 0.0f)
   {
     // Intent exists but the best move is to hold still: blocked.
