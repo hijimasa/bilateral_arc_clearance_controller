@@ -498,7 +498,10 @@ shippedExampleParams()
 /// `diffDriveReferenceParams()` below does - never by re-listing the file.
 ///
 /// Read once. The yaml guard's assertions are about the FILE, not about each
-/// of the 28 runs that ask for its values, and the first caller pays for them.
+/// of the calls that ask for its values, and the first caller pays for them.
+/// Measured on this file as it stands: `omniParams()` is called 33 times and
+/// drives 26 closed-loop runs, so the guard would otherwise assert 33 times
+/// over.
 bac::Params
 omniParams()
 {
