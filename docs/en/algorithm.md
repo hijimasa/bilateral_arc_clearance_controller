@@ -129,10 +129,8 @@ holonomic model). Refinement runs when the coarse winner is not the stop row, so
 winner is a moving row; measured over all 41 points, at a current speed of 0.00 included, both in an empty field
 and with a wall 1.2 m ahead.
 
-The following corrects what this section previously stated.
-
-R19 H3: this paragraph previously said the same settings give 156 or 182 from other current speeds, which the
-shipped `limits.v_min` cannot produce - it contradicted the conditions the preceding sentence declares.
+What this section previously got wrong (R19 H3: it said 156 or 182 also occur at other current speeds) is
+recorded, with the old wording quoted, in the [R19 response](../reviews/r19-2026-09-02-response.md).
 
 #### The bilateral term and `avoid_margin.side` (measured)
 
@@ -168,15 +166,17 @@ failure to traverse, or a route around the outside as a failure - a 1.2 m corrid
 passes **all 101**, while a 1.1 m one starts failing at 0.418 m. Modelling the walls as zero-thickness lines
 makes both worse: 1.2 m starts failing at 0.476 m and 1.1 m at 0.372 m.
 
-The following corrects what this section previously stated.
-
-(R19, fourth pass: the interval given here was 0.0157-0.0163, which 28 of the 807 points fall outside; it had
-been carried over from a coarser subsample. Re-measured over all 807.) R19 H4: this paragraph previously said
+This corrects the section for anyone who chose a value from an older copy of it.
+R19 H4: this paragraph previously said
 0.705 and 0.710 are back above 0.18 and that it is stable from 0.715 - the 0.1900 and 0.1869 belong to 0.695 and
 0.705, one and two cells off, and 0.725 is a counterexample that was missing. The first pass of the R19 response
 replaced that with "stable below 0.017 from 0.730 up", which is true only as a statement about the 0.005 grid:
-0.737 and 0.738 are counterexamples to it. R18 M6: the pair quoted here before (0.0119 / 0.139) came from the
-older zero-thickness fixture rather than from the rig this paragraph declares.
+0.737 and 0.738 are counterexamples to it.
+
+The drafting-history corrections (R19 fourth pass - the 807-point interval was given as 0.0157-0.0163; R18 M6 -
+the 0.0119 / 0.139 pair came from the older zero-thickness fixture) are recorded, with the old wording quoted,
+in the [R19 response](../reviews/r19-2026-09-02-response.md) and the
+[R18 response](../reviews/r18-2026-09-02-response.md).
 
 These observations apply only to the [evaluation conditions](method_comparison.md#nav2-system-benchmark).
 They are not probabilistic or universal claims about untested environments.
