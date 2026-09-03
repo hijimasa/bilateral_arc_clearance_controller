@@ -1010,6 +1010,25 @@ testEmittedCommandCanAlwaysStop()
   expect(stop_while_moving == 0,
          "no tick reports STOP while it is still translating (" +
              std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
+  // NOT redundant with the independent invariant below, although it now kills
+  // nothing that the independent one does not. Measured over the 52 mutations
+  // of src/ and bac_core.hpp this suite is scored against: this assertion kills
+  // {adm_free_run_half_needed, adm_travel_margin_front_only}, and the union of
+  // the three independent-contact assertions (this sweep's, the second sweep's
+  // and the straight-command sweep's) kills 23, including both of those. The
+  // set this one ADDS is EMPTY.
+  //
+  // It stays because it is a different question, not a weaker one. This asks
+  // whether the evaluator's OWN answer and the published twist agree; the
+  // independent version never looks at the evaluator at all. A defect that
+  // makes `evaluateArcWindows` disagree with the output stage while the true
+  // geometry stays reachable is invisible to the independent check by
+  // construction, and this is the only assertion in the suite that would see
+  // it. The 52 mutations happen not to contain one - that is a property of the
+  // mutation set, not evidence that the failure mode cannot occur.
+  //
+  // R18 H1 introduced the independent derivation and R19 H1 (187c053) lifted it
+  // above the evaluator's gates, which is what made the inclusion total here.
   expect(violations == 0,
          "every emitted twist can stop before contact along its own direction of travel (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
@@ -1249,6 +1268,25 @@ testEmittedCommandCanStopWhenAccelerationBinds()
              std::to_string(stop_while_moving) + "; first: " + stop_while_moving_worst + ")");
   // Measured: 0 here, against 25 with the fallback gate removed, 32 with
   // stoppable() forced true, and 7 with the deadband left unchecked.
+  //
+  // As in the first sweep, this is NOT a restatement of the independent
+  // invariant below, and here the inclusion is nearly - but not quite - total.
+  // Measured over the same 52 mutations: this assertion kills
+  // {adm_travel_margin_front_only, db_nobrake, geo_cx_sign, geo_sigma_flip};
+  // the union of the three independent-contact assertions kills 23 of the 52
+  // and contains all of those except `db_nobrake`. So the set this one adds is
+  // exactly {db_nobrake} - the deadband re-check disabled - and that mutation
+  // is caught in this same file anyway, by
+  // testDeadbandIsSkippedRatherThanBreakingAdmissibility's `kept > 120`
+  // (measured: 0 such ticks under the mutation, 255 unmutated). Those two are
+  // the ONLY two assertions in the whole suite that fail under it.
+  //
+  // Do not read that as "the independent version replaces this one". This one
+  // is the only place that compares the evaluator's answer with what the OUTPUT
+  // STAGE and the emergency fallback actually publish; the independent version
+  // reads the rectangle and the point cloud and never asks the evaluator
+  // anything. Deleting it would leave the evaluator-versus-output disagreement
+  // untested, which is the failure mode R16 H4 and R16 H2 were both found in.
   expect(violations == 0,
          "what the output stage and the fallback publish can stop before contact (" +
              std::to_string(violations) + " violations; first: " + worst + ")");
