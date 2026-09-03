@@ -1271,23 +1271,11 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
 
       // The exact contact test is valid for any radius, including below
       // turn_radius_min (that guard exists for scoring, not for contact).
-      float dist_block =
-          std::max(out_command().speed() * params_.sim_time, params_.min_eval_distance);
-      dist_block       = std::min(dist_block, remaining_path);
-      const ArcEvaluation ev =
-          evaluateArcWindows(filtered_points, out_command(), 0.0f, dist_block);
-      if (ev.blocking_s >= FLT_MAX)
-      {
-        break;
-      }
-
-      const float margin = travel_margin(out_command());
-      const float free_run = ev.blocking_s - margin;
-      const float a = std::max(params_.stop_decel, 0.1f);
-      const float tr = params_.brake_reaction_time;
-      const float v_safe = free_run > 0.0f
-                               ? a * (std::sqrt(tr * tr + 2.0f * free_run / a) - tr)
-                               : 0.0f;
+      // ONE definition of stoppability, shared with the emergency fallback
+      // below: `safe_speed_for` returns FLT_MAX for a contact-free arc, so the
+      // comparison accepts it and the loop breaks, exactly as the former
+      // inline copy of this computation did.
+      const float v_safe = safe_speed_for(out_command());
       if (out_command().speed() <= v_safe + 1e-4f)
       {
         break;
