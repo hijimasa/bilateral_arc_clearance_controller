@@ -95,65 +95,15 @@ The published benchmark observations below use the differential-drive model.
   at this boundary condition.
 - The holonomic policy avoids with lateral velocity and uses yaw to regulate pose. Its candidate lattice is
   forward speed × lateral speed - two dimensions, like the differential-drive forward speed × yaw rate lattice,
-  though not the same candidate count. Measured with the shipped holonomic values (`limits.v_max` 0.4,
-  `limits.vy_max` 0.3, `limits.w_max` 1.0, `v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current
-  velocity of (0.20 m/s, 0.0 rad/s): 96 against 130. The conditions matter. Sweeping the current forward speed
-  over 41 points from 0.00 to 0.40 m/s (0.01 steps, zero yaw, open field, path straight ahead), **the shipped
-  `limits.v_min: 0.0` gives 130 differential-drive candidates at 21 of the points and 156 at the other 20;
-  182 never occurs.** 182 requires reverse to be enabled: at `limits.v_min` = -0.05 the sweep gives 130 once,
-  156 at 20 points and 182 at 20; at -0.10 and -0.15 it gives 130 once, 156 at 31 points and 182 at 9. The
-  holonomic count is 96 at all 41 points. These count the COARSE lattice only (measured with
-  `w_refine_steps` set to 0). With the shipped 3, refinement adds 2 x 3 candidates and every number above is 6
-  larger (136 at 21 points and 162 at 20 for differential drive, 102 at all 41 for the holonomic model).
-  Refinement runs when the coarse winner is not the stop row, so the +6 holds wherever the winner is a moving
-  row; measured over all 41 points, at a current speed of 0.00 included, both in an empty field and with a wall
-  1.2 m ahead. R19 H3: this paragraph previously said the same settings give 156 or 182 from other current speeds,
-  which the shipped `limits.v_min` cannot produce - it contradicted the conditions the preceding sentence
-  declares. The yaw rate is fixed before candidate generation so the trajectory that is scored is the trajectory
-  that is driven. In a passage the regulator adds the bilateral clearance imbalance and points the body INTO the gap
-  rather than crabbing towards it, because a crabbing rectangle sweeps wider than a straight one (0.86 m at 55
-  degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is gated to passages — bounded on both
-  sides and open straight ahead. The cap is `footprint.width / 2 + avoid_margin.side`: for the shipped
-  holonomic body, 0.5 m wide, an `avoid_margin.side` of 0.5 puts that cap at 0.75 m, so an ordinary 1.6 m
-  corridor reads as "open" on the far side and the term never fires at all.
-  **The measurement conditions are stated here** because R15 M12 found that a table
-  without them did not reproduce on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH
-  models, a 7.5 m corridor (x = 2.0 to 9.5 m), `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths
-  1.1 / 1.2 / 1.3 / 1.6 / 1.8 m, with 0.10 m thick walls, is 0.0131 / 0.0148 / 0.0171 / 0.0159 / 0.0160 m against
-  0.0259 / 0.0280 / 0.0288 / 0.0260 / 0.0255 m for differential drive, a factor of 1.6 to 2.0. Lowering `avoid_margin.side` stops the
-  bilateral term from engaging at all: in a 1.6 m corridor with 0.10 m thick walls the mean error is 0.0159 m at
-  0.9 and 0.1412 m at 0.5. The transition is not monotone. Swept over 0.500-0.900 in 0.005 steps (81 points):
-  0.690 = 0.2009, 0.695 = 0.1900, 0.700 = 0.0330, 0.705 = 0.1869, 0.710 = 0.0152, 0.715 = 0.0156,
-  0.720 = 0.0150, **0.725 = 0.1600**, 0.730 = 0.0156, and 0.735 upwards 0.0131-0.0162.
-  **Do not read those 81 points as "0.730 and up is safe."** They all reproduce, but the 0.005 grid ALIASES:
-  re-swept at 0.001 (and at 0.0002 above 0.730) the bad cells are BANDS, not points, and the grid lands
-  inside or outside them almost at random. Measured: 0.702-0.708 is
-  0.1863-0.1952 (the 0.005 grid touches only 0.705); 0.721-0.729 is 0.1444-0.1600, with 0.723 = 0.0146 the one
-  good cell inside it (the 0.005 grid touches only 0.725); and **0.7370-0.7386 is 0.0846-0.1074**, peaking at
-  0.1074 at 0.7380 and 0.7382 with two good cells inside it as well (0.7376 and 0.7378 are 0.0160) - a band
-  that the 0.005 grid AND the 0.001 grid both largely step over
-  (0.735 = 0.0131, 0.736 = 0.0169, 0.739 = 0.0160). The correct statement is therefore that **0.70-0.74 is a
-  non-monotone region which the 0.005 grid aliases, and no value in it may be chosen by interpolating between
-  measured points** - adjacent thousandths differ by an order of magnitude. Above it the rig is flat: all 807 points
-  from 0.7388 to 0.900 in 0.0002 steps lie between **0.015658 (at 0.8004) and 0.016315 (at 0.8726)** - every
-  one of them below 0.017, and none of them anywhere near the 0.08-0.20 the bands above reach - so no band of
-  this kind was FOUND above 0.739; that is a measurement at 0.0002 resolution and does not rule out a narrower
-  one. (R19, fourth pass: the interval given here was 0.0157-0.0163, which 28 of the 807 points fall outside;
-  it had been carried over from a coarser subsample. Re-measured over all 807.) The shipped 0.9
-  sits well clear of the region, and 0.8 (0.016102) reaches essentially the same value as 0.9 (0.015945),
-  so the shipped 0.9 is a margin over that boundary rather than a required value. R19 H4:
-  this paragraph previously said 0.705 and 0.710 are back above 0.18 and that it is stable from 0.715 - the
-  0.1900 and 0.1869 belong to 0.695 and 0.705, one and two cells off, and 0.725 is a counterexample that was
-  missing. The first pass of the R19 response replaced that with "stable below 0.017 from 0.730 up", which is
-  true only as a statement about the 0.005 grid: 0.737 and 0.738 are counterexamples to it. R18 M6: the pair
-  quoted here before (0.0119 / 0.139) came from the older zero-thickness fixture
-  rather than from the rig this paragraph declares.
-  **The entry offset has a limit.** Swept from 0.30 to 0.50 m in 0.002 m steps - 101 cells, counting a contact,
-  a failure to traverse, or a route around the outside as a failure - a 1.2 m corridor with 0.10 m thick walls
-  passes **all 101**, while a 1.1 m one starts failing at 0.418 m. Modelling the walls as zero-thickness lines
-  makes both worse: 1.2 m starts failing at 0.476 m and 1.1 m at 0.372 m. Rounding an isolated obstacle it
-  commands a peak |yaw rate| of 0.0437 rad/s where differential drive needs 0.3125. It passes twenty-seven
-  deterministic tests, ten unit and seventeen closed-loop.
+  though not the same candidate count. The yaw rate is fixed before candidate generation so the trajectory that
+  is scored is the trajectory that is driven. In a passage the regulator adds the bilateral clearance imbalance
+  and points the body INTO the gap rather than crabbing towards it, because a crabbing rectangle sweeps wider
+  than a straight one (0.86 m at 55 degrees for a 0.7 × 0.5 m body against 0.5 m going straight); the term is
+  gated to passages — bounded on both sides and open straight ahead. The cap is `footprint.width / 2 +
+  avoid_margin.side`. Rounding an isolated obstacle it commands a peak |yaw rate| of 0.0437 rad/s where
+  differential drive needs 0.3125. It passes twenty-seven deterministic tests, ten unit and seventeen
+  closed-loop. The measured candidate counts and the measured `avoid_margin.side` behaviour are in the
+  subsections at the end of this section.
 - The Ackermann policy passes thirteen deterministic tests — forward lateral goal, offset corridor, obstacle
   detour, dead-end stop, rear goal, turning-radius binding, yaw-rate-limit binding, clearance-probe reach, the
   shipped example configuration, safety stop (forward-only), safety stop (reverse escape), narrow-corridor
@@ -163,6 +113,70 @@ The published benchmark observations below use the differential-drive model.
   curvature sign changes and stop ticks; the clutter test bounds clearance and stop ticks; per-cycle curvature
   change is bounded in the offset-corridor and shipped-configuration runs, where a threshold was measured to
   separate correct from broken behaviour. These are regression tests, not vehicle evidence.
+
+#### Holonomic candidate counts (measured)
+
+Measured with the shipped holonomic values (`limits.v_max` 0.4, `limits.vy_max` 0.3, `limits.w_max` 1.0,
+`v_samples` 5, `vy_samples` 15, `w_samples` 25) from a current velocity of (0.20 m/s, 0.0 rad/s): 96 against
+130. The conditions matter. Sweeping the current forward speed over 41 points from 0.00 to 0.40 m/s (0.01 steps,
+zero yaw, open field, path straight ahead), **the shipped `limits.v_min: 0.0` gives 130 differential-drive
+candidates at 21 of the points and 156 at the other 20; 182 never occurs.** 182 requires reverse to be enabled:
+at `limits.v_min` = -0.05 the sweep gives 130 once, 156 at 20 points and 182 at 20; at -0.10 and -0.15 it gives
+130 once, 156 at 31 points and 182 at 9. The holonomic count is 96 at all 41 points. These count the COARSE
+lattice only (measured with `w_refine_steps` set to 0). With the shipped 3, refinement adds 2 x 3 candidates and
+every number above is 6 larger (136 at 21 points and 162 at 20 for differential drive, 102 at all 41 for the
+holonomic model). Refinement runs when the coarse winner is not the stop row, so the +6 holds wherever the
+winner is a moving row; measured over all 41 points, at a current speed of 0.00 included, both in an empty field
+and with a wall 1.2 m ahead.
+
+The following corrects what this section previously stated.
+
+R19 H3: this paragraph previously said the same settings give 156 or 182 from other current speeds, which the
+shipped `limits.v_min` cannot produce - it contradicted the conditions the preceding sentence declares.
+
+#### The bilateral term and `avoid_margin.side` (measured)
+
+For the shipped holonomic body, 0.5 m wide, an `avoid_margin.side` of 0.5 puts that cap at 0.75 m, so an
+ordinary 1.6 m corridor reads as "open" on the far side and the bilateral term never fires at all.
+
+**The measurement conditions are stated here** because R15 M12 found that a table without them did not reproduce
+on a reviewer's bench: entry offset 0.30 m, `avoid_margin.side` 0.9 for BOTH models, a 7.5 m corridor (x = 2.0
+to 9.5 m), `heading_gain` 1.5. Under those conditions the mean lateral error for corridor widths 1.1 / 1.2 / 1.3
+/ 1.6 / 1.8 m, with 0.10 m thick walls, is 0.0131 / 0.0148 / 0.0171 / 0.0159 / 0.0160 m against 0.0259 / 0.0280
+/ 0.0288 / 0.0260 / 0.0255 m for differential drive, a factor of 1.6 to 2.0. Lowering `avoid_margin.side` stops
+the bilateral term from engaging at all: in a 1.6 m corridor with 0.10 m thick walls the mean error is 0.0159 m
+at 0.9 and 0.1412 m at 0.5. The transition is not monotone. Swept over 0.500-0.900 in 0.005 steps (81 points):
+0.690 = 0.2009, 0.695 = 0.1900, 0.700 = 0.0330, 0.705 = 0.1869, 0.710 = 0.0152, 0.715 = 0.0156, 0.720 = 0.0150,
+**0.725 = 0.1600**, 0.730 = 0.0156, and 0.735 upwards 0.0131-0.0162. **Do not read those 81 points as "0.730 and
+up is safe."** They all reproduce, but the 0.005 grid ALIASES: re-swept at 0.001 (and at 0.0002 above 0.730) the
+bad cells are BANDS, not points, and the grid lands inside or outside them almost at random. Measured:
+0.702-0.708 is 0.1863-0.1952 (the 0.005 grid touches only 0.705); 0.721-0.729 is 0.1444-0.1600, with 0.723 =
+0.0146 the one good cell inside it (the 0.005 grid touches only 0.725); and **0.7370-0.7386 is 0.0846-0.1074**,
+peaking at 0.1074 at 0.7380 and 0.7382 with two good cells inside it as well (0.7376 and 0.7378 are 0.0160) - a
+band that the 0.005 grid AND the 0.001 grid both largely step over (0.735 = 0.0131, 0.736 = 0.0169, 0.739 =
+0.0160). The correct statement is therefore that **0.70-0.74 is a non-monotone region which the 0.005 grid
+aliases, and no value in it may be chosen by interpolating between measured points** - adjacent thousandths
+differ by an order of magnitude. Above it the rig is flat: all 807 points from 0.7388 to 0.900 in 0.0002 steps
+lie between **0.015658 (at 0.8004) and 0.016315 (at 0.8726)** - every one of them below 0.017, and none of them
+anywhere near the 0.08-0.20 the bands above reach - so no band of this kind was FOUND above 0.739; that is a
+measurement at 0.0002 resolution and does not rule out a narrower one. The shipped 0.9 sits well clear of the
+region, and 0.8 (0.016102) reaches essentially the same value as 0.9 (0.015945), so the shipped 0.9 is a margin
+over that boundary rather than a required value.
+
+**The entry offset has a limit.** Swept from 0.30 to 0.50 m in 0.002 m steps - 101 cells, counting a contact, a
+failure to traverse, or a route around the outside as a failure - a 1.2 m corridor with 0.10 m thick walls
+passes **all 101**, while a 1.1 m one starts failing at 0.418 m. Modelling the walls as zero-thickness lines
+makes both worse: 1.2 m starts failing at 0.476 m and 1.1 m at 0.372 m.
+
+The following corrects what this section previously stated.
+
+(R19, fourth pass: the interval given here was 0.0157-0.0163, which 28 of the 807 points fall outside; it had
+been carried over from a coarser subsample. Re-measured over all 807.) R19 H4: this paragraph previously said
+0.705 and 0.710 are back above 0.18 and that it is stable from 0.715 - the 0.1900 and 0.1869 belong to 0.695 and
+0.705, one and two cells off, and 0.725 is a counterexample that was missing. The first pass of the R19 response
+replaced that with "stable below 0.017 from 0.730 up", which is true only as a statement about the 0.005 grid:
+0.737 and 0.738 are counterexamples to it. R18 M6: the pair quoted here before (0.0119 / 0.139) came from the
+older zero-thickness fixture rather than from the rig this paragraph declares.
 
 These observations apply only to the [evaluation conditions](method_comparison.md#nav2-system-benchmark).
 They are not probabilistic or universal claims about untested environments.
