@@ -41,6 +41,26 @@ if(ament_cmake_FOUND)
       PATTERN "__pycache__" EXCLUDE
       PATTERN "*.pyc" EXCLUDE
   )
+  # Installed because the installed documentation LINKS INTO THEM. README.md,
+  # README.ja.md, docs/README.md, docs/en/README.md and both language versions
+  # of docs/ablation_and_matched_evaluation.md carry 12 relative links to
+  # docker/nav2-jazzy/README.md and examples/gazebo/README.md between them; all
+  # 12 resolve in the source tree and, until these two rules existed, none of
+  # them resolved under share/${PROJECT_NAME} (measured by installing and
+  # walking every relative link in every installed .md and .rst). Rewriting the
+  # links as absolute repository URLs would have fixed the same 12, but would
+  # point a user of an installed copy at whatever `main` holds rather than at
+  # the harness that shipped with it - and these two directories together are
+  # 132 kB against the 4.2 MB of docs/ already installed. If either directory
+  # stops being installed, un-link it from the documentation in the same change.
+  install(DIRECTORY docker DESTINATION share/${PROJECT_NAME}
+      PATTERN "__pycache__" EXCLUDE
+      PATTERN "*.pyc" EXCLUDE
+  )
+  install(DIRECTORY examples DESTINATION share/${PROJECT_NAME}
+      PATTERN "__pycache__" EXCLUDE
+      PATTERN "*.pyc" EXCLUDE
+  )
   install(FILES README.md README.ja.md LICENSE CHANGELOG.rst CONTRIBUTING.md SECURITY.md
       DESTINATION share/${PROJECT_NAME})
   install(TARGETS bac_core
