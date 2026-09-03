@@ -324,23 +324,185 @@ struct OmniRun
   int   lateral_samples = 0;
 };
 
+/// Keys config/bac_controller_omni.yaml may carry without this scenario
+/// consuming them. See shipped_config.hpp for what the guard enforces.
+const std::vector<std::string> kAllowedUnconsumedKeys = {
+    "controller_server",           // block header
+    "ros__parameters",             // block header
+    "FollowPath",                  // block header: the plugin block itself
+    "controller_frequency",        // Nav2 control loop rate, not a BAC parameter
+    "controller_plugins",          // Nav2 plugin list
+    "plugin",                      // plugin class name (checked by the docker gate)
+    "scan_topic",                  // BacController scan adapter, not BacCore
+    "scan_timeout",                //   "
+    "scan_downsample",             //   "
+    "scan_min_points",             //   "
+    "scan_inf_is_valid",           //   "
+    "diagnostics_publish_period",  // diagnostics only
+};
+
+bool g_shipped_config_loaded = false;
+
+bac::Params
+shippedExampleParams()
+{
+  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_OMNI_CONFIG_PATH);
+  bac::Params params;
+  if (!config.readable || config.entries.empty())
+  {
+    expect(false, "the shipped holonomic configuration is readable at " BAC_OMNI_CONFIG_PATH);
+    return params;
+  }
+
+  bool complete = true;
+  std::vector<std::string> consumed;
+  const auto value_of = [&](const char *key) -> const bac_sim::ConfigEntry * {
+    consumed.push_back(key);
+    const auto found = config.entries.find(key);
+    if (found == config.entries.end())
+    {
+      expect(false, std::string("the shipped configuration declares ") + key);
+      complete = false;
+      return nullptr;
+    }
+    if (found->second.section != "FollowPath")
+    {
+      expect(false, std::string("the shipped configuration keeps ") + key +
+                        " inside the FollowPath block users copy (found under '" +
+                        found->second.section + "' on line " +
+                        std::to_string(found->second.line) + ")");
+      complete = false;
+      return nullptr;
+    }
+    return &found->second;
+  };
+  const auto number = [&](const char *key, float &field) {
+    const bac_sim::ConfigEntry *entry = value_of(key);
+    if (entry == nullptr)
+    {
+      return;
+    }
+    char *end = nullptr;
+    const float parsed = std::strtof(entry->value.c_str(), &end);
+    if (end == entry->value.c_str() || *end != '\0' || !std::isfinite(parsed))
+    {
+      expect(false, std::string("the shipped configuration gives ") + key +
+                        " a plain finite number (got '" + entry->value + "' on line " +
+                        std::to_string(entry->line) + ")");
+      complete = false;
+      return;
+    }
+    field = parsed;
+  };
+  const auto integer = [&](const char *key, int &field) {
+    float value = 0.0f;
+    number(key, value);
+    field = static_cast<int>(value);
+  };
+
+  const bac_sim::ConfigEntry *model = value_of("motion_model.type");
+  std::string model_value = (model == nullptr) ? std::string("<missing>") : model->value;
+  // The loader takes this one as a STRING, so `"omni"` is legal YAML for it and
+  // yields the same value as the bare form - unlike a quoted number, which is a
+  // type error there too. The Ackermann guard has always stripped these quotes;
+  // this one did not, so `motion_model.type: "omni"` failed the holonomic suite
+  // alone. Measured before the change on a copy of the shipped yaml with only
+  // the quotes added: this suite reported 3 failed checks
+  // ("selects the holonomic model (got '\"omni\"')" twice, plus "every value
+  // the scenario needs was read from the shipped configuration"), while the
+  // Ackermann suite passed on the identical edit to its own yaml. The two
+  // implementations are still separate; only the quote handling is aligned
+  // here, the common guard is stage 3.
+  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
+  {
+    model_value = model_value.substr(1, model_value.size() - 2U);
+  }
+  if (model == nullptr || model_value != "omni")
+  {
+    expect(false, std::string("the shipped configuration selects the holonomic model (got '") +
+                      model_value + "')");
+    complete = false;
+  }
+  params.motion_model.type = bac::MotionModelType::OMNI;
+
+  number("footprint.front", params.footprint.front);
+  number("footprint.rear", params.footprint.rear);
+  number("footprint.width", params.footprint.width);
+  number("safety_margin.front", params.safety_margin.front);
+  number("safety_margin.rear", params.safety_margin.rear);
+  number("safety_margin.side", params.safety_margin.side);
+  number("avoid_margin.side", params.avoid_margin.side);
+  number("limits.v_max", params.limits.v_max);
+  number("limits.v_min", params.limits.v_min);
+  number("limits.vy_max", params.limits.vy_max);
+  number("limits.w_max", params.limits.w_max);
+  number("limits.acc_v", params.limits.acc_v);
+  number("limits.acc_w", params.limits.acc_w);
+  number("control_period", params.control_period);
+  number("stop_decel", params.stop_decel);
+  number("brake_reaction_time", params.brake_reaction_time);
+  number("heading_gain", params.heading_gain);
+  integer("vy_samples", params.vy_samples);
+  number("weights.clearance", params.weights.clearance);
+  number("weights.path_dist", params.weights.path_dist);
+  number("weights.balance", params.weights.balance);
+  number("weights.heading", params.weights.heading);
+  number("weights.hysteresis", params.weights.hysteresis);
+  number("weights.squeeze", params.weights.squeeze);
+  number("sim_time", params.sim_time);
+
+  for (const std::string &duplicate : config.duplicates)
+  {
+    expect(false, "the shipped configuration declares " + duplicate +
+                      " only once; a repeated key means a second block is "
+                      "masking the one users copy");
+  }
+  for (const std::string &section : config.sections)
+  {
+    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
+           "the shipped configuration block '" + section + "' is one this suite knows about");
+  }
+  for (const auto &entry : config.entries)
+  {
+    if (std::find(consumed.begin(), consumed.end(), entry.first) != consumed.end())
+    {
+      continue;
+    }
+    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
+           "the shipped configuration key " + entry.first + " (line " +
+               std::to_string(entry.second.line) +
+               ") is exercised by this suite or listed in kAllowedUnconsumedKeys on purpose");
+  }
+
+  g_shipped_config_loaded = complete;
+  return params;
+}
+
+/// The parameters every holonomic scenario in this file runs - READ from the
+/// shipped yaml, not written to match it.
+///
+/// Until this change the two were separate: this function hand-listed the
+/// values and `shippedExampleParams()` parsed the file, which is the exact
+/// state test/shipped_config.hpp opens by forbidding ("a hand-copied duplicate
+/// would let a yaml edit ship a configuration that fails the very suite meant
+/// to protect it"). It had already collapsed: the two builders produced
+/// byte-identical `bac::Params` - measured, 0 of 212 bytes differ - so the two
+/// runs `testShippedExampleConfiguration()` used to make were bit-identical to
+/// runs the file already had (see that function). Deriving in this direction
+/// is what makes the yaml load-bearing: all 17 scenarios below now drive the
+/// configuration users copy, so an edit to it moves THEM.
+///
+/// The divergence set is currently EMPTY. A holonomic scenario that needs a
+/// value the shipped file does not carry overrides it here, one field at a
+/// time and with the measurement that justifies it - the way
+/// `diffDriveReferenceParams()` below does - never by re-listing the file.
+///
+/// Read once. The yaml guard's assertions are about the FILE, not about each
+/// of the 28 runs that ask for its values, and the first caller pays for them.
 bac::Params
 omniParams()
 {
-  bac::Params params;
-  params.motion_model.type = bac::MotionModelType::OMNI;
-  params.limits.v_max = 0.4f;
-  params.limits.v_min = 0.0f;
-  params.limits.vy_max = 0.3f;
-  params.limits.w_max = 1.0f;
-  params.limits.acc_v = 0.8f;
-  params.limits.acc_w = 2.5f;
-  params.control_period = 0.05f;
-  params.footprint.front = 0.35f;
-  params.footprint.rear = -0.35f;
-  params.footprint.width = 0.5f;
-  params.avoid_margin.side = 0.9f;  // see config/bac_controller_omni.yaml
-  params.weights.hysteresis = 0.4f;
+  static const bac::Params params = shippedExampleParams();
   return params;
 }
 
@@ -2017,217 +2179,66 @@ testSafetyStopHoldsPosition()
   expectLimitsRespected(run, "safety stop");
 }
 
-/// Keys config/bac_controller_omni.yaml may carry without this scenario
-/// consuming them. See shipped_config.hpp for what the guard enforces.
-const std::vector<std::string> kAllowedUnconsumedKeys = {
-    "controller_server",           // block header
-    "ros__parameters",             // block header
-    "FollowPath",                  // block header: the plugin block itself
-    "controller_frequency",        // Nav2 control loop rate, not a BAC parameter
-    "controller_plugins",          // Nav2 plugin list
-    "plugin",                      // plugin class name (checked by the docker gate)
-    "scan_topic",                  // BacController scan adapter, not BacCore
-    "scan_timeout",                //   "
-    "scan_downsample",             //   "
-    "scan_min_points",             //   "
-    "scan_inf_is_valid",           //   "
-    "diagnostics_publish_period",  // diagnostics only
-};
-
-bool g_shipped_config_loaded = false;
-
-bac::Params
-shippedExampleParams()
-{
-  const bac_sim::ConfigFile config = bac_sim::readConfigFile(BAC_OMNI_CONFIG_PATH);
-  bac::Params params;
-  if (!config.readable || config.entries.empty())
-  {
-    expect(false, "the shipped holonomic configuration is readable at " BAC_OMNI_CONFIG_PATH);
-    return params;
-  }
-
-  bool complete = true;
-  std::vector<std::string> consumed;
-  const auto value_of = [&](const char *key) -> const bac_sim::ConfigEntry * {
-    consumed.push_back(key);
-    const auto found = config.entries.find(key);
-    if (found == config.entries.end())
-    {
-      expect(false, std::string("the shipped configuration declares ") + key);
-      complete = false;
-      return nullptr;
-    }
-    if (found->second.section != "FollowPath")
-    {
-      expect(false, std::string("the shipped configuration keeps ") + key +
-                        " inside the FollowPath block users copy (found under '" +
-                        found->second.section + "' on line " +
-                        std::to_string(found->second.line) + ")");
-      complete = false;
-      return nullptr;
-    }
-    return &found->second;
-  };
-  const auto number = [&](const char *key, float &field) {
-    const bac_sim::ConfigEntry *entry = value_of(key);
-    if (entry == nullptr)
-    {
-      return;
-    }
-    char *end = nullptr;
-    const float parsed = std::strtof(entry->value.c_str(), &end);
-    if (end == entry->value.c_str() || *end != '\0' || !std::isfinite(parsed))
-    {
-      expect(false, std::string("the shipped configuration gives ") + key +
-                        " a plain finite number (got '" + entry->value + "' on line " +
-                        std::to_string(entry->line) + ")");
-      complete = false;
-      return;
-    }
-    field = parsed;
-  };
-  const auto integer = [&](const char *key, int &field) {
-    float value = 0.0f;
-    number(key, value);
-    field = static_cast<int>(value);
-  };
-
-  const bac_sim::ConfigEntry *model = value_of("motion_model.type");
-  std::string model_value = (model == nullptr) ? std::string("<missing>") : model->value;
-  // The loader takes this one as a STRING, so `"omni"` is legal YAML for it and
-  // yields the same value as the bare form - unlike a quoted number, which is a
-  // type error there too. The Ackermann guard has always stripped these quotes;
-  // this one did not, so `motion_model.type: "omni"` failed the holonomic suite
-  // alone. Measured before the change on a copy of the shipped yaml with only
-  // the quotes added: this suite reported 3 failed checks
-  // ("selects the holonomic model (got '\"omni\"')" twice, plus "every value
-  // the scenario needs was read from the shipped configuration"), while the
-  // Ackermann suite passed on the identical edit to its own yaml. The two
-  // implementations are still separate; only the quote handling is aligned
-  // here, the common guard is stage 3.
-  if (model_value.size() >= 2U && model_value.front() == '"' && model_value.back() == '"')
-  {
-    model_value = model_value.substr(1, model_value.size() - 2U);
-  }
-  if (model == nullptr || model_value != "omni")
-  {
-    expect(false, std::string("the shipped configuration selects the holonomic model (got '") +
-                      model_value + "')");
-    complete = false;
-  }
-  params.motion_model.type = bac::MotionModelType::OMNI;
-
-  number("footprint.front", params.footprint.front);
-  number("footprint.rear", params.footprint.rear);
-  number("footprint.width", params.footprint.width);
-  number("safety_margin.front", params.safety_margin.front);
-  number("safety_margin.rear", params.safety_margin.rear);
-  number("safety_margin.side", params.safety_margin.side);
-  number("avoid_margin.side", params.avoid_margin.side);
-  number("limits.v_max", params.limits.v_max);
-  number("limits.v_min", params.limits.v_min);
-  number("limits.vy_max", params.limits.vy_max);
-  number("limits.w_max", params.limits.w_max);
-  number("limits.acc_v", params.limits.acc_v);
-  number("limits.acc_w", params.limits.acc_w);
-  number("control_period", params.control_period);
-  number("stop_decel", params.stop_decel);
-  number("brake_reaction_time", params.brake_reaction_time);
-  number("heading_gain", params.heading_gain);
-  integer("vy_samples", params.vy_samples);
-  number("weights.clearance", params.weights.clearance);
-  number("weights.path_dist", params.weights.path_dist);
-  number("weights.balance", params.weights.balance);
-  number("weights.heading", params.weights.heading);
-  number("weights.hysteresis", params.weights.hysteresis);
-  number("weights.squeeze", params.weights.squeeze);
-  number("sim_time", params.sim_time);
-
-  for (const std::string &duplicate : config.duplicates)
-  {
-    expect(false, "the shipped configuration declares " + duplicate +
-                      " only once; a repeated key means a second block is "
-                      "masking the one users copy");
-  }
-  for (const std::string &section : config.sections)
-  {
-    expect(bac_sim::isAllowedUnconsumed(section, kAllowedUnconsumedKeys),
-           "the shipped configuration block '" + section + "' is one this suite knows about");
-  }
-  for (const auto &entry : config.entries)
-  {
-    if (std::find(consumed.begin(), consumed.end(), entry.first) != consumed.end())
-    {
-      continue;
-    }
-    expect(bac_sim::isAllowedUnconsumed(entry.first, kAllowedUnconsumedKeys),
-           "the shipped configuration key " + entry.first + " (line " +
-               std::to_string(entry.second.line) +
-               ") is exercised by this suite or listed in kAllowedUnconsumedKeys on purpose");
-  }
-
-  g_shipped_config_loaded = complete;
-  return params;
-}
-
-/// Runs the shipped example end to end, so a yaml edit cannot ship a
-/// configuration that fails this suite while every test stays green.
+/// The shipped yaml, checked as a FILE.
 ///
-/// TWO worlds, not one. R15 M5 found that with only the detour world, 13 of 16
-/// value perturbations of the shipped yaml passed - including
-/// `avoid_margin.side: 0.9 -> 0.5`, which the file's own comment says takes
-/// mean lateral error from 0.0119 m to 0.139 m. A corridor is what makes that
-/// value matter, so the shipped configuration is driven through one as well.
+/// This function used to drive the shipped configuration through two worlds as
+/// well. It no longer does, because `omniParams()` now IS the shipped
+/// configuration (see there), so every scenario in this file drives it and the
+/// two worlds were already among them:
+///
+///   - the detour world (`addBox(3, 0, 0.8, 0.8)`, `gotoPointPath(6, 0)`, 60 s)
+///     was bit-identical to the holonomic run of `testSidestepsInsteadOfYawing`;
+///   - the corridor (`addCorridorXWalls(2, 9.5, 0, 1.2, 0.10)`, entry y = 0.30,
+///     `gotoPointPath(10.5, 0)`, 120 s, window x = 3..9) was bit-identical to the
+///     `offset = 0.30` cell of `testNarrowCorridorCentering`.
+///
+/// Bit-identical is measured, not inferred: the whole tick sequence of each pair
+/// - commanded (v, vy, w) and integrated pose at every one of the 1200 / 2400
+/// ticks - hashes to the same value, and every OmniRun field agrees.
+///
+/// What the retired assertions were worth, measured over the 52 mutations of
+/// `src/` and `bac_core.hpp` this suite is scored against. Six were dropped, and
+/// this is all six:
+///
+///   "no body contact" (detour)          kills 0; kept as "the holonomic detour
+///                                       has no body contact"
+///   "reaches its goal"                  kills 3 (emerg_normalized_lat_removed,
+///                                       geo_cx_sign, omni_project_no_vy); all
+///                                       three also die on "the holonomic
+///                                       vehicle rounds a blocking obstacle"
+///   "grants usable lateral authority"   kills 0; the identical predicate
+///                                       (max |vy| > 0.05) is asserted in
+///                                       testSidestepsInsteadOfYawing
+///   "no body contact in a corridor"     kills 0; kept per entry offset there
+///   "traverses a 1.2 m corridor" and    kill 2 (emerg_normalized_lat_removed,
+///   "reached the measurement window"    geo_cx_sign); both also die on the
+///                                       entry-offset 0.30 counterparts
+///   "holds the centerline" (< 0.05 m)   kills 0. This was the one predicate
+///                                       with no counterpart -
+///                                       testNarrowCorridorCentering compares
+///                                       against the differential-drive run
+///                                       instead of against a fixed bound - and
+///                                       it separates no mutation in this set.
+///
+/// So the kill set is unchanged, and the R15 M5 finding the two worlds answer
+/// (with only the detour world, 13 of 16 value perturbations of the shipped yaml
+/// passed, `avoid_margin.side: 0.9 -> 0.5` among them) is answered more strongly
+/// than before: a perturbation now moves all 17 scenarios, not two.
+///
+/// What is left here is what no scenario can express - that the file PARSES,
+/// that every key in it is consumed by the reader or named in
+/// kAllowedUnconsumedKeys, that no key is declared twice, that the values live
+/// in the FollowPath block users copy, and that it selects the holonomic model.
+/// `shippedExampleParams()` asserts all of that while reading; this asks for the
+/// verdict.
 void
 testShippedExampleConfiguration()
 {
-  {
-    bac_sim::World world;
-    world.addBox(3.0f, 0.0f, 0.8f, 0.8f);
-    bac::BacCore core(shippedExampleParams());
-    expect(g_shipped_config_loaded,
-           "every value the scenario needs was read from the shipped configuration");
-    const OmniRun run = runOmni(core, world, { 0.0f, 0.0f, 0.0f },
-                                bac_sim::gotoPointPath(6.0f, 0.0f), 6.0f, 0.0f, 60.0f);
-
-    expect(!run.collided, "the shipped holonomic example has no body contact");
-    expect(run.reached_goal, "the shipped holonomic example reaches its goal (closest " +
-                                 std::to_string(run.min_goal_distance) + " m)");
-    expect(run.max_abs_vy > 0.05f,
-           "the shipped configuration grants usable lateral authority (max |vy| " +
-               std::to_string(run.max_abs_vy) + " m/s)");
-    expectLimitsRespected(run, "shipped configuration");
-  }
-
-  {
-    bac_sim::World world;
-    world.addCorridorXWalls(2.0f, 9.5f, 0.0f, 1.2f, 0.10f);
-    LateralWindow window;
-    window.enabled = true;
-    window.center_y = 0.0f;
-    window.x_from = 3.0f;
-    window.x_to = 9.0f;
-    bac::BacCore core(shippedExampleParams());
-    const OmniRun run = runOmni(core, world, { 0.0f, 0.30f, 0.0f },
-                                bac_sim::gotoPointPath(10.5f, 0.0f), 10.5f, 0.0f, 120.0f, window);
-
-    expect(!run.collided, "the shipped configuration has no body contact in a corridor");
-    expect(run.final_pose.x > 9.0f,
-           "the shipped configuration traverses a 1.2 m corridor (final x " +
-               std::to_string(run.final_pose.x) + ")");
-    expect(run.lateral_samples > 0,
-           "it reached the measurement window (" + std::to_string(run.lateral_samples) + ")");
-    // Measured on the shipped values in THIS 1.2 m corridor: 0.0148 m. With
-    // avoid_margin.side at 0.5, where the bilateral term never engages for this
-    // body, it is 0.1051 m (R18 L1 corrected 0.1079). The 0.1412 m the yaml
-    // comment quotes is the same comparison in a 1.6 m corridor. The bound sits
-    // between the two, which is what makes the yaml value matter.
-    expect(run.mean_abs_lateral < 0.05f,
-           "and holds the centerline, which the shipped avoid_margin.side is what buys "
-           "(mean |y| " + std::to_string(run.mean_abs_lateral) + " m)");
-    expectLimitsRespected(run, "shipped configuration in a corridor");
-  }
+  const bac::Params params = omniParams();
+  expect(g_shipped_config_loaded,
+         "every value the scenarios need was read from the shipped configuration");
+  expect(params.motion_model.type == bac::MotionModelType::OMNI,
+         "the parsed shipped configuration is the one the holonomic scenarios run");
 }
 
 }  // namespace
