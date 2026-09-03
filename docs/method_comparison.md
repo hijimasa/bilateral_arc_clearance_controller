@@ -8,7 +8,7 @@
 ## 比較範囲
 
 BAC は、矩形の差動二輪・Ackermann・全方向ロボットがローカル経路を追従しつつ、2D LiDAR または
-コストマップ点群に反応する問題を対象とする。ここでは、同じ問題に使われる速度空間サンプリング、軌道最適化、
+costmap点群に反応する問題を対象とする。ここでは、同じ問題に使われる速度空間サンプリング、軌道最適化、
 厳密経路追従、および狭所向け反応型ナビゲーションと比較する。
 
 以下は設計上の比較であり、各原論文の異なるデータセットから性能値を横並びにしたものではない。
@@ -135,7 +135,7 @@ BAC 32.6 s、DWB 33.7 s、MPPI 45.1 s、RPP 29.3 sだった。シミュレータ
 
 ### 自己位置ズレ量スイープ（1.5 m通路、`results_driftsweep_release_1f9911e/`）
 
-地図↔オドメトリ間の横ズレを 0.10〜0.25 m で掃引した（各 2 episode）。
+地図↔odom間の横ズレを 0.10〜0.25 m で掃引した（各 2 episode）。
 
 | ズレ量 [m] | BAC | DWB | MPPI | RPP |
 |---:|---|---|---|---|
@@ -172,7 +172,7 @@ belief-space / uncertainty-aware planning、他のlocal controller、独立安�
 
 1. **情報の非対称性**: プランナは地図とポーズ推定の上で計画するため、ポーズ推定自体が誤って
    いるとき真の相対幾何を知る手段がない。実行層のうちロボット座標系の障害物幾何・緊急停止判定・
-   左右クリアランスは地図↔オドメトリ誤差に直接依存しない。経路追従項(横偏差・終端距離・接線
+   左右クリアランスは地図↔odom誤差に直接依存しない。経路追従項(横偏差・終端距離・接線
    方位)は TF 変換後の plan を介して誤差の影響を受けるが、弱い横偏差重みと左右クリアランスの
    作用により、本評価範囲の通路では挙動劣化が観測されなかった(センサ外部パラメータ誤差や
    遅延は別途残る)。
@@ -186,7 +186,7 @@ belief-space / uncertainty-aware planning、他のlocal controller、独立安�
 
 この診断は今回のrelease candidate datasetより前に実施したもので、同一revisionでは再生成しておらず、
 P0 release archiveにも含めていない。今後のmatched-condition評価の動機としてのみ残す。素直な上流対策として、
-グローバルコストマップの `footprint_padding` にドリフト相当の余裕を
+global costmapの `footprint_padding` にドリフト相当の余裕を
 積んで `corridor_locdrift_15x`(1.5 m 通路 + **0.25 m** 自己位置ズレ)を再走した(各 2 episode)。
 
 | 上流対策 | DWB | MPPI | RPP | BAC(対策なし) |
@@ -229,7 +229,7 @@ footprint、制動model、下位速度追従を前提としたシミュレーシ
 
 実行層の安全性を主要な位置づけとする場合、controllerだけでなく
 [Nav2 Collision Monitor](https://docs.nav2.org/rolling/configuration_and_development/configuration_guide/core_servers/collision_monitor/)
-との比較・併用が前提になる。Collision Monitor は生センサをコストマップ・プランナから独立に読み、
+との比較・併用が前提になる。Collision Monitor は生センサをcostmap・プランナから独立に読み、
 stop / slowdown / limit / 速度依存 approach と source timeout を提供する独立安全層である。
 
 役割の違いは次の通り。Collision Monitor は cmd_vel を**制限**する(減速・停止)が、**操舵しない**。

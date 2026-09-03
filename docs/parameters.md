@@ -20,8 +20,8 @@ nav2 プラグインでは名前空間（例: `FollowPath.`）を先頭に付け
 | `ignore_box.back` | 0.0 | 自己反射除外箱の後方長 [m] |
 | `ignore_box.width` | 0.0 | 自己反射除外箱の幅 [m] |
 
-`costmap_margin_compensation` は nav2 アダプタ専用で、コストマップセル中心の量子化誤差を
-安全余裕から控除する。生スキャン入力時の既定値は 0、コストマップのみの場合はセル解像度の
+`costmap_margin_compensation` は nav2 アダプタ専用で、costmapセル中心の量子化誤差を
+安全余裕から控除する。生スキャン入力時の既定値は 0、costmapのみの場合はセル解像度の
 半分である。
 
 ## 運動モデル
@@ -181,8 +181,8 @@ Ackermann設定例（`turn_radius_min` 1.0、`w_max` 0.8）では前者2.0に対
 
 | パラメータ | 対象 | 既定値 | 説明 |
 |---|---|---:|---|
-| `scan_topic` | nav2 | 空 | 生スキャン。空ならコストマップの lethal セルを使用 |
-| `scan_timeout` | 両方 | 0.5 | スキャン鮮度 [s]。nav2 は古いとコストマップへフォールバック |
+| `scan_topic` | nav2 | 空 | 生スキャン。空ならcostmapの lethal セルを使用 |
+| `scan_timeout` | 両方 | 0.5 | スキャン鮮度 [s]。nav2 は古いとcostmapへフォールバック |
 | `scan_downsample` | nav2 | 1 | LaserScan の角度方向間引き |
 | `scan_min_points` | 両方 | 10 (int) | 有効測定(有限ヒット+`+Inf` 無反射)がこれ未満のスキャンをセンサ異常として棄却 |
 | `scan_inf_is_valid` | 両方 | true | `+Inf`・range_max 超を「障害物なしの正常測定」として扱う(costmap の `inf_is_valid` 相当) |
