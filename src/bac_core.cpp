@@ -39,6 +39,20 @@ namespace
 
 constexpr float kPi = 3.14159265358979323846f;
 
+/// Distance the body still covers before a full stop from `speed`: one
+/// deceleration ramp plus the run made during the brake reaction time. The
+/// floor on stop_decel is part of the definition - a zero or negative
+/// configured deceleration would otherwise make the distance infinite or
+/// negative. `speed` is a SPEED along the direction of travel, never a signed
+/// forward velocity: a holonomic body crabbing sideways brakes over the same
+/// distance as one running forward (R15 H3).
+float
+brakingDistance(float speed, const Params &params)
+{
+  const float stop_decel = std::max(params.stop_decel, 0.1f);
+  return speed * speed / (2.0f * stop_decel) + speed * params.brake_reaction_time;
+}
+
 float
 wrapAngle(float a)
 {
@@ -113,15 +127,13 @@ evaluateProximity(const std::vector<Point2D> &points, const Params &params, cons
 {
   ProximityResult result;
 
-  const float stop_decel = std::max(params.stop_decel, 0.1f);
   // The zone extends along the DIRECTION OF TRAVEL. A holonomic body moving
   // sideways has the same braking distance as one moving forward, and both
   // the zone and the speed-dependent margin scaling have to see it (R15 H3):
   // computing either from `current.v` alone classifies a body crabbing at
   // vy_max as stationary.
   const float current_speed = current.speed();
-  const float brake_distance = current_speed * current_speed / (2.0f * stop_decel) +
-                               current_speed * params.brake_reaction_time;
+  const float brake_distance = brakingDistance(current_speed, params);
   const float body_x_min = params.footprint.rear;
   const float body_x_max = params.footprint.front;
   float       zone_x_min = body_x_min;
@@ -961,7 +973,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float cap_eff   = std::min(clearance_cap, std::max(probe_best, cap_floor));
 
   float lead_margin   = params_.safety_margin.front;
-  float stop_decel    = std::max(params_.stop_decel, 0.1f);
 
   // Margin facing the direction of travel. This is the support function of the
   // margin box in that direction, so a forward command sees safety_margin.front
@@ -1126,8 +1137,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
           // distance and the front margin instead of the side one (R15 H2).
           float margin   = travel_margin(command);
           float free_run = eval.blocking_s - margin;
-          float needed   = candidate_speed * candidate_speed / (2.0f * stop_decel) +
-                         candidate_speed * params_.brake_reaction_time;
+          float needed   = brakingDistance(candidate_speed, params_);
           if (free_run <= needed)
           {
             return;
