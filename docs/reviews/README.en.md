@@ -51,6 +51,16 @@ instead of dedicated metadata fields.
 5. Prefer symbol names or heading anchors when referring to source. Do not use a mutable `#L123` link as the only
    evidence identifier; include the target commit when needed.
 6. After moving or renaming records, validate relative links across all Markdown files, including READMEs.
+   **That rule is about the source tree.** These records deliberately cite things outside the package and
+   outside this tree, so some of their links do not resolve in an installed copy under `share/<package>/`.
+   Measured on the installed tree: of 393 relative link targets, 72 do not resolve, and **all 72 are under
+   this directory - none outside it**. They are 48 into the sibling `nav2_benchmark/` repository, 15 into
+   `../../src/`, 8 into `../../test/`, and 1 into `../../include/`. The first three name trees this package
+   does not install, so no install rule can resolve them. The last one names a header that IS installed,
+   but at `<prefix>/include/` rather than under `share/`, so reaching it would mean rewriting the link -
+   which rule 3 forbids. **These 72 are therefore left broken on purpose.**
+   `test/check_installed_links.py` excludes this directory alone and prints how many it skipped; a break
+   anywhere outside it is still a failure.
 7. The package commit named in the history's `Current state` cannot be written by the response commit itself - a
    commit cannot contain its own SHA. **Always follow the response commit with a small commit that records that
    SHA.** R12 L4, R13 L5 and R14 M10 are the same defect recurring because this step did not exist.
