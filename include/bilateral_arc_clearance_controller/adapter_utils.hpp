@@ -71,11 +71,24 @@ std::optional<float> goalHeadingInBase(const Point2D &plan_end,
  *   caller reusing one buffer cannot mistake last tick's sequence for this
  *   tick's.
  */
+/**
+ * `progress` / `window_ahead`: where on the plan the robot was last found.
+ * When both are given (window_ahead > 0), the nearest plan point is searched
+ * only from `*progress` (less a short back-step) forward along `window_ahead`
+ * metres of plan, and `*progress` is advanced to the point found. Without
+ * them the search is global, which on a plan that comes back past itself
+ * (the indoor3 lap's outbound and return legs run 0.5-0.9 m apart) lets a
+ * robot beside the later leg be taken for one that is nearly finished: on
+ * 2026-10-12 a NavigateThroughPoses lap was cut straight to its last pose.
+ * A caller resets `*progress` to 0 whenever it is handed a new plan.
+ */
 std::vector<Point2D> transformAndPrunePath(const std::vector<Point2D> &path,
                                            float transform_x, float transform_y,
                                            float transform_yaw, float max_range,
                                            const std::vector<float> *plan_yaw = nullptr,
-                                           std::vector<float> *pruned_yaw = nullptr);
+                                           std::vector<float> *pruned_yaw = nullptr,
+                                           std::size_t *progress = nullptr,
+                                           float window_ahead = 0.0f);
 
 }  // namespace bac
 

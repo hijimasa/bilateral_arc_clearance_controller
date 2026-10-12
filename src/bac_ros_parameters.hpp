@@ -96,6 +96,7 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.weights.heading    = declare_float("weights.heading", params.weights.heading);
   params.weights.hysteresis = declare_float("weights.hysteresis", params.weights.hysteresis);
   params.weights.squeeze    = declare_float("weights.squeeze", params.weights.squeeze);
+  params.weights.pivot      = declare_float("weights.pivot", params.weights.pivot);
 
   params.sim_time            = declare_float("sim_time", params.sim_time);
   params.station_lateral_weight =

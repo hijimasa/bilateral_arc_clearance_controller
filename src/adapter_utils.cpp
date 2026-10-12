@@ -56,7 +56,8 @@ projectScan(const std::vector<float> &ranges, float angle_min, float angle_incre
 std::vector<Point2D>
 transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
                       float transform_y, float transform_yaw, float max_range,
-                      const std::vector<float> *plan_yaw, std::vector<float> *pruned_yaw)
+                      const std::vector<float> *plan_yaw, std::vector<float> *pruned_yaw,
+                      std::size_t *progress, float window_ahead)
 {
   // Cleared before any early return: a caller that reuses one buffer across
   // ticks must never be handed the previous tick's orientations.
@@ -81,9 +82,32 @@ transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
                              transform_y + sn * point.x + cs * point.y);
   }
 
-  std::size_t nearest = 0;
+  // Where to look for the robot on the plan. Global by default; windowed
+  // around the last known progress when the caller tracks it, so a plan that
+  // passes near itself again further on cannot pull the projection forward.
+  std::size_t lo = 0, hi = transformed.size();
+  if (progress != nullptr && window_ahead > 0.0f && !transformed.empty())
+  {
+    const std::size_t start = std::min(*progress, transformed.size() - 1);
+    // A short back-step covers a robot that has slipped behind its last
+    // projection (reversing out of a stop, a localization correction).
+    constexpr float kBackStep = 1.0f;  // [m] of plan
+    lo = start;
+    for (float back = 0.0f; lo > 0 && back < kBackStep; --lo)
+    {
+      const float dx = path[lo].x - path[lo - 1].x, dy = path[lo].y - path[lo - 1].y;
+      back += std::sqrt(dx * dx + dy * dy);
+    }
+    hi = start + 1;
+    for (float ahead = 0.0f; hi < transformed.size() && ahead < window_ahead; ++hi)
+    {
+      const float dx = path[hi].x - path[hi - 1].x, dy = path[hi].y - path[hi - 1].y;
+      ahead += std::sqrt(dx * dx + dy * dy);
+    }
+  }
+  std::size_t nearest = lo;
   float best_distance_squared = std::numeric_limits<float>::max();
-  for (std::size_t i = 0; i < transformed.size(); ++i)
+  for (std::size_t i = lo; i < hi; ++i)
   {
     const float distance_squared =
         transformed[i].x * transformed[i].x + transformed[i].y * transformed[i].y;
@@ -92,6 +116,10 @@ transformAndPrunePath(const std::vector<Point2D> &path, float transform_x,
       best_distance_squared = distance_squared;
       nearest = i;
     }
+  }
+  if (progress != nullptr)
+  {
+    *progress = nearest;
   }
 
   std::vector<Point2D> local_path;

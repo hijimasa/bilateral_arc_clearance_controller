@@ -203,6 +203,9 @@ void
 BacController::setPlan(const nav_msgs::msg::Path &path)
 {
   plan_ = path;
+  // Every plan Nav2 hands over starts at the robot, so the robot is at its
+  // first point; the pruner then follows it forward from there.
+  plan_progress_ = 0;
 }
 
 std::vector<Point2D>
@@ -340,6 +343,21 @@ BacController::publishDiagnostics(const Result &result, bool using_scan)
   add_value("best_clearance_m", std::to_string(result.best_clearance));
   add_value("nearest_distance_m", std::to_string(result.nearest_distance));
   add_value("best_path_cost_m", std::to_string(result.best_path_cost));
+  // Selected candidate and its score terms (2026-10-12): v, w, mode, the path
+  // tangent at the robot, the end-of-rollout heading error, and each term's
+  // signed contribution, so a bag shows which one chose a turn.
+  add_value("sel_v", std::to_string(result.output.v));
+  add_value("sel_w", std::to_string(result.output.w));
+  add_value("sel_mode", result.alignment_mode ? "align" : "arc");
+  add_value("path_heading_rad", std::to_string(result.relative_path_heading));
+  add_value("sel_heading_err_rad", std::to_string(result.best_heading_err));
+  add_value("t_clearance", std::to_string(result.term_clearance));
+  add_value("t_balance", std::to_string(result.term_balance));
+  add_value("t_path", std::to_string(result.term_path));
+  add_value("t_heading", std::to_string(result.term_heading));
+  add_value("t_hysteresis", std::to_string(result.term_hysteresis));
+  add_value("t_squeeze", std::to_string(result.term_squeeze));
+  add_value("t_pivot", std::to_string(result.term_pivot));
   message.status.push_back(std::move(status));
   diagnostics_pub_->publish(message);
 }
@@ -404,9 +422,14 @@ BacController::transformPlan(const geometry_msgs::msg::PoseStamped & /*pose*/,
       plan_yaw.push_back(static_cast<float>(tf2::getYaw(p.pose.orientation)));
     }
   }
+  // 3 m of plan ahead of the last projection: more than the robot moves
+  // between two ticks by any margin, less than the gap between a lap's
+  // outbound and return legs ever measured along the plan.
+  constexpr float kProgressWindow = 3.0f;  // [m]
   std::vector<Point2D> local_path =
       transformAndPrunePath(plan_points, tf_x, tf_y, tf_yaw, core_.params().max_range,
-                            plan_yaw_ ? &plan_yaw : nullptr, path_yaw);
+                            plan_yaw_ ? &plan_yaw : nullptr, path_yaw,
+                            &plan_progress_, kProgressWindow);
 
   // Nav2 carries the requested goal orientation on the last plan pose. Pass it
   // on only when that pose is still in the pruned path: pruning stops at

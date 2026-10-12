@@ -184,6 +184,13 @@ struct Weights
   /// does. Ackermann needs a lower value; see config/bac_controller_ackermann.yaml.
   float hysteresis = 0.6f;
   float squeeze    = 0.5f;  // [score per m/s] v scaled by (1 - lateral_fraction)
+  /// [score per rad/s] arc mode only: yaw rate beyond w_max * |v| / v_max
+  /// (plus a small floor). 0 disables it. A differential drive can pivot
+  /// at a crawl, and right after aligning to the path the speed window
+  /// offers only a crawl, so a pivot toward the path's later bend scored
+  /// better on path progress than driving off along the tangent and the
+  /// robot swung 50 deg past the path every waypoint (2026-10-12).
+  float pivot      = 0.0f;
 };
 
 struct Params
@@ -343,6 +350,19 @@ struct Result
   float nearest_distance   = 0.0f;  // nearest point to the footprint rectangle [m]
   int   admissible_count   = 0;     // candidates that passed the stopping test
   int   candidate_count    = 0;
+  // Score breakdown of the selected candidate (diagnostics only). Added
+  // 2026-10-12 to see which term keeps the robot turning past the path
+  // heading at a waypoint: each is the signed contribution to the score.
+  bool  alignment_mode     = false;  // scored by heading alignment alone
+  float relative_path_heading = 0.0f; // path tangent at the robot, body frame [rad]
+  float best_heading_err   = 0.0f;   // bearing - motion heading at the rollout end [rad]
+  float term_clearance     = 0.0f;
+  float term_balance       = 0.0f;
+  float term_path          = 0.0f;
+  float term_heading       = 0.0f;
+  float term_hysteresis    = 0.0f;
+  float term_squeeze       = 0.0f;
+  float term_pivot         = 0.0f;
 };
 
 /**

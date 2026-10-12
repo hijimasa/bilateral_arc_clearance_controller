@@ -80,6 +80,9 @@ private:
   std::shared_ptr<tf2_ros::Buffer>               tf_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
   nav_msgs::msg::Path                            plan_;
+  // Index of the plan point the robot was last projected onto; reset with
+  // every new plan, advanced by the pruner. See transformAndPrunePath.
+  mutable std::size_t                            plan_progress_ = 0;
 
   // Direct laser input (the core's native point source). When scan_topic is
   // set, fresh scans feed the core; the costmap is a fallback.

@@ -494,10 +494,20 @@ buildStationPath(const std::vector<Point2D> &path, const std::vector<float> *pat
     }
     // Robot projection (origin). Candidate projections search only from this
     // segment forward, which keeps the station monotone on paths that pass
-    // near themselves.
+    // near themselves -- provided this projection itself does not jump. The
+    // path arrives pruned to start at the robot, so the robot's own segment is
+    // within the first metres of it; a later segment that happens to pass
+    // closer (the return leg of a lap, 0.5-0.9 m from the outbound one) must
+    // not win, or the whole loop between them is skipped. Measured on
+    // 2026-10-12: a NavigateThroughPoses lap cut straight to its last pose.
+    constexpr float kRobotProjectionWindow = 2.0f;  // [m] of path from its start
     float best_d2 = FLT_MAX;
     for (size_t i = 0; i + 1 < station.pts.size(); ++i)
     {
+      if (i > 0 && station.s[i] > kRobotProjectionWindow)
+      {
+        break;
+      }
       const float ax = station.pts[i].x, ay = station.pts[i].y;
       const float vx = station.pts[i + 1].x - ax, vy = station.pts[i + 1].y - ay;
       const float len2 = vx * vx + vy * vy;
@@ -668,6 +678,8 @@ struct CandidateSearch
   Twist2D best_cmd            = Twist2D(0.0f, 0.0f);
   float   best_clearance      = 0.0f;
   float   best_path_cost      = 0.0f;
+  float   best_heading_err    = 0.0f;
+  float   best_terms[7]       = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   int     admissible_count    = 0;
   int     candidate_count     = 0;
   int     forward_progressing = 0;  // gates reverse only when forward advances the ordered path
@@ -863,6 +875,7 @@ CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
   float heading_err = wrapAngle(bearing_pre - motion_heading);
 
   float score;
+  float terms[7] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   if (ctx.alignment_required)
   {
     // While braking translational motion, do not start sweeping the body.
@@ -871,28 +884,47 @@ CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
     const float alignment_error = (std::fabs(ctx.current.v) > 0.05f)
                                       ? std::fabs(w)
                                       : std::fabs(wrapAngle(ctx.relative_path_heading - end_th));
-    score = -alignment_error -
-            0.05f * ctx.motion_model->commandChange(command, ctx.prev_selected_command);
+    terms[3] = -alignment_error;
+    terms[4] = -0.05f * ctx.motion_model->commandChange(command, ctx.prev_selected_command);
+    score = terms[3] + terms[4];
   }
   else
   {
-    score = ctx.params.weights.clearance * std::min(clearance, ctx.cap_eff) -
-            ctx.params.weights.balance * ctx.tightness * balance -
-            ctx.params.weights.path_dist * path_cost -
-            ctx.params.weights.heading * heading_scale_pre * std::fabs(heading_err) -
-            ctx.params.weights.hysteresis *
-                ctx.motion_model->commandChange(command, ctx.prev_selected_command) -
-            ctx.params.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
+    terms[0] = ctx.params.weights.clearance * std::min(clearance, ctx.cap_eff);
+    terms[1] = -ctx.params.weights.balance * ctx.tightness * balance;
+    terms[2] = -ctx.params.weights.path_dist * path_cost;
+    terms[3] = -ctx.params.weights.heading * heading_scale_pre * std::fabs(heading_err);
+    terms[4] = -ctx.params.weights.hysteresis *
+               ctx.motion_model->commandChange(command, ctx.prev_selected_command);
+    terms[5] = -ctx.params.weights.squeeze * std::fabs(v) * (1.0f - lateral_fraction);
+    if (ctx.params.weights.pivot > 0.0f && !ctx.escape_only)
+    {
+      // Yaw rate the speed warrants: full w_max at v_max, a floor for
+      // corrections at a crawl. Turning on the spot belongs to alignment
+      // mode; here a near-standstill pivot is a swing past the path.
+      constexpr float kPivotFloor = 0.15f;  // [rad/s]
+      const float w_allow = ctx.params.limits.w_max * std::fabs(v) /
+                                std::max(ctx.params.limits.v_max, 1e-3f) +
+                            kPivotFloor;
+      terms[6] = -ctx.params.weights.pivot * std::max(0.0f, std::fabs(w) - w_allow);
+    }
+    score = terms[0] + terms[1] + terms[2] + terms[3] + terms[4] + terms[5] + terms[6];
   }
 #ifdef BAC_DEBUG_CANDIDATES
-  std::printf("cand v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f score=%7.3f\n", v, w,
-              std::min(clearance, ctx.clearance_cap), path_cost, heading_err,
-              lateral_fraction, score);
+  std::printf("cand %s v=%.3f w=%6.3f clr=%6.3f gd=%6.3f he=%6.3f lat=%.2f | %+.3f %+.3f %+.3f %+.3f %+.3f %+.3f %+.3f = %7.3f\n",
+              ctx.alignment_required ? "align" : "arc", v, w,
+              std::min(clearance, ctx.clearance_cap), path_cost, heading_err, lateral_fraction,
+              terms[0], terms[1], terms[2], terms[3], terms[4], terms[5], terms[6], score);
 #endif
   if (score > best_score)
   {
     best_score     = score;
     best_cmd       = command;
+    best_heading_err = heading_err;
+    for (int k = 0; k < 7; ++k)
+    {
+      best_terms[k] = terms[k];
+    }
     best_clearance = std::min(clearance, ctx.cap_eff);
     best_path_cost = path_cost;
   }
@@ -1056,6 +1088,24 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
                                bool rotation_admissible, float remaining_path) const
 {
   const detail::MotionModel *motion_model = motion_model_.get();
+  // Reference for the one-cycle acceleration window. The measured twist is
+  // the right anchor while the drive is still catching up (ramp-up from the
+  // deadband), but not once it has overshot: this drive runs 5-10% above a
+  // yaw-rate command, so with the window anchored on the measurement the
+  // output could never come down -- output = measured - acc_w * dt, the
+  // wheels then turn at 1.07 x that, which is the old measurement again.
+  // Measured on 2026-10-12 (bag seg_far12, cycles 1504-1526): the selector
+  // asked for w 0.09 .. -0.31 for 1.2 s while the output sat at 0.70-0.73
+  // and the robot turned at 0.75-0.78, 50 deg past the path, into another
+  // alignment. Anchoring on whichever of the measurement and the previous
+  // command is the smaller lets a ramp-down proceed at acc_w regardless of
+  // the drive's overshoot, and leaves ramp-up untouched.
+  Twist2D ramp_ref = current;
+  if (prev_selected_command_.w * current.w >= 0.0f &&
+      std::fabs(prev_selected_command_.w) < std::fabs(current.w))
+  {
+    ramp_ref.w = prev_selected_command_.w;
+  }
   float out_v = selected.v;
   float out_w = selected.w;
   float out_vy = selected.vy;
@@ -1096,7 +1146,7 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
   // can itself lie outside the one-cycle deceleration interval. Reapply the
   // reachability limit and recheck the resulting arc until it is admissible.
   const Twist2D limited =
-      motion_model->limitReachableCommand(current, out_command());
+      motion_model->limitReachableCommand(ramp_ref, out_command());
   if (std::fabs(limited.v - out_v) > 1e-4f || std::fabs(limited.w - out_w) > 1e-4f ||
       std::fabs(limited.vy - out_vy) > 1e-4f)
   {
@@ -1136,7 +1186,7 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
       // vehicle around instead of slowing it down (R15 H2 derivative).
       const Twist2D curvature_preserving =
           motion_model->withLinearSpeed(out_command(), v_safe);
-      const Twist2D next = motion_model->limitReachableCommand(current, curvature_preserving);
+      const Twist2D next = motion_model->limitReachableCommand(ramp_ref, curvature_preserving);
       if (std::fabs(next.v - out_v) <= 1e-5f && std::fabs(next.w - out_w) <= 1e-5f &&
           std::fabs(next.vy - out_vy) <= 1e-5f)
       {
@@ -1153,7 +1203,7 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
       // one-cycle-reachable translating command was found. Brake translation;
       // differential drive may retain only a safe reachable rotation.
       const Twist2D braking =
-          motion_model->limitReachableCommand(current, Twist2D(0.0f, 0.0f, 0.0f));
+          motion_model->limitReachableCommand(ramp_ref, Twist2D(0.0f, 0.0f, 0.0f));
       out_v = 0.0f;
       // What one deceleration window leaves of the previous motion: a residual
       // rotation and a residual sideways slide. Both are commands like any
@@ -1621,6 +1671,18 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     if (abs_path_heading < kAlignExitAngle || !alignment_available)
     {
       alignment_mode_ = false;
+      // Leave the turn behind with the mode. The hysteresis reference is the
+      // last output, a 0.6 rad/s rotation, and the first arc-mode cycle
+      // offers only crawl speeds (the v window is acc_v * window_time wide
+      // around a standstill), so every candidate makes the same negligible
+      // progress and the path term cannot tell them apart: hysteresis then
+      // picks the arc that keeps rotating. Measured 2026-10-12 at the
+      // indoor3 U-turn (bag seg_far9): aligned to within 6 deg, the next
+      // cycle chose v 0.09 / w 0.66 with the path term at -0.68 against a
+      // straight candidate's -0.66, swept 55 deg past the path in one
+      // second, re-entered alignment, and seesawed 10-20 s per waypoint.
+      // A zero reference makes "stop turning" the cheapest change instead.
+      prev_selected_command_ = Twist2D{};
     }
   }
   else if (alignment_available &&
@@ -1639,6 +1701,14 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   float cap_floor = params_.footprint.width / 2.0f + std::max(params_.safety_margin.side, 0.05f);
   float cap_eff   = std::min(governor.clearance_cap, std::max(governor.probe_best, cap_floor));
 
+#ifdef BAC_DEBUG_CANDIDATES
+  {
+    static unsigned long cycle = 0;
+    std::printf("cycle %lu mode=%s path_heading=%.3f remaining=%.2f current_v=%.3f current_w=%.3f prev_v=%.3f prev_w=%.3f\n",
+                ++cycle, alignment_required ? "align" : "arc", relative_path_heading,
+                station.total - station.s0, current.v, current.w, prev_selected_command_.v, prev_selected_command_.w);
+  }
+#endif
   ScoringContext ctx{*this, params_, motion_model, filtered_points, station};
   ctx.current               = current;
   ctx.prev_selected_command = prev_selected_command_;
@@ -1678,6 +1748,16 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.output           = output;
   result.best_clearance   = search.best_clearance;
   result.best_path_cost   = search.best_path_cost;
+  result.alignment_mode   = ctx.alignment_required;
+  result.relative_path_heading = relative_path_heading;
+  result.best_heading_err = search.best_heading_err;
+  result.term_clearance   = search.best_terms[0];
+  result.term_balance     = search.best_terms[1];
+  result.term_path        = search.best_terms[2];
+  result.term_heading     = search.best_terms[3];
+  result.term_hysteresis  = search.best_terms[4];
+  result.term_squeeze     = search.best_terms[5];
+  result.term_pivot       = search.best_terms[6];
   result.admissible_count = search.admissible_count;
   result.candidate_count  = search.candidate_count;
 
