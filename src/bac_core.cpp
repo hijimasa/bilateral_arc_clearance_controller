@@ -1100,8 +1100,16 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
   // alignment. Anchoring on whichever of the measurement and the previous
   // command is the smaller lets a ramp-down proceed at acc_w regardless of
   // the drive's overshoot, and leaves ramp-up untouched.
+  //
+  // Only a command this controller actually issued counts: a zero previous
+  // command means a fresh controller, a reset, or the tick after alignment
+  // mode, and a robot already turning then (handed over from teleop, or the
+  // output-stage unit tests) must be anchored on what it is doing, or the
+  // window collapses to +-acc_w*dt around zero and the curvature of the
+  // contact-checked arc is lost.
   Twist2D ramp_ref = current;
-  if (prev_selected_command_.w * current.w >= 0.0f &&
+  if (std::fabs(prev_selected_command_.w) > 1e-3f &&
+      prev_selected_command_.w * current.w > 0.0f &&
       std::fabs(prev_selected_command_.w) < std::fabs(current.w))
   {
     ramp_ref.w = prev_selected_command_.w;
