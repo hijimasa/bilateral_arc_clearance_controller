@@ -154,6 +154,12 @@ struct Limits
   /// dimension. Sideways motion needs sensor coverage abeam the body, the
   /// same caveat `v_min` carries for reverse.
   float vy_max = 0.0f;  // [m/s]
+  /// Lateral acceleration a candidate may ask of the body, |v * w|. Candidates
+  /// above it are not offered, so in a bend the lattice only holds the slower
+  /// rows and the body slows down to turn instead of weaving through at
+  /// cruise. 0 disables. Added 2026-11-08 when raising v_max from 0.2 to 0.6
+  /// took the yaw-rate sign flips from 9 to 20 per minute of driving.
+  float a_lat_max = 0.0f;  // [m/s^2]
 };
 
 /// Scoring weights. Balance rationale (see the harness scenarios):

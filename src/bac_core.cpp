@@ -654,6 +654,7 @@ struct ScoringContext
   Twist2D current{};                   // this tick's measured twist
   Twist2D prev_selected_command{};     // steering hysteresis reference
   float   relative_path_heading = 0.0f;
+  float   yaw_reference         = 0.0f;  // heading_gain * heading error, saturated at w_max
   float   remaining_path        = 0.0f;
   float   v_cap                 = 0.0f;
   float   tightness             = 0.0f;
@@ -712,6 +713,15 @@ CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
     {
       return;  // emergency standstill: only motion away from the point, or stop
     }
+  }
+
+  // Speed the bend allows: a translating candidate asking for more lateral
+  // acceleration than the body should carry is not offered, so the slower
+  // rows of the lattice are what remains in a turn (see Limits::a_lat_max).
+  if (ctx.params.limits.a_lat_max > 0.0f && std::fabs(v) > 1e-3f &&
+      std::fabs(v * w) > ctx.params.limits.a_lat_max)
+  {
+    return;
   }
 
   // Endpoint pose and the point-free score parts first: they give an
@@ -879,11 +889,20 @@ CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
   if (ctx.alignment_required)
   {
     // While braking translational motion, do not start sweeping the body.
-    // Once nearly stationary, choose the sampled in-place rotation that
-    // most reduces the relative path heading over the rollout horizon.
+    // Once nearly stationary, choose the sampled in-place rotation closest
+    // to the proportional yaw reference (heading_gain * error, saturated at
+    // w_max). It used to be the rotation that left the smallest heading
+    // error after the whole rollout horizon: for a 17 deg error over 2.5 s
+    // that is 0.12 rad/s, the output ramp shaved it to 0.05-0.09, and a
+    // drive whose smallest executable yaw rate is about 0.08 rad/s did not
+    // move at all, so the error stayed at 17 deg -- above the 14 deg exit --
+    // for 12 s at the indoor3 U-turn (2026-11-08, bag run_d t+101..113).
+    // The proportional reference is 0.45 rad/s there and never below 0.37
+    // while alignment is still required, which the drive follows; the exit
+    // hysteresis and the output ramp bound the overshoot to a few degrees.
     const float alignment_error = (std::fabs(ctx.current.v) > 0.05f)
                                       ? std::fabs(w)
-                                      : std::fabs(wrapAngle(ctx.relative_path_heading - end_th));
+                                      : std::fabs(w - ctx.yaw_reference);
     terms[3] = -alignment_error;
     terms[4] = -0.05f * ctx.motion_model->commandChange(command, ctx.prev_selected_command);
     score = terms[3] + terms[4];
@@ -1107,12 +1126,27 @@ BacCore::finalizeOutputCommand(const std::vector<Point2D> &filtered_points,
   // output-stage unit tests) must be anchored on what it is doing, or the
   // window collapses to +-acc_w*dt around zero and the curvature of the
   // contact-checked arc is lost.
+  //
+  // The mirror image bites on ramp-UP from standstill (2026-11-08, bag run_f
+  // t+100..113): the drive does not move below about 0.08 rad/s, so with the
+  // window anchored on a measurement of zero the output was 0.05 every
+  // cycle, the wheels never turned, the measurement stayed zero, and
+  // alignment sat at a 70 deg error for 10 s until noise lifted it. When the
+  // selector asks for more yaw than the previous command and the drive is
+  // lagging behind that command, the previous command is the anchor, so the
+  // ramp climbs through the deadband at acc_w instead of parking under it.
   Twist2D ramp_ref = current;
-  if (std::fabs(prev_selected_command_.w) > 1e-3f &&
-      prev_selected_command_.w * current.w > 0.0f &&
-      std::fabs(prev_selected_command_.w) < std::fabs(current.w))
+  const float prev_w = prev_selected_command_.w;
+  if (std::fabs(prev_w) > 1e-3f && prev_w * current.w > 0.0f &&
+      std::fabs(prev_w) < std::fabs(current.w))
   {
-    ramp_ref.w = prev_selected_command_.w;
+    ramp_ref.w = prev_w;  // ramp-down against an overshooting drive
+  }
+  else if (std::fabs(prev_w) > 1e-3f && prev_w * selected.w > 0.0f &&
+           std::fabs(selected.w) > std::fabs(prev_w) &&
+           std::fabs(prev_w) > std::fabs(current.w))
+  {
+    ramp_ref.w = prev_w;  // ramp-up against a drive still under its deadband
   }
   float out_v = selected.v;
   float out_w = selected.w;
@@ -1557,8 +1591,24 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   }
   else
   {
+    // The tangent is taken over kTangentSpan of path from the projection,
+    // not over the single 5 cm segment there. A grid planner's path is a
+    // chain of 45 deg steps, and while the body turns on the spot the
+    // projection hops between neighbouring segments, so the one-segment
+    // tangent jumped by 45-180 deg from one cycle to the next and alignment
+    // chased it: -174, -68, 27, 32, 0, -33 deg in consecutive seconds at the
+    // indoor3 far-end corner (2026-11-08, bag run_e), the yaw rate flipping
+    // sign with it. Half a metre of path averages the steps and still ends
+    // well before the next waypoint.
+    constexpr float kTangentSpan = 0.5f;  // [m]
     const Point2D &a = station.pts[station.i0];
-    const Point2D &b = station.pts[station.i0 + 1];
+    size_t j = station.i0 + 1;
+    while (j + 1 < station.pts.size() &&
+           station.s[j] < station.s[station.i0] + kTangentSpan)
+    {
+      ++j;
+    }
+    const Point2D &b = station.pts[j];
     relative_path_heading = std::atan2(b.y - a.y, b.x - a.x);
   }
   relative_path_heading = wrapAngle(relative_path_heading);
@@ -1721,6 +1771,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   ctx.current               = current;
   ctx.prev_selected_command = prev_selected_command_;
   ctx.relative_path_heading = relative_path_heading;
+  ctx.yaw_reference         = yaw_reference;
   ctx.remaining_path        = remaining_path;
   ctx.v_cap                 = governor.v_cap;
   ctx.tightness             = governor.tightness;
