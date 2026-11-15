@@ -1834,6 +1834,35 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   const Twist2D output = finalizeOutputCommand(filtered_points, current, search.best_cmd,
                                                rotation_admissible, remaining_path);
 
+  // Standstill with a path that points away. Alignment is entered on a large
+  // tangent error only near the goal (kAlignNearEnterAngle) or when the path
+  // runs almost behind (kAlignRearEnterAngle); in between, a plan that leaves
+  // 60-120 deg to the side - the planner routing round an obstacle behind the
+  // body's shoulder - left nothing to do: every forward arc failed the
+  // progress gate, the stop candidate won, and the robot stood with 27
+  // admissible candidates for as long as anyone let it (2026-11-15, bag
+  // avoid9, 25 s at (0.8, 0.85) with the path at 87 deg). If no forward arc
+  // advances the path and the output is a standstill for kStallAlignCycles
+  // while the tangent error exceeds kAlignNearEnterAngle, turn towards the
+  // path first; the arc search takes over again once aligned.
+  constexpr int kStallAlignCycles = 20;  // one second at 20 Hz
+  if (!alignment_mode_ && !escape_only && alignment_available &&
+      search.forward_progressing == 0 && output.speed() <= 1e-3f &&
+      abs_path_heading > kAlignNearEnterAngle)
+  {
+    if (++stall_cycles_ >= kStallAlignCycles)
+    {
+      alignment_mode_ = true;
+      align_latched_heading_ = relative_path_heading;
+      align_latch_time_ = 0.0f;
+      stall_cycles_ = 0;
+    }
+  }
+  else
+  {
+    stall_cycles_ = 0;
+  }
+
   prev_selected_command_  = output;
   result.output           = output;
   result.best_clearance   = search.best_clearance;

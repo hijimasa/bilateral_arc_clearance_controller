@@ -529,6 +529,10 @@ private:
   /// this) is ignored until the turn is done or kAlignLatchMax has passed.
   float  align_latched_heading_ = 0.0f;
   float  align_latch_time_      = 0.0f;
+  /// Consecutive cycles spent standing still with no forward candidate that
+  /// advances the path while the path points well away from the body; after
+  /// kStallAlignCycles of them alignment is entered regardless of goal distance.
+  int    stall_cycles_          = 0;
 };
 
 }  // namespace bac
