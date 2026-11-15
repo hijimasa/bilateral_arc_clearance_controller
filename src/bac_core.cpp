@@ -1615,36 +1615,31 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   relative_path_heading = wrapAngle(relative_path_heading);
 
   // Commitment while aligning. The plan is recomputed about once a second
-  // from the robot's position alone, and with an obstacle just ahead the two
-  // ways round it are nearly equal, so the plan's first metres swapped sides
-  // every second or two while the body was still turning towards the last
-  // one; alignment chased it and never came within its exit angle: 140 s of
-  // rotating on the spot in front of a container (2026-11-15, bag avoid5,
-  // plan side L,L,L,R,R,L,L,R,R,R,L...). So the heading alignment started
-  // with is kept, dead-reckoned in the body frame from the measured yaw rate,
-  // and a tangent more than kAlignSideFlip away from it is treated as the
-  // other side and ignored until the turn is done - or kAlignLatchMax has
-  // passed, after which the live tangent is adopted and the clock restarts.
-  constexpr float kAlignSideFlip = 1.57f;  // [rad]
-  constexpr float kAlignLatchMax = 8.0f;   // [s]
+  // from the robot's position alone, and with the start hemmed in by
+  // inflation the cheapest way round is a near tie that the planner settles
+  // differently every time the sweeping cameras move a mark: the first metres
+  // of the plan swapped sides (bag avoid5, side L,L,L,R,R,L,L,R,R,R,L...) or
+  // turned 35 deg per second along with the body (bag avoid8), and alignment
+  // chased them without ever reaching its exit angle - 140 s of rotating on
+  // the spot in front of a container (2026-11-15). So while aligning the
+  // heading alignment started with is the only target: it is dead-reckoned
+  // in the body frame from the measured yaw rate and the live tangent is
+  // ignored until the turn is done, or until kAlignLatchMax has passed, when
+  // the live tangent is adopted and the clock restarts. A finished turn
+  // puts the body on a new heading and, once it drives, the start out of the
+  // tie; the arc search below follows the live plan again from there.
+  constexpr float kAlignLatchMax = 6.0f;   // [s]
   if (alignment_mode_)
   {
     align_latched_heading_ =
         wrapAngle(align_latched_heading_ - current.w * params_.control_period);
     align_latch_time_ += params_.control_period;
-    const float flip = std::fabs(wrapAngle(relative_path_heading - align_latched_heading_));
-    if (flip > kAlignSideFlip && align_latch_time_ < kAlignLatchMax)
+    if (align_latch_time_ >= kAlignLatchMax)
     {
-      relative_path_heading = align_latched_heading_;
-    }
-    else
-    {
-      if (flip > kAlignSideFlip)
-      {
-        align_latch_time_ = 0.0f;
-      }
       align_latched_heading_ = relative_path_heading;
+      align_latch_time_ = 0.0f;
     }
+    relative_path_heading = align_latched_heading_;
   }
 
   const detail::MotionModel *motion_model = motion_model_.get();
