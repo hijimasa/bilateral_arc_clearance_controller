@@ -523,6 +523,12 @@ private:
   Twist2D prev_selected_command_;  // previous model command (steering hysteresis)
   float  cap_ema_;           // density-adapted clearance reference (-1 = uninitialized)
   bool   alignment_mode_;    // reduce a large local-path tangent error before translating
+  /// The heading alignment committed to when it began, carried in the body
+  /// frame by dead reckoning on the measured yaw rate. While aligning, a plan
+  /// whose tangent jumps to the other side of the body (more than 90 deg from
+  /// this) is ignored until the turn is done or kAlignLatchMax has passed.
+  float  align_latched_heading_ = 0.0f;
+  float  align_latch_time_      = 0.0f;
 };
 
 }  // namespace bac
