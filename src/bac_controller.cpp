@@ -349,6 +349,12 @@ BacController::publishDiagnostics(const Result &result, bool using_scan)
   add_value("sel_v", std::to_string(result.output.v));
   add_value("sel_w", std::to_string(result.output.w));
   add_value("sel_mode", result.alignment_mode ? "align" : "arc");
+  add_value("escape_only", result.escape_only ? "1" : "0");
+  add_value("rotation_admissible", result.rotation_admissible ? "1" : "0");
+  add_value("align_latched", result.alignment_latched ? "1" : "0");
+  add_value("align_latch_time_s", std::to_string(result.align_latch_time));
+  add_value("forward_progressing", std::to_string(result.forward_progressing));
+  add_value("stall_cycles", std::to_string(result.stall_cycles));
   add_value("path_heading_rad", std::to_string(result.relative_path_heading));
   add_value("sel_heading_err_rad", std::to_string(result.best_heading_err));
   add_value("t_clearance", std::to_string(result.term_clearance));

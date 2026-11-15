@@ -360,6 +360,17 @@ struct Result
   // 2026-10-12 to see which term keeps the robot turning past the path
   // heading at a waypoint: each is the signed contribution to the score.
   bool  alignment_mode     = false;  // scored by heading alignment alone
+  // Why alignment is or is not in force this cycle (diagnostics): the
+  // emergency escape overriding it, in-place rotation being admissible, the
+  // latched state itself and how long its heading has been held, how many
+  // forward candidates advanced the path, and the standstill counter that
+  // enters alignment after a second of none advancing.
+  bool  escape_only        = false;
+  bool  rotation_admissible = false;
+  bool  alignment_latched  = false;
+  float align_latch_time   = 0.0f;
+  int   forward_progressing = 0;
+  int   stall_cycles       = 0;
   float relative_path_heading = 0.0f; // path tangent at the robot, body frame [rad]
   float best_heading_err   = 0.0f;   // bearing - motion heading at the rollout end [rad]
   float term_clearance     = 0.0f;

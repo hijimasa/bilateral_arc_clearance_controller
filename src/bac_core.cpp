@@ -1868,6 +1868,12 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.best_clearance   = search.best_clearance;
   result.best_path_cost   = search.best_path_cost;
   result.alignment_mode   = ctx.alignment_required;
+  result.escape_only      = escape_only;
+  result.rotation_admissible = rotation_admissible;
+  result.alignment_latched = alignment_mode_;
+  result.align_latch_time = align_latch_time_;
+  result.forward_progressing = search.forward_progressing;
+  result.stall_cycles     = stall_cycles_;
   result.relative_path_heading = relative_path_heading;
   result.best_heading_err = search.best_heading_err;
   result.term_clearance   = search.best_terms[0];
