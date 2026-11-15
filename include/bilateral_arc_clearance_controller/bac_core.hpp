@@ -158,15 +158,14 @@ struct Limits
   /// with (dead-reckoned from the measured yaw rate) and ignore the live path
   /// tangent for up to this many seconds. 0 = follow the live tangent (the
   /// behaviour before 2026-11-15). Introduced for a planner that swapped
-  /// sides every replan; with the planner seeing the cameras again it left
-  /// the robot turning on the spot at the start of a plain run, so it is off
-  /// unless asked for.
+  /// sides every replan; blamed for a start-of-run spin that was really the
+  /// planner driving blind, then re-measured against the live tangent on the
+  /// same course once the planner saw the cameras again: with 6 s the one
+  /// alignment turn ran as a single committed turn and both legs were
+  /// quicker with less yaw (19 s / 230 deg vs 22 s / 287 deg, 33 s / 312 deg
+  /// vs 43 s / 465 deg; bags ab_on_* vs decay_*, 2026-11-15). Off here so
+  /// the library keeps its old behaviour; the robot's Nav2 config sets 6.
   float align_hold_time = 0.0f;  // [s]
-  /// Standstill rule: after this many seconds standing with no forward
-  /// candidate that advances the path and the tangent more than 40 deg off,
-  /// enter alignment regardless of goal distance. 0 = never (default; same
-  /// history as align_hold_time).
-  float stall_align_time = 0.0f;  // [s]
   /// Lateral acceleration a candidate may ask of the body, |v * w|. Candidates
   /// above it are not offered, so in a bend the lattice only holds the slower
   /// rows and the body slows down to turn instead of weaving through at
@@ -375,15 +374,13 @@ struct Result
   bool  alignment_mode     = false;  // scored by heading alignment alone
   // Why alignment is or is not in force this cycle (diagnostics): the
   // emergency escape overriding it, in-place rotation being admissible, the
-  // latched state itself and how long its heading has been held, how many
-  // forward candidates advanced the path, and the standstill counter that
-  // enters alignment after a second of none advancing.
+  // latched state itself and how long its heading has been held, and how
+  // many forward candidates advanced the path.
   bool  escape_only        = false;
   bool  rotation_admissible = false;
   bool  alignment_latched  = false;
   float align_latch_time   = 0.0f;
   int   forward_progressing = 0;
-  int   stall_cycles       = 0;
   float relative_path_heading = 0.0f; // path tangent at the robot, body frame [rad]
   float best_heading_err   = 0.0f;   // bearing - motion heading at the rollout end [rad]
   float term_clearance     = 0.0f;
@@ -553,10 +550,6 @@ private:
   /// this) is ignored until the turn is done or kAlignLatchMax has passed.
   float  align_latched_heading_ = 0.0f;
   float  align_latch_time_      = 0.0f;
-  /// Consecutive cycles spent standing still with no forward candidate that
-  /// advances the path while the path points well away from the body; after
-  /// kStallAlignCycles of them alignment is entered regardless of goal distance.
-  int    stall_cycles_          = 0;
 };
 
 }  // namespace bac

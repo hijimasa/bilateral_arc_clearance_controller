@@ -1628,9 +1628,9 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // the live tangent is adopted and the clock restarts. A finished turn
   // puts the body on a new heading and, once it drives, the start out of the
   // tie; the arc search below follows the live plan again from there.
-  // Off unless limits.align_hold_time > 0: with the planner seeing the
-  // cameras again the hold left the robot turning on the spot at the start of
-  // a plain run (2026-11-15, quarter3: 20 alignment episodes in 200 s).
+  // Off unless limits.align_hold_time > 0 (the library's old behaviour); see
+  // Limits::align_hold_time for the measurement that keeps it on in the
+  // robot's own configuration.
   if (alignment_mode_ && params_.limits.align_hold_time > 0.0f)
   {
     align_latched_heading_ =
@@ -1836,39 +1836,16 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   const Twist2D output = finalizeOutputCommand(filtered_points, current, search.best_cmd,
                                                rotation_admissible, remaining_path);
 
-  // Standstill with a path that points away. Alignment is entered on a large
-  // tangent error only near the goal (kAlignNearEnterAngle) or when the path
-  // runs almost behind (kAlignRearEnterAngle); in between, a plan that leaves
-  // 60-120 deg to the side - the planner routing round an obstacle behind the
-  // body's shoulder - left nothing to do: every forward arc failed the
-  // progress gate, the stop candidate won, and the robot stood with 27
-  // admissible candidates for as long as anyone let it (2026-11-15, bag
-  // avoid9, 25 s at (0.8, 0.85) with the path at 87 deg). If no forward arc
-  // advances the path and the output is a standstill for kStallAlignCycles
-  // while the tangent error exceeds kAlignNearEnterAngle, turn towards the
-  // path first; the arc search takes over again once aligned.
-  // Off unless limits.stall_align_time > 0 (see align_hold_time).
-  const int stall_align_cycles =
-      params_.limits.stall_align_time > 0.0f
-          ? std::max(1, static_cast<int>(params_.limits.stall_align_time / params_.control_period))
-          : 0;
-  if (stall_align_cycles > 0 && !alignment_mode_ && !escape_only && alignment_available &&
-      search.forward_progressing == 0 && output.speed() <= 1e-3f &&
-      abs_path_heading > kAlignNearEnterAngle)
-  {
-    if (++stall_cycles_ >= stall_align_cycles)
-    {
-      alignment_mode_ = true;
-      align_latched_heading_ = relative_path_heading;
-      align_latch_time_ = 0.0f;
-      stall_cycles_ = 0;
-    }
-  }
-  else
-  {
-    stall_cycles_ = 0;
-  }
-
+  // There is deliberately no "standstill, path points sideways, so turn"
+  // rule here. One was tried on 2026-11-15 for a plan that left at 87 deg
+  // round a container inside the safety margin (bag avoid9: 25 s standing);
+  // that standstill turned out to be the planner driving blind (its camera
+  // sources had been cut), and with the cameras back the in-place rotation
+  // candidates the arc search already offers get the body moving within a
+  // second on their own (bag stall_off: forward motion at 6.0 s against 7.1 s
+  // with the rule), while the rule also fired on a plan that flipped sides
+  // behind a passer-by and sent the robot through a 160 deg turn it did not
+  // need (bag stall_on, 13 s lost). Rotation admissibility is the mechanism.
   prev_selected_command_  = output;
   result.output           = output;
   result.best_clearance   = search.best_clearance;
@@ -1879,7 +1856,6 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   result.alignment_latched = alignment_mode_;
   result.align_latch_time = align_latch_time_;
   result.forward_progressing = search.forward_progressing;
-  result.stall_cycles     = stall_cycles_;
   result.relative_path_heading = relative_path_heading;
   result.best_heading_err = search.best_heading_err;
   result.term_clearance   = search.best_terms[0];
