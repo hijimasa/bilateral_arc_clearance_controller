@@ -1628,13 +1628,15 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // the live tangent is adopted and the clock restarts. A finished turn
   // puts the body on a new heading and, once it drives, the start out of the
   // tie; the arc search below follows the live plan again from there.
-  constexpr float kAlignLatchMax = 6.0f;   // [s]
-  if (alignment_mode_)
+  // Off unless limits.align_hold_time > 0: with the planner seeing the
+  // cameras again the hold left the robot turning on the spot at the start of
+  // a plain run (2026-11-15, quarter3: 20 alignment episodes in 200 s).
+  if (alignment_mode_ && params_.limits.align_hold_time > 0.0f)
   {
     align_latched_heading_ =
         wrapAngle(align_latched_heading_ - current.w * params_.control_period);
     align_latch_time_ += params_.control_period;
-    if (align_latch_time_ >= kAlignLatchMax)
+    if (align_latch_time_ >= params_.limits.align_hold_time)
     {
       align_latched_heading_ = relative_path_heading;
       align_latch_time_ = 0.0f;
@@ -1845,12 +1847,16 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   // advances the path and the output is a standstill for kStallAlignCycles
   // while the tangent error exceeds kAlignNearEnterAngle, turn towards the
   // path first; the arc search takes over again once aligned.
-  constexpr int kStallAlignCycles = 20;  // one second at 20 Hz
-  if (!alignment_mode_ && !escape_only && alignment_available &&
+  // Off unless limits.stall_align_time > 0 (see align_hold_time).
+  const int stall_align_cycles =
+      params_.limits.stall_align_time > 0.0f
+          ? std::max(1, static_cast<int>(params_.limits.stall_align_time / params_.control_period))
+          : 0;
+  if (stall_align_cycles > 0 && !alignment_mode_ && !escape_only && alignment_available &&
       search.forward_progressing == 0 && output.speed() <= 1e-3f &&
       abs_path_heading > kAlignNearEnterAngle)
   {
-    if (++stall_cycles_ >= kStallAlignCycles)
+    if (++stall_cycles_ >= stall_align_cycles)
     {
       alignment_mode_ = true;
       align_latched_heading_ = relative_path_heading;

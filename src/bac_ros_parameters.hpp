@@ -72,6 +72,8 @@ Params declareCoreParameters(NodeT &node, const std::string &prefix = "")
   params.limits.acc_w = declare_float("limits.acc_w", params.limits.acc_w);
   params.limits.vy_max = declare_float("limits.vy_max", params.limits.vy_max);
   params.limits.a_lat_max = declare_float("limits.a_lat_max", params.limits.a_lat_max);
+  params.limits.align_hold_time = declare_float("limits.align_hold_time", params.limits.align_hold_time);
+  params.limits.stall_align_time = declare_float("limits.stall_align_time", params.limits.stall_align_time);
 
   const std::string motion_model_type = declare_string("motion_model.type", "diff_drive");
   if (motion_model_type == "diff_drive")

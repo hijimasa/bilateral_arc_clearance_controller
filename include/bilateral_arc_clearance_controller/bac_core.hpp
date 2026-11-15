@@ -154,6 +154,19 @@ struct Limits
   /// dimension. Sideways motion needs sensor coverage abeam the body, the
   /// same caveat `v_min` carries for reverse.
   float vy_max = 0.0f;  // [m/s]
+  /// Alignment commitment: while aligning, hold the heading alignment began
+  /// with (dead-reckoned from the measured yaw rate) and ignore the live path
+  /// tangent for up to this many seconds. 0 = follow the live tangent (the
+  /// behaviour before 2026-11-15). Introduced for a planner that swapped
+  /// sides every replan; with the planner seeing the cameras again it left
+  /// the robot turning on the spot at the start of a plain run, so it is off
+  /// unless asked for.
+  float align_hold_time = 0.0f;  // [s]
+  /// Standstill rule: after this many seconds standing with no forward
+  /// candidate that advances the path and the tangent more than 40 deg off,
+  /// enter alignment regardless of goal distance. 0 = never (default; same
+  /// history as align_hold_time).
+  float stall_align_time = 0.0f;  // [s]
   /// Lateral acceleration a candidate may ask of the body, |v * w|. Candidates
   /// above it are not offered, so in a bend the lattice only holds the slower
   /// rows and the body slows down to turn instead of weaving through at
