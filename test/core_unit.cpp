@@ -7,6 +7,7 @@
 #include "bilateral_arc_clearance_controller/bac_core.hpp"
 #include "test_expect.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -477,6 +478,54 @@ testPlanYawIgnoredWhenItCannotBeTrusted()
          "a differential-drive model ignores a commanded orientation");
 }
 
+// Three plans a grid planner really returned, one replan apart, from the same
+// standstill 0.85 m short of the same waypoint (2026-11-15, bag hold30_out):
+// the diagonal and a dogleg on either side of it. Their first half metre
+// points 50 deg apart either way; their ends coincide. The heading alignment
+// works towards must not depend on which of them arrived.
+void
+testFinalApproachHeadingIgnoresPlanShape()
+{
+  const auto densify = [](const std::vector<bac::Point2D> &corners) {
+    std::vector<bac::Point2D> path;
+    for (size_t i = 0; i + 1 < corners.size(); ++i)
+    {
+      const float dx = corners[i + 1].x - corners[i].x, dy = corners[i + 1].y - corners[i].y;
+      const int   n  = std::max(1, static_cast<int>(std::hypot(dx, dy) / 0.05f));
+      for (int k = (i == 0 ? 0 : 1); k <= n; ++k)
+      {
+        const float t = static_cast<float>(k) / static_cast<float>(n);
+        path.emplace_back(corners[i].x + t * dx, corners[i].y + t * dy);
+      }
+    }
+    return path;
+  };
+  // Body frame: goal 0.6 m ahead and 0.6 m to the left (bearing 45 deg).
+  const std::vector<std::vector<bac::Point2D>> plans{
+    densify({ { 0.0f, 0.0f }, { 0.6f, 0.6f } }),                    // diagonal
+    densify({ { 0.0f, 0.0f }, { 0.55f, 0.0f }, { 0.6f, 0.6f } }),   // ahead, then left
+    densify({ { 0.0f, 0.0f }, { 0.0f, 0.55f }, { 0.6f, 0.6f } }),   // left, then ahead
+  };
+  float lo = 10.0f, hi = -10.0f;
+  for (const auto &plan : plans)
+  {
+    bac::BacCore core;
+    const bac::Result r = core.process({}, plan, bac::Twist2D{});
+    lo = std::min(lo, r.relative_path_heading);
+    hi = std::max(hi, r.relative_path_heading);
+    expect(r.output.w > 0.0f, "every final-approach plan to a goal on the left turns left");
+  }
+  expect(hi - lo < 0.05f, "the final-approach heading is the same for every plan shape");
+  expect(near(0.5f * (hi + lo), 0.7854f, 0.05f), "and it is the bearing of the path end");
+
+  // Far from the goal the tangent still rules: a path that leaves ahead and
+  // turns left two metres on is not a reason to face its end.
+  bac::BacCore far_core;
+  const bac::Result far_r =
+      far_core.process({}, densify({ { 0.0f, 0.0f }, { 2.0f, 0.0f }, { 2.0f, 2.0f } }), bac::Twist2D{});
+  expect(std::fabs(far_r.relative_path_heading) < 0.05f, "away from the goal the local tangent is used");
+}
+
 }  // namespace
 
 int
@@ -494,6 +543,7 @@ main()
   testPlanYawHoldsOrientation();
   testPlanYawInterpolatesTheShortWayRound();
   testPlanYawIgnoredWhenItCannotBeTrusted();
+  testFinalApproachHeadingIgnoresPlanShape();
 
   if (failures != 0)
   {

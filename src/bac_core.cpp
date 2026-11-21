@@ -1609,8 +1609,29 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
     {
       ++j;
     }
-    const Point2D &b = station.pts[j];
-    relative_path_heading = std::atan2(b.y - a.y, b.x - a.x);
+    const Point2D *b = &station.pts[j];
+    // On the final approach the tangent of the first half metre says more
+    // about the planner than about where to go. With under a metre left a
+    // grid planner returns, replan after replan, the straight diagonal, an
+    // east-then-north dogleg or a north-then-east one - near ties that all
+    // end at the goal but start 50 deg apart either side of it. Alignment
+    // turned to one, left the mode within its exit angle, met the next plan
+    // 49-77 deg the other way and entered again: 12 s of turning to and fro
+    // 0.85 m from a waypoint (2026-11-15, bag hold30_out t=22-35; the
+    // alignment hold does not help, it ends with the mode). Inside the
+    // near-goal alignment range the chord to the END of the path is used
+    // instead: every one of those plans has the same end, and at that range
+    // "face the goal, then drive" is what the turn is for. A chord too short
+    // to have a direction keeps the tangent.
+    constexpr float kEndChordRange = 1.00f;  // [m] = kAlignNearDistance below
+    constexpr float kEndChordMin   = 0.20f;  // [m]
+    const Point2D &end = station.pts.back();
+    if (station.goal_distance < kEndChordRange &&
+        std::hypot(end.x - a.x, end.y - a.y) > kEndChordMin)
+    {
+      b = &end;
+    }
+    relative_path_heading = std::atan2(b->y - a.y, b->x - a.x);
   }
   relative_path_heading = wrapAngle(relative_path_heading);
 
