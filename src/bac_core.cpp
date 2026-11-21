@@ -701,48 +701,79 @@ struct CandidateSearch
   void promoteOverStandstill(const ScoringContext &ctx);
 };
 
-// Holding still must not win on points against a move that is on offer.
+// What a body at rest does with a winner from the v = 0 row.
 //
 // The v = 0 row is scored as turn-then-go: by the straight run the body could
-// make after turning by w * sim_time. That is what gives the in-place
-// rotations a gradient (and it has to include w = 0, or a body facing away
-// from the goal finds standing cheaper than starting to turn - the
-// faces-away regression). But for w = 0 the run is never made, and a body at
-// rest is only offered crawl arcs (acc_v * window_time = 0.075 m/s here, 0.19 m
-// of rollout) to set against a phantom metre. Against a plan that sidesteps
-// 0.4 m and then runs parallel to the body, the phantom run ends beside the
-// path with no heading error while every real arc pays the heading error of
-// the sidestep and the hysteresis of starting to turn: stop won by 0.006
-// over 16 admissible, path-advancing arcs, nothing changed, and it won every
-// following cycle too - 10 s at rest with open floor ahead until the plan
-// happened to change (2026-11-21, bag chord2_ret t=11-21; the cycle was
-// reproduced bit for bit offline from the bag's plan and costmap).
-// So when the winner is the plain stop, the body is at rest and at least one
-// admissible candidate advances the path, the best of those is taken. They
-// have all passed the same contact and stopping-distance tests as any other
-// candidate. Braking to a stop while moving, in-place rotation, escape and
-// alignment are left exactly as they were.
+// make after turning by w * sim_time. That gives the in-place rotations a
+// gradient (and it has to include w = 0, or a body facing away from the goal
+// finds standing cheaper than starting to turn - the faces-away regression).
+// But the score describes a turn ANGLE and a run that is not made, and taken
+// literally as a command it fails a body at rest in two ways:
+//
+// 1. The run is a phantom. A body at rest is only offered crawl arcs
+//    (acc_v * window_time = 0.075 m/s here, 0.19 m of rollout) to set against
+//    a metre of it. Against a plan that sidesteps 0.4 m and then runs parallel
+//    to the body the plain stop won by 0.006 over 16 admissible,
+//    path-advancing arcs, nothing changed, and it won every following cycle:
+//    10 s at rest with open floor ahead (2026-11-21, bag chord2_ret t=11-21).
+//    The same with a "turn" of a degree or two in place of the plain stop.
+// 2. The rate is the angle divided by sim_time. A turn of 21 deg is offered
+//    as 0.15 rad/s, of 7 deg as 0.05, so the rate falls with the remaining
+//    angle and drops under what the drive executes (about 0.08 rad/s) well
+//    before the turn is done: 0.18, 0.15, 0.10, 0.05, 0 rad/s over four
+//    seconds and then nothing (same bag, t=7-11, a plan leaving at 80-90 deg).
+//
+// So, outside escape and alignment, with theta = w * sim_time of a winner
+// from the v = 0 row:
+// - |theta| under the alignment exit angle (the turn is as good as done) and
+//   an admissible candidate that advances the path exists: take the best of
+//   those. They passed the same contact and stopping tests as any other.
+// - otherwise, once at rest, the turn is made at the proportional rate alignment uses,
+//   heading_gain * theta (never slower than the scored rate, never above
+//   w_max), so it finishes instead of fading out. Every in-place rate sweeps
+//   the same disk, and the output stage still bounds the acceleration.
+// Both were reproduced offline from the bag's plan and costmap, which matched
+// the robot's diagnostics to the last digit (tools/bac_replay of the robot's
+// workspace). Braking while moving is untouched.
 void
 CandidateSearch::promoteOverStandstill(const ScoringContext &ctx)
 {
-  constexpr float kAtRest = 0.05f;  // [m/s]
-  if (ctx.escape_only || ctx.alignment_required || best_advancing.score == -FLT_MAX)
+  constexpr float kAtRest     = 0.05f;  // [m/s]
+  constexpr float kTurnIsDone = 0.25f;  // [rad] = kAlignExitAngle
+  if (ctx.escape_only || ctx.alignment_required || best_cmd.speed() > 1e-3f)
   {
     return;
   }
-  if (best_cmd.speed() > 1e-3f || std::fabs(best_cmd.w) > 1e-3f || ctx.current.speed() > kAtRest)
+  const float theta = best_cmd.w * ctx.params.sim_time;
+  if (std::fabs(theta) < kTurnIsDone)
   {
+    // Not only at rest: the first promoted crawl arc puts the body at
+    // 0.075 m/s, and if the rule then stood aside the phantom run would win
+    // again and brake it - go, stop, go, stop every cycle (seen in the replay
+    // before this was written). Braking for a turn that still has to be made
+    // is the branch below and is left alone at any speed.
+    if (best_advancing.score == -FLT_MAX)
+    {
+      return;
+    }
+    best_score       = best_advancing.score;
+    best_cmd         = best_advancing.cmd;
+    best_clearance   = best_advancing.clearance;
+    best_path_cost   = best_advancing.path_cost;
+    best_heading_err = best_advancing.heading_err;
+    for (int k = 0; k < 7; ++k)
+    {
+      best_terms[k] = best_advancing.terms[k];
+    }
     return;
   }
-  best_score       = best_advancing.score;
-  best_cmd         = best_advancing.cmd;
-  best_clearance   = best_advancing.clearance;
-  best_path_cost   = best_advancing.path_cost;
-  best_heading_err = best_advancing.heading_err;
-  for (int k = 0; k < 7; ++k)
+  if (ctx.current.speed() > kAtRest)
   {
-    best_terms[k] = best_advancing.terms[k];
+    return;  // still braking: the output stage does not sweep a moving body
   }
+  const float rate = std::min(ctx.params.limits.w_max,
+                              std::max(std::fabs(best_cmd.w), ctx.params.heading_gain * std::fabs(theta)));
+  best_cmd.w = std::copysign(rate, theta);
 }
 
 void

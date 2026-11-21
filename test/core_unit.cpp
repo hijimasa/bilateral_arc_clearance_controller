@@ -531,9 +531,11 @@ testFinalApproachHeadingIgnoresPlanShape()
 // chord2_ret t=14.5: the recorded plan, the robot's own limits and weights). Holding still used to win
 // this by 0.006 on the strength of a straight run it never makes, and with
 // nothing changing it won every following cycle too.
-void
-testStandstillDoesNotOutscoreAdvancingArcs()
+bac::Params
+indoorRobotParams()
 {
+  // The FollowPath block the robot ran on 2026-11-21, margins already reduced
+  // by the half cell the costmap-fed adapter takes off.
   bac::Params p;
   p.footprint.front = 0.10f;  p.footprint.rear = -0.40f;  p.footprint.width = 0.33f;
   p.safety_margin.front = 0.325f;  p.safety_margin.rear = 0.125f;  p.safety_margin.side = 0.175f;
@@ -544,6 +546,13 @@ testStandstillDoesNotOutscoreAdvancingArcs()
   p.weights.clearance = 2.0f;  p.weights.path_dist = 1.0f;  p.weights.balance = 4.0f;
   p.weights.heading = 0.6f;  p.weights.hysteresis = 0.3f;  p.weights.squeeze = 0.5f;
   p.weights.pivot = 0.0f;  p.sim_time = 2.5f;
+  return p;
+}
+
+void
+testStandstillDoesNotOutscoreAdvancingArcs()
+{
+  const bac::Params p = indoorRobotParams();
 
   // The plan as recorded, in the body frame (84 points, 5 cm apart).
   const std::vector<bac::Point2D> path{
@@ -580,6 +589,69 @@ testStandstillDoesNotOutscoreAdvancingArcs()
   expect(current.v > 0.2f, "a body at rest with advancing arcs on offer sets off instead of holding still");
 }
 
+// A plan that leaves at 90 deg to the right, hooks round and heads for a goal
+// ahead-right, body at rest, nothing near (2026-11-21, bag chord2_ret t=8.2,
+// the recorded plan). The turn it asks for used to be commanded at its angle
+// divided by sim_time - 0.15 rad/s falling to 0.05 as the body came round,
+// under what the drive executes - and once round, a turn of a degree or two
+// kept winning over the arcs that would have set off.
+void
+testSidewaysPlanTurnsBrisklyThenSetsOff()
+{
+  const std::vector<bac::Point2D> recorded{
+    { -0.023f, -0.005f }, { -0.043f, -0.051f }, { -0.063f, -0.096f }, { -0.083f, -0.142f }, { -0.103f, -0.188f },
+    { -0.120f, -0.234f }, { -0.134f, -0.281f }, { -0.140f, -0.331f }, { -0.136f, -0.383f }, { -0.124f, -0.436f },
+    { -0.104f, -0.490f }, { -0.079f, -0.541f }, { -0.050f, -0.589f }, { -0.018f, -0.635f }, { 0.017f, -0.679f },
+    { 0.052f, -0.721f }, { 0.090f, -0.761f }, { 0.128f, -0.798f }, { 0.167f, -0.833f }, { 0.208f, -0.865f },
+    { 0.249f, -0.896f }, { 0.290f, -0.927f }, { 0.333f, -0.954f }, { 0.376f, -0.980f }, { 0.420f, -1.003f },
+    { 0.465f, -1.025f }, { 0.511f, -1.046f }, { 0.556f, -1.067f }, { 0.602f, -1.087f }, { 0.648f, -1.107f },
+    { 0.694f, -1.127f }, { 0.740f, -1.147f }, { 0.786f, -1.166f }, { 0.832f, -1.186f }, { 0.878f, -1.205f },
+    { 0.924f, -1.225f }, { 0.970f, -1.245f }, { 1.016f, -1.264f }, { 1.062f, -1.284f }, { 1.108f, -1.303f },
+    { 1.155f, -1.321f }, { 1.201f, -1.340f }, { 1.248f, -1.357f }, { 1.296f, -1.372f }, { 1.345f, -1.386f },
+    { 1.394f, -1.396f }, { 1.445f, -1.405f }, { 1.496f, -1.412f }, { 1.548f, -1.418f }, { 1.600f, -1.423f },
+    { 1.652f, -1.429f }, { 1.704f, -1.435f }, { 1.756f, -1.442f }, { 1.807f, -1.449f }, { 1.858f, -1.458f },
+    { 1.908f, -1.467f }, { 1.958f, -1.477f }, { 2.008f, -1.488f }, { 2.056f, -1.502f }, { 2.103f, -1.518f },
+    { 2.151f, -1.536f }, { 2.197f, -1.554f }, { 2.243f, -1.573f }, { 2.290f, -1.592f }, { 2.336f, -1.611f },
+    { 2.382f, -1.631f }, { 2.428f, -1.650f }, { 2.474f, -1.670f }, { 2.520f, -1.690f }, { 2.566f, -1.709f },
+    { 2.612f, -1.729f }, { 2.658f, -1.748f }, { 2.704f, -1.768f }, { 2.750f, -1.788f }, { 2.796f, -1.807f },
+    { 2.842f, -1.827f }, { 2.888f, -1.846f }, { 2.934f, -1.864f }, { 2.981f, -1.883f }, { 3.028f, -1.899f },
+    { 3.076f, -1.915f }, { 3.125f, -1.928f }, { 3.175f, -1.938f }, { 3.226f, -1.946f }, { 3.278f, -1.951f },
+    { 3.331f, -1.955f }, { 3.384f, -1.956f }, { 3.438f, -1.957f }, { 3.493f, -1.957f }, { 3.547f, -1.957f },
+    { 3.602f, -1.957f }, { 3.656f, -1.958f },
+  };
+  const auto turned = [&recorded](float body_turn_deg) {
+    const float a = -body_turn_deg * 3.14159265f / 180.0f, c = std::cos(a), s = std::sin(a);
+    std::vector<bac::Point2D> path;
+    for (const bac::Point2D &q : recorded)
+    {
+      path.emplace_back(c * q.x - s * q.y, s * q.x + c * q.y);
+    }
+    return path;
+  };
+  {
+    bac::BacCore core(indoorRobotParams());
+    bac::Twist2D current{};
+    for (int i = 0; i < 12; ++i)
+    {
+      current = core.process({}, turned(0.0f), current).output;
+    }
+    expect(current.w < -0.3f, "a turn that is still to be made is made at a rate the drive follows");
+    expect(std::fabs(current.v) < 1e-3f, "and it is made on the spot");
+  }
+  {
+    // 20 deg into that turn the scoring is content with the heading.
+    bac::BacCore core(indoorRobotParams());
+    bac::Twist2D current{};
+    int moving = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+      current = core.process({}, turned(-20.0f), current).output;
+      moving += current.v > 0.03f ? 1 : 0;
+    }
+    expect(moving == 8, "once the turn is as good as done the body sets off and is not braked again");
+  }
+}
+
 }  // namespace
 
 int
@@ -599,6 +671,7 @@ main()
   testPlanYawIgnoredWhenItCannotBeTrusted();
   testFinalApproachHeadingIgnoresPlanShape();
   testStandstillDoesNotOutscoreAdvancingArcs();
+  testSidewaysPlanTurnsBrisklyThenSetsOff();
 
   if (failures != 0)
   {
