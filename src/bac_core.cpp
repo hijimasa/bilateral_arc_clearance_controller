@@ -408,6 +408,9 @@ struct StationPath
   Point2D              goal_point;             // last plan point (body frame)
   float                goal_distance = 0.0f;   // straight-line range to it
   float                lateral_weight = 0.0f;  // Params::station_lateral_weight
+  /// How far along the path, from the robot's own station, a candidate's
+  /// endpoint may be projected. See goalCost.
+  float                reach = FLT_MAX;        // [m]
 
   float goalCost(float px, float py, float &bearing_out, float &heading_scale,
                  float &progress_out) const;
@@ -425,6 +428,9 @@ buildStationPath(const std::vector<Point2D> &path, const std::vector<float> *pat
   station.goal_point     = path.back();
   station.goal_distance  = std::hypot(path.back().x, path.back().y);
   station.lateral_weight = params.station_lateral_weight;
+  // The farthest a rollout can carry the body, with half as much again for
+  // the curvature of the path it is measured along.
+  station.reach = 1.5f * params.limits.v_max * params.sim_time + 0.2f;
   if (path.size() >= 2)
   {
     station.pts.reserve(path.size());
@@ -592,6 +598,20 @@ StationPath::goalCost(float px, float py, float &bearing_out, float &heading_sca
   bool  clamped = false, clamped_end = false, blocked_segment = false;
   for (size_t i = i0; i + 1 < pts.size(); ++i)
   {
+    // Only the stretch of path a rollout could actually reach. The nearest
+    // point of the WHOLE path let a candidate be credited with a later leg
+    // it had not travelled to: where a plan swings out round an obstacle and
+    // back, the straight line across the swing ends beside the returning
+    // leg, projects onto it, and scores as if the detour had been driven.
+    // On 2026-11-21 that took the robot straight on while the plan turned
+    // 75 deg away (bag run_2026-11-21_full2: 0.8 m off the route into a
+    // place the planner could not start from) and, lap after lap, across the
+    // corner of a desk the plan went 0.6 m wide of (bag full12: 0.08 m from
+    // it). Past `reach` the path is somebody else's turn.
+    if (i > i0 && s[i] > s0 + reach)
+    {
+      break;
+    }
     const float ax = pts[i].x, ay = pts[i].y;
     const float vx = pts[i + 1].x - ax, vy = pts[i + 1].y - ay;
     const float len2 = vx * vx + vy * vy;
