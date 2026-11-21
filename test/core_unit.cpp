@@ -526,6 +526,60 @@ testFinalApproachHeadingIgnoresPlanShape()
   expect(std::fabs(far_r.relative_path_heading) < 0.05f, "away from the goal the local tangent is used");
 }
 
+// A plan that sidesteps 0.4 m to the left over its first 0.6 m and then runs
+// on parallel to the body, nothing in the way, body at rest (2026-11-21, bag
+// chord2_ret t=14.5: the recorded plan, the robot's own limits and weights). Holding still used to win
+// this by 0.006 on the strength of a straight run it never makes, and with
+// nothing changing it won every following cycle too.
+void
+testStandstillDoesNotOutscoreAdvancingArcs()
+{
+  bac::Params p;
+  p.footprint.front = 0.10f;  p.footprint.rear = -0.40f;  p.footprint.width = 0.33f;
+  p.safety_margin.front = 0.325f;  p.safety_margin.rear = 0.125f;  p.safety_margin.side = 0.175f;
+  p.avoid_margin.side = 0.6f;
+  p.limits.v_max = 0.4f;  p.limits.v_min = -0.2f;  p.limits.w_max = 0.6f;
+  p.limits.acc_v = 0.3f;  p.limits.acc_w = 1.0f;  p.limits.a_lat_max = 0.15f;
+  p.control_period = 0.05f;  p.stop_decel = 0.8f;  p.brake_reaction_time = 0.1f;
+  p.weights.clearance = 2.0f;  p.weights.path_dist = 1.0f;  p.weights.balance = 4.0f;
+  p.weights.heading = 0.6f;  p.weights.hysteresis = 0.3f;  p.weights.squeeze = 0.5f;
+  p.weights.pivot = 0.0f;  p.sim_time = 2.5f;
+
+  // The plan as recorded, in the body frame (84 points, 5 cm apart).
+  const std::vector<bac::Point2D> path{
+    { -0.015f, 0.001f }, { 0.028f, 0.048f }, { 0.071f, 0.095f }, { 0.114f, 0.141f }, { 0.158f, 0.185f },
+    { 0.204f, 0.227f }, { 0.251f, 0.265f }, { 0.300f, 0.298f }, { 0.350f, 0.325f }, { 0.400f, 0.347f },
+    { 0.450f, 0.365f }, { 0.501f, 0.379f }, { 0.551f, 0.390f }, { 0.601f, 0.400f }, { 0.652f, 0.408f },
+    { 0.702f, 0.412f }, { 0.752f, 0.414f }, { 0.802f, 0.415f }, { 0.852f, 0.415f }, { 0.902f, 0.414f },
+    { 0.952f, 0.412f }, { 1.002f, 0.410f }, { 1.052f, 0.409f }, { 1.102f, 0.407f }, { 1.152f, 0.405f },
+    { 1.202f, 0.403f }, { 1.252f, 0.401f }, { 1.302f, 0.399f }, { 1.352f, 0.397f }, { 1.402f, 0.395f },
+    { 1.452f, 0.393f }, { 1.502f, 0.391f }, { 1.552f, 0.389f }, { 1.602f, 0.387f }, { 1.652f, 0.385f },
+    { 1.702f, 0.383f }, { 1.752f, 0.381f }, { 1.801f, 0.379f }, { 1.851f, 0.377f }, { 1.901f, 0.375f },
+    { 1.951f, 0.373f }, { 2.001f, 0.371f }, { 2.051f, 0.369f }, { 2.101f, 0.367f }, { 2.151f, 0.365f },
+    { 2.201f, 0.362f }, { 2.251f, 0.359f }, { 2.301f, 0.355f }, { 2.351f, 0.350f }, { 2.401f, 0.342f },
+    { 2.450f, 0.332f }, { 2.499f, 0.317f }, { 2.549f, 0.299f }, { 2.598f, 0.278f }, { 2.647f, 0.254f },
+    { 2.696f, 0.230f }, { 2.745f, 0.204f }, { 2.794f, 0.179f }, { 2.843f, 0.153f }, { 2.892f, 0.129f },
+    { 2.942f, 0.105f }, { 2.991f, 0.082f }, { 3.040f, 0.059f }, { 3.089f, 0.035f }, { 3.138f, 0.011f },
+    { 3.187f, -0.015f }, { 3.236f, -0.041f }, { 3.285f, -0.067f }, { 3.334f, -0.092f }, { 3.383f, -0.118f },
+    { 3.432f, -0.142f }, { 3.481f, -0.166f }, { 3.530f, -0.189f }, { 3.579f, -0.212f }, { 3.629f, -0.237f },
+    { 3.678f, -0.262f }, { 3.727f, -0.288f }, { 3.776f, -0.315f }, { 3.825f, -0.343f }, { 3.873f, -0.372f },
+    { 3.922f, -0.404f }, { 3.971f, -0.437f }, { 4.020f, -0.473f }, { 4.068f, -0.511f },
+  };
+  {
+    bac::BacCore first(p);
+    const bac::Result r = first.process({}, path, bac::Twist2D{});
+    expect(r.forward_progressing > 0, "the recorded plan offers arcs that advance it");
+    expect(r.output.v > 0.0f, "and the first cycle from rest takes one instead of the plain stop");
+  }
+  bac::BacCore core(p);
+  bac::Twist2D current{};
+  for (int i = 0; i < 5; ++i)
+  {
+    current = core.process({}, path, current).output;
+  }
+  expect(current.v > 0.2f, "a body at rest with advancing arcs on offer sets off instead of holding still");
+}
+
 }  // namespace
 
 int
@@ -544,6 +598,7 @@ main()
   testPlanYawInterpolatesTheShortWayRound();
   testPlanYawIgnoredWhenItCannotBeTrusted();
   testFinalApproachHeadingIgnoresPlanShape();
+  testStandstillDoesNotOutscoreAdvancingArcs();
 
   if (failures != 0)
   {

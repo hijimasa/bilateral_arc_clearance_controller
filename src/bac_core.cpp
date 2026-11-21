@@ -685,8 +685,65 @@ struct CandidateSearch
   int     candidate_count     = 0;
   int     forward_progressing = 0;  // gates reverse only when forward advances the ordered path
 
+  // The best admissible candidate that translates AND advances the ordered
+  // path, kept beside the overall winner for promoteOverStandstill().
+  struct Scored
+  {
+    float   score       = -FLT_MAX;
+    Twist2D cmd         = Twist2D(0.0f, 0.0f);
+    float   clearance   = 0.0f;
+    float   path_cost   = 0.0f;
+    float   heading_err = 0.0f;
+    float   terms[7]    = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  } best_advancing;
+
   void evaluate(const ScoringContext &ctx, const Twist2D &command);
+  void promoteOverStandstill(const ScoringContext &ctx);
 };
+
+// Holding still must not win on points against a move that is on offer.
+//
+// The v = 0 row is scored as turn-then-go: by the straight run the body could
+// make after turning by w * sim_time. That is what gives the in-place
+// rotations a gradient (and it has to include w = 0, or a body facing away
+// from the goal finds standing cheaper than starting to turn - the
+// faces-away regression). But for w = 0 the run is never made, and a body at
+// rest is only offered crawl arcs (acc_v * window_time = 0.075 m/s here, 0.19 m
+// of rollout) to set against a phantom metre. Against a plan that sidesteps
+// 0.4 m and then runs parallel to the body, the phantom run ends beside the
+// path with no heading error while every real arc pays the heading error of
+// the sidestep and the hysteresis of starting to turn: stop won by 0.006
+// over 16 admissible, path-advancing arcs, nothing changed, and it won every
+// following cycle too - 10 s at rest with open floor ahead until the plan
+// happened to change (2026-11-21, bag chord2_ret t=11-21; the cycle was
+// reproduced bit for bit offline from the bag's plan and costmap).
+// So when the winner is the plain stop, the body is at rest and at least one
+// admissible candidate advances the path, the best of those is taken. They
+// have all passed the same contact and stopping-distance tests as any other
+// candidate. Braking to a stop while moving, in-place rotation, escape and
+// alignment are left exactly as they were.
+void
+CandidateSearch::promoteOverStandstill(const ScoringContext &ctx)
+{
+  constexpr float kAtRest = 0.05f;  // [m/s]
+  if (ctx.escape_only || ctx.alignment_required || best_advancing.score == -FLT_MAX)
+  {
+    return;
+  }
+  if (best_cmd.speed() > 1e-3f || std::fabs(best_cmd.w) > 1e-3f || ctx.current.speed() > kAtRest)
+  {
+    return;
+  }
+  best_score       = best_advancing.score;
+  best_cmd         = best_advancing.cmd;
+  best_clearance   = best_advancing.clearance;
+  best_path_cost   = best_advancing.path_cost;
+  best_heading_err = best_advancing.heading_err;
+  for (int k = 0; k < 7; ++k)
+  {
+    best_terms[k] = best_advancing.terms[k];
+  }
+}
 
 void
 CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
@@ -935,6 +992,18 @@ CandidateSearch::evaluate(const ScoringContext &ctx, const Twist2D &command)
               std::min(clearance, ctx.clearance_cap), path_cost, heading_err, lateral_fraction,
               terms[0], terms[1], terms[2], terms[3], terms[4], terms[5], terms[6], score);
 #endif
+  if (v > 1e-3f && candidate_progress > 1e-4f && score > best_advancing.score)
+  {
+    best_advancing.score       = score;
+    best_advancing.cmd         = command;
+    best_advancing.clearance   = std::min(clearance, ctx.cap_eff);
+    best_advancing.path_cost   = path_cost;
+    best_advancing.heading_err = heading_err;
+    for (int k = 0; k < 7; ++k)
+    {
+      best_advancing.terms[k] = terms[k];
+    }
+  }
   if (score > best_score)
   {
     best_score     = score;
@@ -1843,6 +1912,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   {
     search.evaluate(ctx, command);
   }
+  search.promoteOverStandstill(ctx);
 
   // Coarse-to-fine steering: re-sample w around the coarse winner at a finer
   // pitch (moving candidates only). The uniform grid quantizes w to
@@ -1853,6 +1923,7 @@ BacCore::process(const std::vector<Point2D> &points, const std::vector<Point2D> 
   {
     search.evaluate(ctx, command);
   }
+  search.promoteOverStandstill(ctx);
 
   const Twist2D output = finalizeOutputCommand(filtered_points, current, search.best_cmd,
                                                rotation_admissible, remaining_path);
